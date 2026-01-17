@@ -1,0 +1,16 @@
+{
+  "name": "aigen-rpc-examples",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "AIGEN JSON-RPC examples",
+  "scripts": {
+    "basic": "node basic-client.js",
+    "tx": "node transaction-example.js",
+    "ws": "node websocket-example.js"
+  },
+  "dependencies": {
+    "axios": "^1.6.7",
+    "ws": "^8.16.0"
+  }
+}

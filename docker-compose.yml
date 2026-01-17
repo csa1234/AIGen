@@ -1,0 +1,138 @@
+version: "3.9"
+
+networks:
+  aigen-testnet:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+services:
+  bootstrap-node:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: aigen-node:latest
+    container_name: aigen-bootstrap-node
+    networks:
+      aigen-testnet:
+        ipv4_address: 172.20.0.10
+    ports:
+      - "9000:9000"
+      - "9944:9944"
+    volumes:
+      - ./docker/data/bootstrap:/data
+      - ./docker/configs/bootstrap.toml:/config/config.toml:ro
+    environment:
+      - RUST_LOG=info
+      - AIGEN_NODE_ID=bootstrap-node
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS -X POST http://127.0.0.1:9944 -H 'Content-Type: application/json' -d '{\"jsonrpc\":\"2.0\",\"method\":\"health\",\"params\":[],\"id\":1}' | grep -q '\"status\":\"healthy\"'"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  full-node-1:
+    image: aigen-node:latest
+    container_name: aigen-full-node-1
+    networks:
+      aigen-testnet:
+        ipv4_address: 172.20.0.11
+    ports:
+      - "9001:9000"
+      - "9945:9944"
+    volumes:
+      - ./docker/data/full-node-1:/data
+      - ./docker/configs/full-node-1.toml:/config/config.toml:ro
+    environment:
+      - RUST_LOG=info
+      - AIGEN_NODE_ID=full-node-1
+    depends_on:
+      bootstrap-node:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS -X POST http://127.0.0.1:9944 -H 'Content-Type: application/json' -d '{\"jsonrpc\":\"2.0\",\"method\":\"health\",\"params\":[],\"id\":1}' | grep -q '\"status\":\"healthy\"'"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  full-node-2:
+    image: aigen-node:latest
+    container_name: aigen-full-node-2
+    networks:
+      aigen-testnet:
+        ipv4_address: 172.20.0.12
+    ports:
+      - "9002:9000"
+      - "9946:9944"
+    volumes:
+      - ./docker/data/full-node-2:/data
+      - ./docker/configs/full-node-2.toml:/config/config.toml:ro
+    environment:
+      - RUST_LOG=info
+      - AIGEN_NODE_ID=full-node-2
+    depends_on:
+      bootstrap-node:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS -X POST http://127.0.0.1:9944 -H 'Content-Type: application/json' -d '{\"jsonrpc\":\"2.0\",\"method\":\"health\",\"params\":[],\"id\":1}' | grep -q '\"status\":\"healthy\"'"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  miner-node:
+    image: aigen-node:latest
+    container_name: aigen-miner-node
+    networks:
+      aigen-testnet:
+        ipv4_address: 172.20.0.13
+    ports:
+      - "9003:9000"
+      - "9947:9944"
+    volumes:
+      - ./docker/data/miner:/data
+      - ./docker/configs/miner.toml:/config/config.toml:ro
+    environment:
+      - RUST_LOG=info
+      - AIGEN_NODE_ID=miner-node
+      - AIGEN_NODE_TYPE=miner
+    depends_on:
+      bootstrap-node:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS -X POST http://127.0.0.1:9944 -H 'Content-Type: application/json' -d '{\"jsonrpc\":\"2.0\",\"method\":\"health\",\"params\":[],\"id\":1}' | grep -q '\"status\":\"healthy\"'"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  validator-node:
+    image: aigen-node:latest
+    container_name: aigen-validator-node
+    networks:
+      aigen-testnet:
+        ipv4_address: 172.20.0.14
+    ports:
+      - "9004:9000"
+      - "9948:9944"
+    volumes:
+      - ./docker/data/validator:/data
+      - ./docker/configs/validator.toml:/config/config.toml:ro
+    environment:
+      - RUST_LOG=info
+      - AIGEN_NODE_ID=validator-node
+      - AIGEN_NODE_TYPE=validator
+      - AIGEN_VALIDATOR_ADDRESS=0x0000000000000000000000000000000000000001
+      - AIGEN_STAKE_AMOUNT=1000000
+    depends_on:
+      bootstrap-node:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS -X POST http://127.0.0.1:9944 -H 'Content-Type: application/json' -d '{\"jsonrpc\":\"2.0\",\"method\":\"health\",\"params\":[],\"id\":1}' | grep -q '\"status\":\"healthy\"'"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s

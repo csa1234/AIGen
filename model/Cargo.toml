@@ -1,0 +1,25 @@
+[package]
+name = "model"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[dependencies]
+genesis = { path = "../genesis" }
+serde = { workspace = true, features = ["derive"] }
+sha2 = { workspace = true }
+tokio = { workspace = true, features = ["fs", "io-util"] }
+thiserror = { workspace = true }
+dashmap = { workspace = true }
+parking_lot = { workspace = true }
+hex = { workspace = true }
+reqwest = { workspace = true }
+ipfs-api-backend-hyper = "0.6"
+async-trait = "0.1"
+futures = "0.3"
+tracing = "0.1"
+anyhow = "1.0"
+
+[dev-dependencies]
+genesis = { path = "../genesis", features = ["test-utils"] }
+ed25519-dalek = { workspace = true }

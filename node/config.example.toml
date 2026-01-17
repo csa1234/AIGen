@@ -1,0 +1,50 @@
+# AIGEN Node Configuration (TOML)
+
+node_id = "node-1"
+# data_dir is where node_keypair.bin and other node state should live
+# data_dir = "C:\\Users\\you\\AppData\\Roaming\\aigen"
+data_dir = ".\\data"
+
+# keypair_path is currently derived from data_dir by default.
+# keypair_path = ".\\data\\node_keypair.bin"
+keypair_path = ".\\data\\node_keypair.bin"
+
+[network]
+listen_addr = "/ip4/0.0.0.0/tcp/9000"
+bootstrap_peers = []
+max_peers = 50
+enable_mdns = true
+
+[network.gossipsub_config]
+mesh_n = 6
+mesh_n_low = 4
+mesh_n_high = 12
+heartbeat_ms = 700
+max_transmit_size = 10485760
+
+[network.reputation_config]
+ban_threshold = 0.2
+cleanup_interval_secs = 3600
+
+[genesis]
+# These values default to the built-in GenesisConfig::default() in the genesis crate.
+# If you change them, you must ensure they match the rest of your network.
+ceo_wallet = "0x0000000000000000000000000000000000000001"
+ceo_public_key_bytes = [215, 90, 152, 1, 130, 177, 10, 183, 213, 84, 191, 237, 60, 150, 64, 115, 160, 238, 23, 47, 61, 170, 98, 50, 90, 240, 33, 166, 143, 112, 117, 26]
+chain_id = "aigen-mainnet-1"
+genesis_timestamp = 0
+network_magic = 2711724449
+
+[node]
+# node_type: miner | validator | full_node | light_client
+node_type = "full_node"
+# validator_address is required for validator nodes
+validator_address = null
+# stake_amount is required for validator nodes
+stake_amount = null
+
+[rpc]
+rpc_enabled = true
+rpc_addr = "127.0.0.1:9944"
+rpc_cors = ["*"]
+rpc_max_connections = 100

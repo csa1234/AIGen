@@ -1,0 +1,38 @@
+import axios from "axios";
+
+// Simple JSON-RPC client for AIGEN.
+// Usage:
+//   node basic-client.js
+
+const RPC_URL = process.env.AIGEN_RPC_URL || "http://localhost:9944";
+
+async function rpc(method, params = [], id = 1) {
+  const payload = { jsonrpc: "2.0", id, method, params };
+  const { data } = await axios.post(RPC_URL, payload, {
+    headers: { "content-type": "application/json" }
+  });
+
+  if (data && data.error) {
+    const err = new Error(data.error.message || "RPC error");
+    err.code = data.error.code;
+    err.data = data.error.data;
+    throw err;
+  }
+
+  return data.result;
+}
+
+async function main() {
+  console.log("RPC:", RPC_URL);
+
+  const health = await rpc("health");
+  console.log("health():", health);
+
+  const chainInfo = await rpc("getChainInfo");
+  console.log("getChainInfo():", chainInfo);
+}
+
+main().catch((e) => {
+  console.error("Error:", e);
+  process.exitCode = 1;
+});

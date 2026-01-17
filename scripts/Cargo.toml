@@ -1,0 +1,36 @@
+[package]
+name = "aigen-scripts"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "generate-ceo-keypair"
+path = "src/bin/generate_ceo_keypair.rs"
+
+[[bin]]
+name = "sign-shutdown-command"
+path = "src/bin/sign_shutdown_command.rs"
+
+[[bin]]
+name = "sign-sip-approval"
+path = "src/bin/sign_sip_approval.rs"
+
+[dependencies]
+genesis = { path = "../genesis" }
+blockchain-core = { path = "../blockchain-core" }
+ed25519-dalek.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+hex.workspace = true
+clap.workspace = true
+rand.workspace = true
+chrono.workspace = true
+anyhow = "1.0"
+argon2 = "0.5"
+chacha20poly1305 = "0.10"
+zeroize = { version = "1.7", features = ["derive"] }
+rpassword = "7.3"
+
+[dev-dependencies]
+tempfile = "3.8"

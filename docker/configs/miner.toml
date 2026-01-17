@@ -1,0 +1,38 @@
+node_id = "miner-node"
+data_dir = "/data"
+keypair_path = "/data/node_keypair.bin"
+
+[network]
+listen_addr = "/ip4/0.0.0.0/tcp/9000"
+bootstrap_peers = ["/ip4/172.20.0.10/tcp/9000/p2p/BOOTSTRAP_PEER_ID"]
+max_peers = 100
+enable_mdns = false
+
+[network.gossipsub_config]
+mesh_n = 8
+mesh_n_low = 6
+mesh_n_high = 16
+heartbeat_ms = 500
+max_transmit_size = 10485760
+
+[network.reputation_config]
+ban_threshold = 0.2
+cleanup_interval_secs = 3600
+
+[genesis]
+ceo_wallet = "0x0000000000000000000000000000000000000001"
+ceo_public_key_bytes = [215, 90, 152, 1, 130, 177, 10, 183, 213, 75, 254, 211, 201, 100, 7, 58, 14, 225, 114, 243, 218, 166, 35, 37, 175, 2, 26, 104, 247, 7, 81, 26]
+chain_id = "aigen-mainnet-1"
+genesis_timestamp = 0
+network_magic = 2711724449
+
+[node]
+node_type = "miner"
+validator_address = null
+stake_amount = null
+
+[rpc]
+rpc_addr = "0.0.0.0:9944"
+rpc_cors = ["*"]
+rpc_max_connections = 100
+rpc_enabled = true
