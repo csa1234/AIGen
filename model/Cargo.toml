@@ -19,7 +19,13 @@ async-trait = "0.1"
 futures = "0.3"
 tracing = "0.1"
 anyhow = "1.0"
+ort = { version = "2.0.0-rc.11", default-features = false, features = ["std", "load-dynamic"] }
+ndarray = "0.15"
 
 [dev-dependencies]
 genesis = { path = "../genesis", features = ["test-utils"] }
 ed25519-dalek = { workspace = true }
+prost = "0.12"
+futures = "0.3"
+zip = "0.6"
+reqwest = { workspace = true }

@@ -7,7 +7,19 @@
 pub mod registry;
 pub mod sharding;
 pub mod storage;
+pub mod inference;
 
 pub use registry::{ModelError, ModelMetadata, ModelRegistry, ModelShard, ShardLocation};
 pub use sharding::{combine_shards, split_model_file, verify_shard_integrity, ShardError};
 pub use storage::{HttpStorage, IpfsStorage, LocalStorage, StorageBackend, StorageError};
+pub use inference::{
+    InferenceEngine,
+    InferenceError,
+    InferenceMetrics,
+    InferenceOutput,
+    InferenceStats,
+    InferenceTensor,
+    LoadedModel,
+    ModelCache,
+    SharedInferenceMetrics,
+};
