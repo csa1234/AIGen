@@ -161,6 +161,7 @@ pub struct BatchJob {
     pub error_message: Option<String>,
     pub processing_start_time: Option<i64>,
     pub completion_time: Option<i64>,
+    pub ad_injected: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -196,6 +197,7 @@ pub struct BatchJobInfo {
     pub model_id: String,
     pub result: Option<Vec<u8>>,
     pub error_message: Option<String>,
+    pub ad_injected: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -235,7 +237,9 @@ pub enum BatchError {
 impl From<TierError> for BatchError {
     fn from(err: TierError) -> Self {
         match err {
-            TierError::SubscriptionInactive | TierError::SubscriptionNotFound => BatchError::InsufficientTier,
+            TierError::SubscriptionInactive | TierError::SubscriptionNotFound => {
+                BatchError::InsufficientTier
+            }
             TierError::Shutdown => BatchError::Shutdown,
             other => BatchError::InferenceFailed(other.to_string()),
         }
@@ -321,10 +325,7 @@ impl VolumeDiscountTracker {
     }
 
     pub fn record_job(&self, user_address: &str, timestamp: i64) {
-        let mut entry = self
-            .user_jobs
-            .entry(user_address.to_string())
-            .or_default();
+        let mut entry = self.user_jobs.entry(user_address.to_string()).or_default();
         entry.push_back(timestamp);
         Self::trim_old_entries(&mut entry, timestamp);
     }
@@ -390,6 +391,7 @@ pub struct BatchQueue {
     metrics: Arc<RwLock<BatchJobMetrics>>,
     tier_manager: Arc<TierManager>,
     inference_engine: Arc<InferenceEngine>,
+    ad_manager: Option<Arc<crate::ads::AdManager>>,
     chain_state: Arc<ChainState>,
     discount_tracker: Arc<VolumeDiscountTracker>,
     receiver_address: String,
@@ -400,6 +402,7 @@ impl BatchQueue {
     pub fn new(
         tier_manager: Arc<TierManager>,
         inference_engine: Arc<InferenceEngine>,
+        ad_manager: Option<Arc<crate::ads::AdManager>>,
         chain_state: Arc<ChainState>,
         discount_tracker: VolumeDiscountTracker,
     ) -> Self {
@@ -419,6 +422,7 @@ impl BatchQueue {
             })),
             tier_manager,
             inference_engine,
+            ad_manager,
             chain_state,
             discount_tracker: Arc::new(discount_tracker),
             receiver_address: CEO_WALLET.to_string(),
@@ -454,6 +458,7 @@ impl BatchQueue {
             error_message: None,
             processing_start_time: None,
             completion_time: None,
+            ad_injected: false,
         };
 
         self.jobs.insert(job_id.clone(), job.clone());
@@ -477,7 +482,10 @@ impl BatchQueue {
             }
         }
 
-        eprintln!("batch job submitted: job_id={}, user={}, priority={}", job_id, request.user_address, request.priority);
+        eprintln!(
+            "batch job submitted: job_id={}, user={}, priority={}",
+            job_id, request.user_address, request.priority
+        );
 
         Ok(job_id)
     }
@@ -498,7 +506,9 @@ impl BatchQueue {
             input_data.clone(),
         )?;
 
-        let subscription = self.tier_manager.ensure_subscription_active(&payload.user_address, now)?;
+        let subscription = self
+            .tier_manager
+            .ensure_subscription_active(&payload.user_address, now)?;
         let config = self.tier_manager.get_config(subscription.tier)?;
         if !config.validate_feature_access(&FeatureFlag::BatchProcessing) {
             return Err(BatchError::InsufficientTier);
@@ -509,21 +519,22 @@ impl BatchQueue {
         }
 
         let registry = self.inference_engine.registry();
-        let allowed = self
-            .tier_manager
-            .can_access_model(&registry, &payload.user_address, &payload.model_id, now)?;
+        let allowed = self.tier_manager.can_access_model(
+            &registry,
+            &payload.user_address,
+            &payload.model_id,
+            now,
+        )?;
         if !allowed {
             return Err(BatchError::InsufficientTier);
         }
 
-        let expected_amount = self
-            .discount_tracker
-            .apply_volume_discount(
-                &self.tier_manager,
-                &payload.user_address,
-                payload.priority.base_price(),
-                now,
-            )?;
+        let expected_amount = self.discount_tracker.apply_volume_discount(
+            &self.tier_manager,
+            &payload.user_address,
+            payload.priority.base_price(),
+            now,
+        )?;
         let actual_amount = transaction.amount.value();
         if actual_amount != expected_amount {
             return Err(PaymentValidationError::AmountMismatch {
@@ -567,7 +578,9 @@ impl BatchQueue {
                 self.sync_job_to_chain(&job_entry);
                 {
                     let mut metrics = self.metrics.write().await;
-                    if let Some(count) = metrics.queue_depth_by_priority.get_mut(&job_entry.priority) {
+                    if let Some(count) =
+                        metrics.queue_depth_by_priority.get_mut(&job_entry.priority)
+                    {
                         *count = count.saturating_sub(1);
                     }
                 }
@@ -578,7 +591,9 @@ impl BatchQueue {
     }
 
     pub async fn get_job_status(&self, job_id: &str) -> Option<BatchJobInfo> {
-        self.jobs.get(job_id).map(|entry| job_to_info(entry.value()))
+        self.jobs
+            .get(job_id)
+            .map(|entry| job_to_info(entry.value()))
     }
 
     pub async fn get_job(&self, job_id: &str) -> Option<BatchJob> {
@@ -603,7 +618,11 @@ impl BatchQueue {
         let metrics = self.metrics.read().await;
         let average_wait_time_ms = self.average_wait_time_ms(now);
         let mut estimates = HashMap::new();
-        for priority in [BatchPriority::Standard, BatchPriority::Batch, BatchPriority::Economy] {
+        for priority in [
+            BatchPriority::Standard,
+            BatchPriority::Batch,
+            BatchPriority::Economy,
+        ] {
             estimates.insert(priority, self.estimate_completion_time(priority, now).await);
         }
         QueueStats {
@@ -624,9 +643,18 @@ impl BatchQueue {
         } else {
             metrics.average_processing_time_ms
         };
-        let standard = *metrics.queue_depth_by_priority.get(&BatchPriority::Standard).unwrap_or(&0);
-        let batch = *metrics.queue_depth_by_priority.get(&BatchPriority::Batch).unwrap_or(&0);
-        let economy = *metrics.queue_depth_by_priority.get(&BatchPriority::Economy).unwrap_or(&0);
+        let standard = *metrics
+            .queue_depth_by_priority
+            .get(&BatchPriority::Standard)
+            .unwrap_or(&0);
+        let batch = *metrics
+            .queue_depth_by_priority
+            .get(&BatchPriority::Batch)
+            .unwrap_or(&0);
+        let economy = *metrics
+            .queue_depth_by_priority
+            .get(&BatchPriority::Economy)
+            .unwrap_or(&0);
         let depth = match priority {
             BatchPriority::Standard => standard,
             BatchPriority::Batch => standard.saturating_add(batch),
@@ -649,12 +677,10 @@ impl BatchQueue {
         status: BatchJobStatus,
         result: Option<Vec<u8>>,
         error: Option<String>,
+        ad_injected: bool,
     ) -> Result<(), BatchError> {
         let now = now_timestamp();
-        let mut job = self
-            .jobs
-            .get_mut(job_id)
-            .ok_or(BatchError::JobNotFound)?;
+        let mut job = self.jobs.get_mut(job_id).ok_or(BatchError::JobNotFound)?;
         job.status = status;
         if status == BatchJobStatus::Processing {
             job.processing_start_time = Some(now);
@@ -663,29 +689,36 @@ impl BatchQueue {
             job.completion_time = Some(now);
             job.result = result;
             job.error_message = None;
-            let _ = self.tier_manager.record_request(&job.user_address, None, now);
+            job.ad_injected = ad_injected;
+            let _ = self
+                .tier_manager
+                .record_request(&job.user_address, None, now);
             self.update_metrics_for_completion(&job).await;
         }
         if status == BatchJobStatus::Failed {
             job.completion_time = Some(now);
             job.result = None;
             job.error_message = error;
+            job.ad_injected = false;
             self.update_metrics_for_failure().await;
         }
         self.sync_job_to_chain(&job);
-        eprintln!("batch job status updated: job_id={}, status={}", job_id, status);
+        eprintln!(
+            "batch job status updated: job_id={}, status={}",
+            job_id, status
+        );
         Ok(())
     }
 
     pub async fn cancel_job(&self, job_id: &str, user_address: &str) -> Result<u64, BatchError> {
-        let mut job = self
-            .jobs
-            .get_mut(job_id)
-            .ok_or(BatchError::JobNotFound)?;
+        let mut job = self.jobs.get_mut(job_id).ok_or(BatchError::JobNotFound)?;
         if job.user_address != user_address {
             return Err(BatchError::JobNotFound);
         }
-        if !matches!(job.status, BatchJobStatus::Pending | BatchJobStatus::Scheduled) {
+        if !matches!(
+            job.status,
+            BatchJobStatus::Pending | BatchJobStatus::Scheduled
+        ) {
             return Err(BatchError::JobNotFound);
         }
         let fee = job
@@ -708,11 +741,12 @@ impl BatchQueue {
         Ok(refund)
     }
 
-    pub async fn reschedule_job(&self, job_id: &str, scheduled_time: i64) -> Result<(), BatchError> {
-        let mut job = self
-            .jobs
-            .get_mut(job_id)
-            .ok_or(BatchError::JobNotFound)?;
+    pub async fn reschedule_job(
+        &self,
+        job_id: &str,
+        scheduled_time: i64,
+    ) -> Result<(), BatchError> {
+        let mut job = self.jobs.get_mut(job_id).ok_or(BatchError::JobNotFound)?;
         job.scheduled_time = scheduled_time;
         job.status = BatchJobStatus::Pending;
         {
@@ -734,10 +768,7 @@ impl BatchQueue {
     }
 
     fn sync_job_to_chain(&self, job: &BatchJob) {
-        let result_hash = job
-            .result
-            .as_ref()
-            .map(|data| hash_data(data.as_slice()));
+        let result_hash = job.result.as_ref().map(|data| hash_data(data.as_slice()));
         let state = blockchain_core::state::BatchJobState {
             job_id: job.request_id.clone(),
             user_address: job.user_address.clone(),
@@ -749,18 +780,19 @@ impl BatchQueue {
             model_id: job.model_id.clone(),
             result_hash,
         };
-        self.chain_state.set_batch_job(job.request_id.clone(), state);
+        self.chain_state
+            .set_batch_job(job.request_id.clone(), state);
     }
 
     fn average_wait_time_ms(&self, now: i64) -> u64 {
         let mut total = 0u64;
         let mut count = 0u64;
         for entry in self.jobs.iter() {
-            if matches!(entry.status, BatchJobStatus::Pending | BatchJobStatus::Scheduled) {
-                let wait = entry
-                    .scheduled_time
-                    .saturating_sub(now)
-                    .max(0) as u64;
+            if matches!(
+                entry.status,
+                BatchJobStatus::Pending | BatchJobStatus::Scheduled
+            ) {
+                let wait = entry.scheduled_time.saturating_sub(now).max(0) as u64;
                 total = total.saturating_add(wait.saturating_mul(1000));
                 count = count.saturating_add(1);
             }
@@ -779,9 +811,10 @@ impl BatchQueue {
             let elapsed_ms = end.saturating_sub(start).max(0) as u64 * 1000;
             let completed = metrics.completed_jobs;
             let prev_avg = metrics.average_processing_time_ms;
-            metrics.average_processing_time_ms =
-                (prev_avg.saturating_mul(completed.saturating_sub(1)).saturating_add(elapsed_ms))
-                    / completed.max(1);
+            metrics.average_processing_time_ms = (prev_avg
+                .saturating_mul(completed.saturating_sub(1))
+                .saturating_add(elapsed_ms))
+                / completed.max(1);
         }
     }
 
@@ -809,7 +842,8 @@ impl BatchWorker {
             queue,
             inference_engine,
             shutdown_signal,
-            processing_interval_ms: processing_interval_ms.unwrap_or(DEFAULT_PROCESSING_INTERVAL_MS),
+            processing_interval_ms: processing_interval_ms
+                .unwrap_or(DEFAULT_PROCESSING_INTERVAL_MS),
         }
     }
 
@@ -832,21 +866,34 @@ impl BatchWorker {
             while let Ok(Some(job)) = self.queue.get_next_ready_job().await {
                 let queue = self.queue.clone();
                 let engine = self.inference_engine.clone();
+                let ad_manager = self.queue.ad_manager.clone();
                 join_set.spawn(async move {
                     let job_id = job.request_id.clone();
                     if let Err(err) = queue
-                        .update_job_status(&job_id, BatchJobStatus::Processing, None, None)
+                        .update_job_status(&job_id, BatchJobStatus::Processing, None, None, false)
                         .await
                     {
-                        println!("job_id = {}, error = {}, failed to mark job processing", job_id, err);
+                        println!(
+                            "job_id = {}, error = {}, failed to mark job processing",
+                            job_id, err
+                        );
                         return;
                     }
                     let handle = tokio::runtime::Handle::current();
-                    let res = tokio::task::spawn_blocking(move || handle.block_on(process_job(engine, job))).await;
+                    let res = tokio::task::spawn_blocking(move || {
+                        handle.block_on(process_job(engine, ad_manager, job))
+                    })
+                    .await;
                     match res {
-                        Ok(Ok(result)) => {
+                        Ok(Ok((result, ad_injected))) => {
                             let _ = queue
-                                .update_job_status(&job_id, BatchJobStatus::Completed, Some(result), None)
+                                .update_job_status(
+                                    &job_id,
+                                    BatchJobStatus::Completed,
+                                    Some(result),
+                                    None,
+                                    ad_injected,
+                                )
                                 .await;
                         }
                         Ok(Err(err)) => {
@@ -856,6 +903,7 @@ impl BatchWorker {
                                     BatchJobStatus::Failed,
                                     None,
                                     Some(err.to_string()),
+                                    false,
                                 )
                                 .await;
                         }
@@ -866,6 +914,7 @@ impl BatchWorker {
                                     BatchJobStatus::Failed,
                                     None,
                                     Some("panic".to_string()),
+                                    false,
                                 )
                                 .await;
                         }
@@ -905,6 +954,7 @@ fn job_to_info(job: &BatchJob) -> BatchJobInfo {
         model_id: job.model_id.clone(),
         result: job.result.clone(),
         error_message: job.error_message.clone(),
+        ad_injected: job.ad_injected,
     }
 }
 
@@ -957,19 +1007,52 @@ pub fn validate_batch_payment(
 
 async fn process_job(
     engine: Arc<InferenceEngine>,
+    ad_manager: Option<Arc<crate::ads::AdManager>>,
     job: BatchJob,
-) -> Result<Vec<u8>, BatchError> {
-    let inputs: Vec<InferenceTensor> =
-        serde_json::from_slice(&job.input_data).map_err(|err| BatchError::InferenceFailed(err.to_string()))?;
+) -> Result<(Vec<u8>, bool), BatchError> {
+    let inputs: Vec<InferenceTensor> = serde_json::from_slice(&job.input_data)
+        .map_err(|err| BatchError::InferenceFailed(err.to_string()))?;
 
     let mut attempt = 0;
     loop {
         attempt += 1;
-        let res = engine.run_inference(&job.model_id, inputs.clone()).await;
+        let res = engine
+            .run_inference(&job.model_id, inputs.clone(), CEO_WALLET)
+            .await;
         match res {
             Ok(outputs) => {
                 let bytes = serialize_outputs(outputs)?;
-                return Ok(bytes);
+                if let Some(ad_manager) = ad_manager.as_ref() {
+                    if let Ok(true) = ad_manager.should_inject_ad(&job.user_address) {
+                        match ad_manager.inject_ad_into_batch_result(
+                            bytes.clone(),
+                            &job.user_address,
+                            &job.model_id,
+                        ) {
+                            Ok((modified, template_id, tier)) => {
+                                let model_id = format!("batch:{}", job.model_id);
+                                if !template_id.is_empty() {
+                                    let _ = ad_manager.record_impression(
+                                        &job.user_address,
+                                        &template_id,
+                                        &model_id,
+                                        tier,
+                                    );
+                                    println!(
+                                        "ad injected for user {}, template {}",
+                                        job.user_address, template_id
+                                    );
+                                }
+                                return Ok((modified, true));
+                            }
+                            Err(err) => {
+                                println!("ad injection failed: {}", err);
+                                return Ok((bytes, false));
+                            }
+                        }
+                    }
+                }
+                return Ok((bytes, false));
             }
             Err(err) => {
                 if attempt >= RETRY_LIMIT || !is_transient_error(&err) {

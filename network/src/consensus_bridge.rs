@@ -6,8 +6,8 @@ use blockchain_core::Block;
 use consensus::{PoIConsensus, PoIProof, ValidatorVote};
 
 use crate::events::NetworkEvent;
-use crate::protocol::NetworkMessage;
 use crate::p2p::P2PNode;
+use crate::protocol::NetworkMessage;
 
 pub struct ConsensusBridge {
     pub consensus: Arc<Mutex<PoIConsensus>>,

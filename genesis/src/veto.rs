@@ -1,6 +1,6 @@
+use crate::authority::verify_ceo_signature;
 use crate::shutdown::is_shutdown;
 use crate::types::{CeoSignature, GenesisError, SipProposal};
-use crate::authority::verify_ceo_signature;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -59,9 +59,7 @@ pub fn submit_sip(proposal: SipProposal) -> Result<String, GenesisError> {
     }
 
     let id = proposal.proposal_id.clone();
-    registry
-        .statuses
-        .insert(id.clone(), SipStatus::Pending);
+    registry.statuses.insert(id.clone(), SipStatus::Pending);
     registry.proposals.insert(id.clone(), proposal);
 
     persist_registry(&registry)?;
@@ -86,9 +84,7 @@ pub fn veto_sip(proposal_id: &str, signature: CeoSignature) -> Result<(), Genesi
     registry
         .statuses
         .insert(proposal_id.to_string(), SipStatus::Vetoed);
-    registry
-        .proposals
-        .insert(proposal_id.to_string(), updated);
+    registry.proposals.insert(proposal_id.to_string(), updated);
 
     persist_registry(&registry)?;
 
@@ -112,9 +108,7 @@ pub fn approve_sip(proposal_id: &str, signature: CeoSignature) -> Result<(), Gen
     registry
         .statuses
         .insert(proposal_id.to_string(), SipStatus::Approved);
-    registry
-        .proposals
-        .insert(proposal_id.to_string(), updated);
+    registry.proposals.insert(proposal_id.to_string(), updated);
 
     persist_registry(&registry)?;
 

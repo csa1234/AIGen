@@ -27,6 +27,7 @@ ort = { version = "2.0.0-rc.11", default-features = false, features = ["std", "l
 ndarray = "0.15"
 uuid = { version = "1.0", features = ["v4", "serde"] }
 priority-queue = "1.3"
+rand = "0.8"
 
 [dev-dependencies]
 genesis = { path = "../genesis", features = ["test-utils"] }

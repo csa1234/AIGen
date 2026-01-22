@@ -25,8 +25,7 @@ fn verify_ceo_request(message: &[u8], signature_hex: &str) -> Result<CeoSignatur
         .map_err(|e| RpcError::InvalidParams(format!("invalid signature bytes: {e}")))?;
     let ceo_sig = CeoSignature(sig);
 
-    genesis::verify_ceo_signature(message, &ceo_sig)
-        .map_err(|_| RpcError::InvalidSignature)?;
+    genesis::verify_ceo_signature(message, &ceo_sig).map_err(|_| RpcError::InvalidSignature)?;
 
     Ok(ceo_sig)
 }

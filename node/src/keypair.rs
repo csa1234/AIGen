@@ -17,8 +17,12 @@ pub fn default_keypair_path(data_dir: &Path) -> PathBuf {
 
 pub fn save_keypair(keypair: &Keypair, path: &Path) -> Result<()> {
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("failed to create keypair parent directory: {}", parent.display()))?;
+        std::fs::create_dir_all(parent).with_context(|| {
+            format!(
+                "failed to create keypair parent directory: {}",
+                parent.display()
+            )
+        })?;
     }
 
     let bytes = keypair
@@ -32,8 +36,12 @@ pub fn save_keypair(keypair: &Keypair, path: &Path) -> Result<()> {
     {
         use std::os::unix::fs::PermissionsExt;
         let perms = std::fs::Permissions::from_mode(0o600);
-        std::fs::set_permissions(path, perms)
-            .with_context(|| format!("failed to set permissions on keypair file: {}", path.display()))?;
+        std::fs::set_permissions(path, perms).with_context(|| {
+            format!(
+                "failed to set permissions on keypair file: {}",
+                path.display()
+            )
+        })?;
     }
 
     #[cfg(windows)]
@@ -61,7 +69,11 @@ pub fn load_keypair(path: &Path) -> Result<Keypair> {
             .with_context(|| format!("failed to stat keypair file: {}", path.display()))?;
         let mode = meta.permissions().mode() & 0o777;
         if mode & 0o077 != 0 {
-            eprintln!("keypair file permissions are too permissive: path={}, mode={:o}", path.display(), mode);
+            eprintln!(
+                "keypair file permissions are too permissive: path={}, mode={:o}",
+                path.display(),
+                mode
+            );
         }
     }
 

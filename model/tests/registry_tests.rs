@@ -1,15 +1,12 @@
 use ed25519_dalek::{Signature, Signer, SigningKey};
 use genesis::shutdown::reset_shutdown_for_tests;
-use genesis::{
-    emergency_shutdown, CeoSignature, GenesisConfig, ShutdownCommand,
-};
+use genesis::{emergency_shutdown, CeoSignature, GenesisConfig, ShutdownCommand};
 use model::{ModelError, ModelMetadata, ModelRegistry, ModelShard};
 use std::sync::Arc;
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const CEO_SECRET_KEY_HEX: &str =
-    "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60";
+const CEO_SECRET_KEY_HEX: &str = "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60";
 
 fn signing_key() -> SigningKey {
     let bytes = hex::decode(CEO_SECRET_KEY_HEX).expect("valid hex");
@@ -84,7 +81,9 @@ fn test_shard_registration() {
     registry.register_model(metadata.clone()).expect("register");
 
     let shard = sample_shard(&metadata, 0);
-    registry.register_shard(shard.clone()).expect("register shard");
+    registry
+        .register_shard(shard.clone())
+        .expect("register shard");
 
     let stored = registry.get_shard("mistral-7b", 0).expect("get shard");
     assert_eq!(stored.hash, shard.hash);
@@ -100,11 +99,19 @@ fn test_core_model_designation() {
     registry.register_model(first).expect("register first");
     registry.register_model(second).expect("register second");
 
-    let core = registry.get_core_model().expect("core model").expect("core model");
+    let core = registry
+        .get_core_model()
+        .expect("core model")
+        .expect("core model");
     assert_eq!(core.model_id, "core-model");
 
-    registry.set_core_model("secondary-model").expect("set core");
-    let core = registry.get_core_model().expect("core model").expect("core model");
+    registry
+        .set_core_model("secondary-model")
+        .expect("set core");
+    let core = registry
+        .get_core_model()
+        .expect("core model")
+        .expect("core model");
     assert_eq!(core.model_id, "secondary-model");
 
     let core_count = registry
@@ -131,9 +138,7 @@ fn test_validation_failures() {
 
     let mut shard = sample_shard(&metadata, 0);
     shard.hash = [9u8; 32];
-    let err = registry
-        .register_shard(shard)
-        .expect_err("mismatched hash");
+    let err = registry.register_shard(shard).expect_err("mismatched hash");
     assert!(matches!(err, ModelError::InvalidShard));
 
     let invalid_shard = ModelShard {

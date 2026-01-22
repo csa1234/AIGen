@@ -9,9 +9,21 @@ pub enum NetworkEvent {
     PeerDiscovered(PeerId),
     MessageReceived(NetworkMessage),
     TensorChunkReceived(TensorChunk),
-    ModelShardAnnounced { model_id: String, shard_index: u32, peer: Option<PeerId> },
-    ModelShardReceived { model_id: String, shard_index: u32, data: Vec<u8>, hash: [u8; 32] },
-    ModelQueryReceived { model_id: String, peer: PeerId },
+    ModelShardAnnounced {
+        model_id: String,
+        shard_index: u32,
+        peer: Option<PeerId>,
+    },
+    ModelShardReceived {
+        model_id: String,
+        shard_index: u32,
+        data: Vec<u8>,
+        hash: [u8; 32],
+    },
+    ModelQueryReceived {
+        model_id: String,
+        peer: PeerId,
+    },
     ShutdownSignal,
     ReputationUpdate(PeerId, i32),
 }

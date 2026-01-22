@@ -264,12 +264,19 @@ impl ChainState {
         let validator_addr = validator;
         let dev_addr = CEO_WALLET.to_string();
 
-        let involved = [sender_addr.clone(), receiver_addr.clone(), validator_addr.clone(), dev_addr.clone()];
+        let involved = [
+            sender_addr.clone(),
+            receiver_addr.clone(),
+            validator_addr.clone(),
+            dev_addr.clone(),
+        ];
 
         let mut accounts = self.accounts.write();
         let mut temp: HashMap<Address, AccountState> = HashMap::new();
 
-        let get_state = |addr: &Address, accounts: &BTreeMap<Address, AccountState>, temp: &HashMap<Address, AccountState>| {
+        let get_state = |addr: &Address,
+                         accounts: &BTreeMap<Address, AccountState>,
+                         temp: &HashMap<Address, AccountState>| {
             temp.get(addr)
                 .cloned()
                 .or_else(|| accounts.get(addr).cloned())

@@ -159,8 +159,11 @@ impl ModelRegistry {
 
     pub fn list_models(&self) -> Result<Vec<ModelMetadata>, ModelError> {
         check_shutdown()?;
-        let mut models: Vec<ModelMetadata> =
-            self.models.iter().map(|entry| entry.value().clone()).collect();
+        let mut models: Vec<ModelMetadata> = self
+            .models
+            .iter()
+            .map(|entry| entry.value().clone())
+            .collect();
         models.sort_by_key(|model| model.created_at);
         Ok(models)
     }
@@ -320,18 +323,12 @@ impl ModelRegistry {
         let healthy = locations.iter().filter(|loc| loc.is_healthy).count();
         println!(
             "registered shard location: model={}, shard={}, backend={}, redundancy={}",
-            model_id,
-            shard_index,
-            backend_type,
-            healthy
+            model_id, shard_index, backend_type, healthy
         );
         if healthy < TARGET_REDUNDANCY {
             eprintln!(
                 "insufficient redundancy: model={}, shard={}, current={}, target={}",
-                model_id,
-                shard_index,
-                healthy,
-                TARGET_REDUNDANCY
+                model_id, shard_index, healthy, TARGET_REDUNDANCY
             );
         }
         Ok(())
@@ -385,11 +382,7 @@ impl ModelRegistry {
         let mut results = Vec::new();
         for entry in self.shards.iter() {
             let shard = entry.value();
-            let healthy = shard
-                .locations
-                .iter()
-                .filter(|loc| loc.is_healthy)
-                .count();
+            let healthy = shard.locations.iter().filter(|loc| loc.is_healthy).count();
             if healthy < target_redundancy as usize {
                 results.push((shard.model_id.clone(), shard.shard_index));
             }

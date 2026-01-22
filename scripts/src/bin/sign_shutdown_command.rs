@@ -80,7 +80,8 @@ fn main() -> Result<()> {
 
     match args.output {
         Some(path) => {
-            fs::write(&path, json).with_context(|| format!("failed to write {}", path.display()))?;
+            fs::write(&path, json)
+                .with_context(|| format!("failed to write {}", path.display()))?;
         }
         None => {
             println!("{}", String::from_utf8_lossy(&json));

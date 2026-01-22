@@ -1,15 +1,15 @@
 //! Proof-of-Intelligence consensus scaffolding gated by Genesis shutdown checks.
 
 pub mod poi;
-pub mod validator;
 pub mod state;
+pub mod validator;
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use blockchain_core::{Block, BlockHash, Transaction};
 use blockchain_core::types::{Amount, BlockHeight};
 use blockchain_core::ChainState;
+use blockchain_core::{Block, BlockHash, Transaction};
 use genesis::{check_shutdown, is_shutdown};
 use tokio::sync::broadcast;
 use tokio::sync::mpsc;
@@ -18,15 +18,12 @@ use crate::poi::{calculate_poi_reward, check_shutdown_and_halt, ConsensusError, 
 use crate::state::{ConsensusEvent, ConsensusMetrics, ConsensusStateMachine};
 use crate::validator::{QuorumResult, SlashReason, ValidatorRegistry, VoteRegistry};
 
-pub use crate::poi::{
-    CompressionMethod,
-    ComputationMetadata,
-    InferenceVerificationConfig,
-    WorkType,
-    set_inference_verification_config,
-};
 pub use crate::poi::PoIProof;
-pub use crate::validator::{ValidatorVote};
+pub use crate::poi::{
+    set_inference_verification_config, CompressionMethod, ComputationMetadata,
+    InferenceVerificationConfig, WorkType,
+};
+pub use crate::validator::ValidatorVote;
 
 #[derive(Clone, Debug)]
 pub enum NetworkMessage {
@@ -94,24 +91,28 @@ impl PoIConsensus {
         proof.verify()?;
 
         let active = self.validator_registry.get_active_validators();
-        let committee = crate::validator::select_validators_weighted(&active, self.block_producer.committee_size)?;
+        let committee = crate::validator::select_validators_weighted(
+            &active,
+            self.block_producer.committee_size,
+        )?;
         let committee_addrs: Vec<String> = committee.iter().map(|v| v.address.clone()).collect();
 
-        self.state_machine.transition(ConsensusEvent::ProofSubmitted)?;
+        self.state_machine
+            .transition(ConsensusEvent::ProofSubmitted)?;
 
-        let block = self
-            .block_producer
-            .produce_block(
-                previous_hash,
-                transactions,
-                next_height.value(),
-                proof,
-                miner_address.clone(),
-                committee_addrs.clone(),
-            )?;
+        let block = self.block_producer.produce_block(
+            previous_hash,
+            transactions,
+            next_height.value(),
+            proof,
+            miner_address.clone(),
+            committee_addrs.clone(),
+        )?;
 
-        self.vote_registry.set_committee(block.block_hash, committee_addrs);
-        self.state_machine.transition(ConsensusEvent::ProofSubmitted)?;
+        self.vote_registry
+            .set_committee(block.block_hash, committee_addrs);
+        self.state_machine
+            .transition(ConsensusEvent::ProofSubmitted)?;
 
         let quorum = self
             .wait_for_quorum(block.block_hash, Duration::from_secs(10), committee.len())
@@ -119,7 +120,8 @@ impl PoIConsensus {
 
         match quorum {
             QuorumResult::Approved => {
-                self.state_machine.transition(ConsensusEvent::QuorumReached)?;
+                self.state_machine
+                    .transition(ConsensusEvent::QuorumReached)?;
                 let proof_bytes = block
                     .header
                     .poi_proof
@@ -131,7 +133,8 @@ impl PoIConsensus {
                 self.metrics.inc_accepted();
                 self.metrics
                     .observe_validation_time_ms(started.elapsed().as_millis() as u64);
-                self.state_machine.transition(ConsensusEvent::QuorumReached)?;
+                self.state_machine
+                    .transition(ConsensusEvent::QuorumReached)?;
 
                 if let Some(tx) = &self.network_publisher {
                     let _ = tx.try_send(NetworkMessage::Block(block.clone()));
@@ -158,7 +161,8 @@ impl PoIConsensus {
                     .apply_slash(&miner_address, slashed)
                     .map_err(|e| ConsensusError::Serialization(e.to_string()))?;
 
-                self.state_machine.transition(ConsensusEvent::ProofInvalid)?;
+                self.state_machine
+                    .transition(ConsensusEvent::ProofInvalid)?;
                 Err(ConsensusError::ProofRejected)
             }
             QuorumResult::Pending => {

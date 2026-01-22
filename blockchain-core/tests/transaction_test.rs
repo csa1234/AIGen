@@ -2,10 +2,7 @@ use blockchain_core::{generate_keypair, ChainId, Transaction, TransactionPool};
 use genesis::CEO_WALLET;
 
 fn mk_addr(n: u8) -> String {
-    format!(
-        "0x{:0>40}",
-        hex::encode([n; 20])
-    )
+    format!("0x{:0>40}", hex::encode([n; 20]))
 }
 
 #[test]
@@ -44,7 +41,17 @@ fn transaction_total_cost_includes_fees() {
 #[test]
 fn ceo_transactions_fee_free_and_prioritized() {
     let chain_id = ChainId::from_str_id("aigen-test");
-    let tx1 = Transaction::new(CEO_WALLET.to_string(), mk_addr(2), 1, 1, 0, true, chain_id, None).unwrap();
+    let tx1 = Transaction::new(
+        CEO_WALLET.to_string(),
+        mk_addr(2),
+        1,
+        1,
+        0,
+        true,
+        chain_id,
+        None,
+    )
+    .unwrap();
     assert_eq!(tx1.fee.total_fee().value(), 0);
 
     let tx2 = Transaction::new(mk_addr(3), mk_addr(4), 1, 1, 0, true, chain_id, None).unwrap();

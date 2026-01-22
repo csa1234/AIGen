@@ -5,16 +5,8 @@ use genesis::shutdown::reset_shutdown_for_tests;
 use genesis::CEO_WALLET;
 
 use model::{
-    tiers::FeatureFlag,
-    ModelMetadata,
-    ModelRegistry,
-    PaymentOutcome,
-    PaymentProvider,
-    PaymentStatus,
-    SubscriptionTier,
-    TierConfig,
-    TierError,
-    TierManager,
+    tiers::FeatureFlag, ModelMetadata, ModelRegistry, PaymentOutcome, PaymentProvider,
+    PaymentStatus, SubscriptionTier, TierConfig, TierError, TierManager,
 };
 
 #[derive(Clone)]
@@ -70,7 +62,12 @@ fn test_configs() -> HashMap<SubscriptionTier, TierConfig> {
             billing_cycle_seconds: 10,
             grace_period_seconds: 5,
             max_context_size: 4096,
-            features: vec![FeatureFlag::BasicInference, FeatureFlag::AdvancedInference, FeatureFlag::ApiAccess, FeatureFlag::BatchProcessing],
+            features: vec![
+                FeatureFlag::BasicInference,
+                FeatureFlag::AdvancedInference,
+                FeatureFlag::ApiAccess,
+                FeatureFlag::BatchProcessing,
+            ],
             allowed_models: vec![],
             minimum_tier_for_access: Some(SubscriptionTier::Pro),
         },
@@ -85,7 +82,15 @@ fn test_configs() -> HashMap<SubscriptionTier, TierConfig> {
             billing_cycle_seconds: 10,
             grace_period_seconds: 5,
             max_context_size: 8192,
-            features: vec![FeatureFlag::BasicInference, FeatureFlag::AdvancedInference, FeatureFlag::ModelTraining, FeatureFlag::BatchProcessing, FeatureFlag::PriorityQueue, FeatureFlag::ApiAccess, FeatureFlag::CustomModels],
+            features: vec![
+                FeatureFlag::BasicInference,
+                FeatureFlag::AdvancedInference,
+                FeatureFlag::ModelTraining,
+                FeatureFlag::BatchProcessing,
+                FeatureFlag::PriorityQueue,
+                FeatureFlag::ApiAccess,
+                FeatureFlag::CustomModels,
+            ],
             allowed_models: vec![],
             minimum_tier_for_access: None,
         },
@@ -94,10 +99,18 @@ fn test_configs() -> HashMap<SubscriptionTier, TierConfig> {
 }
 
 fn manager_with_outcome(outcome: PaymentOutcome) -> TierManager {
-    TierManager::new(test_configs(), Arc::new(TestPaymentProvider { outcome }), None)
+    TierManager::new(
+        test_configs(),
+        Arc::new(TestPaymentProvider { outcome }),
+        None,
+    )
 }
 
-fn sample_metadata(model_id: &str, minimum_tier: Option<SubscriptionTier>, is_experimental: bool) -> ModelMetadata {
+fn sample_metadata(
+    model_id: &str,
+    minimum_tier: Option<SubscriptionTier>,
+    is_experimental: bool,
+) -> ModelMetadata {
     ModelMetadata {
         model_id: model_id.to_string(),
         name: format!("Model {model_id}"),
@@ -121,7 +134,12 @@ fn tier_rate_limit_enforced() {
     });
     let now = 100;
     manager
-        .subscribe_user("0x00000000000000000000000000000000000000aa", SubscriptionTier::Free, false, now)
+        .subscribe_user(
+            "0x00000000000000000000000000000000000000aa",
+            SubscriptionTier::Free,
+            false,
+            now,
+        )
         .expect("subscribe");
 
     let first = manager
@@ -152,7 +170,12 @@ fn auto_renew_success_updates_subscription() {
     });
     let start = 0;
     manager
-        .subscribe_user("0x00000000000000000000000000000000000000bb", SubscriptionTier::Basic, true, start)
+        .subscribe_user(
+            "0x00000000000000000000000000000000000000bb",
+            SubscriptionTier::Basic,
+            true,
+            start,
+        )
         .expect("subscribe");
 
     let renewed = manager.process_renewals(11);
@@ -174,7 +197,12 @@ fn auto_renew_failure_marks_past_due() {
         reference: Some("fail".to_string()),
     });
     manager
-        .subscribe_user("0x00000000000000000000000000000000000000cc", SubscriptionTier::Basic, true, 0)
+        .subscribe_user(
+            "0x00000000000000000000000000000000000000cc",
+            SubscriptionTier::Basic,
+            true,
+            0,
+        )
         .expect("subscribe");
 
     let renewed = manager.process_renewals(11);
@@ -200,29 +228,57 @@ fn model_access_respects_tiers() {
         .register_model(sample_metadata("open-model", None, false))
         .expect("register");
     registry
-        .register_model(sample_metadata("pro-model", Some(SubscriptionTier::Basic), false))
+        .register_model(sample_metadata(
+            "pro-model",
+            Some(SubscriptionTier::Basic),
+            false,
+        ))
         .expect("register");
     registry
-        .register_model(sample_metadata("lab-model", Some(SubscriptionTier::Pro), true))
+        .register_model(sample_metadata(
+            "lab-model",
+            Some(SubscriptionTier::Pro),
+            true,
+        ))
         .expect("register");
 
     manager
-        .subscribe_user("0x00000000000000000000000000000000000000dd", SubscriptionTier::Basic, false, 0)
+        .subscribe_user(
+            "0x00000000000000000000000000000000000000dd",
+            SubscriptionTier::Basic,
+            false,
+            0,
+        )
         .expect("subscribe");
 
     let now = 5;
     let open_access = manager
-        .can_access_model(&registry, "0x00000000000000000000000000000000000000dd", "open-model", now)
+        .can_access_model(
+            &registry,
+            "0x00000000000000000000000000000000000000dd",
+            "open-model",
+            now,
+        )
         .expect("open access");
     assert!(open_access);
 
     let pro_access = manager
-        .can_access_model(&registry, "0x00000000000000000000000000000000000000dd", "pro-model", now)
+        .can_access_model(
+            &registry,
+            "0x00000000000000000000000000000000000000dd",
+            "pro-model",
+            now,
+        )
         .expect("pro access");
     assert!(pro_access);
 
     let lab_access = manager
-        .can_access_model(&registry, "0x00000000000000000000000000000000000000dd", "lab-model", now)
+        .can_access_model(
+            &registry,
+            "0x00000000000000000000000000000000000000dd",
+            "lab-model",
+            now,
+        )
         .expect("lab access");
     assert!(!lab_access);
 }

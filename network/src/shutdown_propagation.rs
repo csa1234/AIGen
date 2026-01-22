@@ -1,9 +1,5 @@
 use genesis::{
-    emergency_shutdown,
-    verify_ceo_signature,
-    CeoSignature,
-    GenesisConfig,
-    GenesisError,
+    emergency_shutdown, verify_ceo_signature, CeoSignature, GenesisConfig, GenesisError,
     ShutdownCommand,
 };
 use serde::{Deserialize, Serialize};

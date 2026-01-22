@@ -27,8 +27,8 @@ pub fn encrypt_private_key(secret_key: &[u8; 32], password: &str) -> Result<Encr
     let mut nonce = [0u8; 12];
     OsRng.fill_bytes(&mut nonce);
 
-    let params = Params::new(65_536, 3, 4, Some(32))
-        .map_err(|e| anyhow!("invalid argon2 params: {e}"))?;
+    let params =
+        Params::new(65_536, 3, 4, Some(32)).map_err(|e| anyhow!("invalid argon2 params: {e}"))?;
     let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
 
     let mut derived_key = Zeroizing::new([0u8; 32]);
@@ -54,8 +54,8 @@ pub fn decrypt_private_key(encrypted: &EncryptedKey, password: &str) -> Result<[
         bail!("unsupported encrypted key version: {}", encrypted.version);
     }
 
-    let params = Params::new(65_536, 3, 4, Some(32))
-        .map_err(|e| anyhow!("invalid argon2 params: {e}"))?;
+    let params =
+        Params::new(65_536, 3, 4, Some(32)).map_err(|e| anyhow!("invalid argon2 params: {e}"))?;
     let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
 
     let mut derived_key = Zeroizing::new([0u8; 32]);
@@ -65,7 +65,10 @@ pub fn decrypt_private_key(encrypted: &EncryptedKey, password: &str) -> Result<[
 
     let cipher = ChaCha20Poly1305::new(Key::from_slice(derived_key.as_ref()));
     let plaintext = cipher
-        .decrypt(Nonce::from_slice(&encrypted.nonce), encrypted.ciphertext.as_slice())
+        .decrypt(
+            Nonce::from_slice(&encrypted.nonce),
+            encrypted.ciphertext.as_slice(),
+        )
         .map_err(|_| anyhow!("decryption failed"))?;
 
     if plaintext.len() != 32 {

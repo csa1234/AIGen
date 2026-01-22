@@ -4,8 +4,8 @@ use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 use std::time::Duration;
 
-use genesis::is_shutdown;
 use futures::StreamExt;
+use genesis::is_shutdown;
 use libp2p::core::upgrade;
 use libp2p::dns;
 use libp2p::gossipsub;
@@ -23,24 +23,28 @@ use libp2p::Transport;
 use sha2::{Digest, Sha256};
 use tokio::sync::{broadcast, mpsc};
 
+use crate::config::NetworkConfig;
 use crate::events::NetworkEvent;
+use crate::events::TensorChunk;
 use crate::gossip::{
     topic_blocks, topic_model_announcements, topic_poi_proofs, topic_shutdown, topic_transactions,
     TOPIC_MODEL_ANNOUNCEMENTS, TOPIC_SHUTDOWN,
 };
+use crate::metrics::{NetworkMetrics, SharedNetworkMetrics};
+use crate::model_stream::{
+    protocol as model_stream_protocol, ModelShardRequest, ModelShardResponse, ModelStreamCodec,
+};
+use crate::model_sync::ModelShardRequestEnvelope;
 use crate::node_types::{NodeConfig, NodeType};
 use crate::protocol::NetworkMessage;
-use crate::reputation::PeerReputationManager;
 use crate::reputation::FailureReason;
+use crate::reputation::PeerReputationManager;
 use crate::shutdown_propagation::handle_shutdown_message;
 use crate::shutdown_propagation::ShutdownBroadcaster;
-use crate::tensor_stream::{protocol as tensor_stream_protocol, TensorRequest, TensorResponse, TensorStreamCodec};
-use crate::model_stream::{protocol as model_stream_protocol, ModelShardRequest, ModelShardResponse, ModelStreamCodec};
-use crate::model_sync::ModelShardRequestEnvelope;
-use crate::metrics::{NetworkMetrics, SharedNetworkMetrics};
 use crate::tensor_stream::TENSOR_CHUNK_SIZE_BYTES;
-use crate::config::NetworkConfig;
-use crate::events::TensorChunk;
+use crate::tensor_stream::{
+    protocol as tensor_stream_protocol, TensorRequest, TensorResponse, TensorStreamCodec,
+};
 
 #[derive(NetworkBehaviour)]
 #[behaviour(to_swarm = "P2PBehaviourEvent")]
@@ -191,13 +195,21 @@ impl P2PNode {
 
         let ping = ping::Behaviour::new(ping::Config::new().with_interval(Duration::from_secs(10)));
 
-        let rr_protocols = std::iter::once((tensor_stream_protocol(), request_response::ProtocolSupport::Full));
+        let rr_protocols = std::iter::once((
+            tensor_stream_protocol(),
+            request_response::ProtocolSupport::Full,
+        ));
         let rr_config = request_response::Config::default();
-        let request_response = request_response::Behaviour::<TensorStreamCodec>::new(rr_protocols, rr_config);
+        let request_response =
+            request_response::Behaviour::<TensorStreamCodec>::new(rr_protocols, rr_config);
 
-        let model_protocols = std::iter::once((model_stream_protocol(), request_response::ProtocolSupport::Full));
+        let model_protocols = std::iter::once((
+            model_stream_protocol(),
+            request_response::ProtocolSupport::Full,
+        ));
         let model_rr_config = request_response::Config::default();
-        let model_stream = request_response::Behaviour::<ModelStreamCodec>::new(model_protocols, model_rr_config);
+        let model_stream =
+            request_response::Behaviour::<ModelStreamCodec>::new(model_protocols, model_rr_config);
 
         let behaviour = P2PBehaviour {
             kademlia,
@@ -214,23 +226,44 @@ impl P2PNode {
             .listen_on(config.listen_addr)
             .map_err(|e| crate::NetworkError::Serialization(e.to_string()))?;
 
-        let role = node_config.as_ref().map(|c| c.node_type).unwrap_or(NodeType::FullNode);
+        let role = node_config
+            .as_ref()
+            .map(|c| c.node_type)
+            .unwrap_or(NodeType::FullNode);
         match role {
             NodeType::Miner => {
-                let _ = swarm.behaviour_mut().gossipsub.subscribe(&topic_transactions());
-                let _ = swarm.behaviour_mut().gossipsub.subscribe(&topic_poi_proofs());
-                let _ = swarm.behaviour_mut().gossipsub.subscribe(&topic_model_announcements());
+                let _ = swarm
+                    .behaviour_mut()
+                    .gossipsub
+                    .subscribe(&topic_transactions());
+                let _ = swarm
+                    .behaviour_mut()
+                    .gossipsub
+                    .subscribe(&topic_poi_proofs());
+                let _ = swarm
+                    .behaviour_mut()
+                    .gossipsub
+                    .subscribe(&topic_model_announcements());
                 let _ = swarm.behaviour_mut().gossipsub.subscribe(&topic_shutdown());
             }
             NodeType::Validator => {
                 let _ = swarm.behaviour_mut().gossipsub.subscribe(&topic_blocks());
-                let _ = swarm.behaviour_mut().gossipsub.subscribe(&topic_poi_proofs());
-                let _ = swarm.behaviour_mut().gossipsub.subscribe(&topic_model_announcements());
+                let _ = swarm
+                    .behaviour_mut()
+                    .gossipsub
+                    .subscribe(&topic_poi_proofs());
+                let _ = swarm
+                    .behaviour_mut()
+                    .gossipsub
+                    .subscribe(&topic_model_announcements());
                 let _ = swarm.behaviour_mut().gossipsub.subscribe(&topic_shutdown());
             }
             NodeType::LightClient => {
                 let _ = swarm.behaviour_mut().gossipsub.subscribe(&topic_blocks());
-                let _ = swarm.behaviour_mut().gossipsub.subscribe(&topic_model_announcements());
+                let _ = swarm
+                    .behaviour_mut()
+                    .gossipsub
+                    .subscribe(&topic_model_announcements());
                 let _ = swarm.behaviour_mut().gossipsub.subscribe(&topic_shutdown());
             }
             NodeType::FullNode => {
@@ -239,8 +272,14 @@ impl P2PNode {
                     .behaviour_mut()
                     .gossipsub
                     .subscribe(&topic_transactions());
-                let _ = swarm.behaviour_mut().gossipsub.subscribe(&topic_poi_proofs());
-                let _ = swarm.behaviour_mut().gossipsub.subscribe(&topic_model_announcements());
+                let _ = swarm
+                    .behaviour_mut()
+                    .gossipsub
+                    .subscribe(&topic_poi_proofs());
+                let _ = swarm
+                    .behaviour_mut()
+                    .gossipsub
+                    .subscribe(&topic_model_announcements());
                 let _ = swarm.behaviour_mut().gossipsub.subscribe(&topic_shutdown());
             }
         }
@@ -268,7 +307,9 @@ impl P2PNode {
                 outgoing_normal: VecDeque::new(),
                 metrics,
                 proof_store: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
-                model_shard_store: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+                model_shard_store: Arc::new(
+                    std::sync::Mutex::new(std::collections::HashMap::new()),
+                ),
                 model_shard_counts: Arc::new(std::sync::Mutex::new(HashMap::new())),
             },
             event_rx,
@@ -415,16 +456,32 @@ impl P2PNode {
         }
     }
 
-    pub fn request_tensor(&mut self, peer: PeerId, poi_proof_hash: [u8; 32], chunk_index: u32) -> request_response::OutboundRequestId {
-        let req = TensorRequest { poi_proof_hash, chunk_index };
+    pub fn request_tensor(
+        &mut self,
+        peer: PeerId,
+        poi_proof_hash: [u8; 32],
+        chunk_index: u32,
+    ) -> request_response::OutboundRequestId {
+        let req = TensorRequest {
+            poi_proof_hash,
+            chunk_index,
+        };
         self.swarm
             .behaviour_mut()
             .request_response
             .send_request(&peer, req)
     }
 
-    pub fn request_model_shard(&mut self, peer: PeerId, model_id: String, shard_index: u32) -> request_response::OutboundRequestId {
-        let req = ModelShardRequest { model_id, shard_index };
+    pub fn request_model_shard(
+        &mut self,
+        peer: PeerId,
+        model_id: String,
+        shard_index: u32,
+    ) -> request_response::OutboundRequestId {
+        let req = ModelShardRequest {
+            model_id,
+            shard_index,
+        };
         self.swarm
             .behaviour_mut()
             .model_stream
@@ -439,10 +496,16 @@ impl P2PNode {
             SwarmEvent::ConnectionClosed { .. } => {
                 self.metrics.dec_peers_connected();
             }
-            SwarmEvent::Behaviour(P2PBehaviourEvent::Kademlia(kad::Event::RoutingUpdated { peer, .. })) => {
+            SwarmEvent::Behaviour(P2PBehaviourEvent::Kademlia(kad::Event::RoutingUpdated {
+                peer,
+                ..
+            })) => {
                 let _ = self.event_tx.send(NetworkEvent::PeerDiscovered(peer)).await;
             }
-            SwarmEvent::Behaviour(P2PBehaviourEvent::Gossipsub(gossipsub::Event::Message { message, .. })) => {
+            SwarmEvent::Behaviour(P2PBehaviourEvent::Gossipsub(gossipsub::Event::Message {
+                message,
+                ..
+            })) => {
                 self.metrics.inc_messages_received();
                 self.metrics.add_bytes_received(message.data.len() as u64);
 
@@ -471,7 +534,11 @@ impl P2PNode {
 
                 if message.topic.as_str() == TOPIC_MODEL_ANNOUNCEMENTS {
                     match NetworkMessage::deserialize(&message.data) {
-                        Ok(NetworkMessage::ModelAnnouncement { model_id, shard_index, .. }) => {
+                        Ok(NetworkMessage::ModelAnnouncement {
+                            model_id,
+                            shard_index,
+                            ..
+                        }) => {
                             let event = NetworkEvent::ModelShardAnnounced {
                                 model_id,
                                 shard_index,
@@ -495,7 +562,8 @@ impl P2PNode {
                         _ => {
                             if let Some(peer) = source {
                                 let was_banned = self.reputation_manager.is_banned(&peer);
-                                self.reputation_manager.record_failure(peer, FailureReason::MalformedMessage);
+                                self.reputation_manager
+                                    .record_failure(peer, FailureReason::MalformedMessage);
                                 if !was_banned && self.reputation_manager.is_banned(&peer) {
                                     self.metrics.inc_reputation_bans();
                                 }
@@ -515,7 +583,8 @@ impl P2PNode {
                     Err(_) => {
                         if let Some(peer) = source {
                             let was_banned = self.reputation_manager.is_banned(&peer);
-                            self.reputation_manager.record_failure(peer, FailureReason::MalformedMessage);
+                            self.reputation_manager
+                                .record_failure(peer, FailureReason::MalformedMessage);
                             if !was_banned && self.reputation_manager.is_banned(&peer) {
                                 self.metrics.inc_reputation_bans();
                             }
@@ -523,179 +592,192 @@ impl P2PNode {
                     }
                 }
             }
-            SwarmEvent::Behaviour(P2PBehaviourEvent::RequestResponse(rr_event)) => {
-                match rr_event {
-                    request_response::Event::Message { peer, message } => {
-                        if self.reputation_manager.is_banned(&peer) {
-                            return;
+            SwarmEvent::Behaviour(P2PBehaviourEvent::RequestResponse(rr_event)) => match rr_event {
+                request_response::Event::Message { peer, message } => {
+                    if self.reputation_manager.is_banned(&peer) {
+                        return;
+                    }
+
+                    match message {
+                        request_response::Message::Request {
+                            request, channel, ..
+                        } => {
+                            let bytes = self
+                                .proof_store
+                                .lock()
+                                .ok()
+                                .and_then(|s| s.get(&request.poi_proof_hash).cloned());
+
+                            if bytes.is_none() {
+                                let was_banned = self.reputation_manager.is_banned(&peer);
+                                self.reputation_manager
+                                    .record_failure(peer, FailureReason::Timeout);
+                                if !was_banned && self.reputation_manager.is_banned(&peer) {
+                                    self.metrics.inc_reputation_bans();
+                                }
+                                return;
+                            }
+                            let bytes = bytes.unwrap();
+
+                            let total_chunks = bytes.len().div_ceil(TENSOR_CHUNK_SIZE_BYTES) as u32;
+                            let start = request.chunk_index as usize * TENSOR_CHUNK_SIZE_BYTES;
+                            if start >= bytes.len() {
+                                let was_banned = self.reputation_manager.is_banned(&peer);
+                                self.reputation_manager
+                                    .record_failure(peer, FailureReason::MalformedMessage);
+                                if !was_banned && self.reputation_manager.is_banned(&peer) {
+                                    self.metrics.inc_reputation_bans();
+                                }
+                                return;
+                            }
+                            let end = (start + TENSOR_CHUNK_SIZE_BYTES).min(bytes.len());
+                            let chunk = bytes[start..end].to_vec();
+
+                            let response = TensorResponse {
+                                request_id: 0,
+                                chunk_index: request.chunk_index,
+                                total_chunks,
+                                data: chunk,
+                                compression: consensus::CompressionMethod::None,
+                                original_size: bytes.len() as u64,
+                            };
+
+                            let _ = self
+                                .swarm
+                                .behaviour_mut()
+                                .request_response
+                                .send_response(channel, response);
+                            self.reputation_manager.record_success(peer);
                         }
+                        request_response::Message::Response { response, .. } => {
+                            let chunk = TensorChunk {
+                                request_id: response.request_id,
+                                chunk_index: response.chunk_index,
+                                total_chunks: response.total_chunks,
+                                data: response.data,
+                                compression: response.compression,
+                            };
 
-                        match message {
-                            request_response::Message::Request { request, channel, .. } => {
-                                let bytes = self
-                                    .proof_store
-                                    .lock()
-                                    .ok()
-                                    .and_then(|s| s.get(&request.poi_proof_hash).cloned());
+                            let _ = self
+                                .event_tx
+                                .send(NetworkEvent::TensorChunkReceived(chunk))
+                                .await;
+                            self.reputation_manager.record_success(peer);
+                        }
+                    }
+                }
+                request_response::Event::OutboundFailure { peer, .. } => {
+                    let was_banned = self.reputation_manager.is_banned(&peer);
+                    self.reputation_manager
+                        .record_failure(peer, FailureReason::Timeout);
+                    if !was_banned && self.reputation_manager.is_banned(&peer) {
+                        self.metrics.inc_reputation_bans();
+                    }
+                }
+                request_response::Event::InboundFailure { peer, .. } => {
+                    let was_banned = self.reputation_manager.is_banned(&peer);
+                    self.reputation_manager
+                        .record_failure(peer, FailureReason::MalformedMessage);
+                    if !was_banned && self.reputation_manager.is_banned(&peer) {
+                        self.metrics.inc_reputation_bans();
+                    }
+                }
+                _ => {}
+            },
+            SwarmEvent::Behaviour(P2PBehaviourEvent::ModelStream(ms_event)) => match ms_event {
+                request_response::Event::Message { peer, message } => {
+                    if self.reputation_manager.is_banned(&peer) {
+                        return;
+                    }
 
-                                if bytes.is_none() {
-                                    let was_banned = self.reputation_manager.is_banned(&peer);
-                                    self.reputation_manager.record_failure(peer, FailureReason::Timeout);
-                                    if !was_banned && self.reputation_manager.is_banned(&peer) {
-                                        self.metrics.inc_reputation_bans();
-                                    }
-                                    return;
-                                }
-                                let bytes = bytes.unwrap();
+                    match message {
+                        request_response::Message::Request {
+                            request, channel, ..
+                        } => {
+                            let shard_data = self.model_shard_store.lock().ok().and_then(|s| {
+                                s.get(&(request.model_id.clone(), request.shard_index))
+                                    .cloned()
+                            });
+                            let total_shards = self
+                                .model_shard_counts
+                                .lock()
+                                .ok()
+                                .and_then(|s| s.get(&request.model_id).copied());
 
-                                let total_chunks = bytes.len().div_ceil(TENSOR_CHUNK_SIZE_BYTES) as u32;
-                                let start = request.chunk_index as usize * TENSOR_CHUNK_SIZE_BYTES;
-                                if start >= bytes.len() {
-                                    let was_banned = self.reputation_manager.is_banned(&peer);
-                                    self.reputation_manager.record_failure(peer, FailureReason::MalformedMessage);
-                                    if !was_banned && self.reputation_manager.is_banned(&peer) {
-                                        self.metrics.inc_reputation_bans();
-                                    }
-                                    return;
-                                }
-                                let end = (start + TENSOR_CHUNK_SIZE_BYTES).min(bytes.len());
-                                let chunk = bytes[start..end].to_vec();
-
-                                let response = TensorResponse {
-                                    request_id: 0,
-                                    chunk_index: request.chunk_index,
-                                    total_chunks,
-                                    data: chunk,
-                                    compression: consensus::CompressionMethod::None,
-                                    original_size: bytes.len() as u64,
+                            if let (Some(data), Some(total_shards)) = (shard_data, total_shards) {
+                                let hash = compute_shard_hash(&data);
+                                let response = ModelShardResponse {
+                                    model_id: request.model_id,
+                                    shard_index: request.shard_index,
+                                    total_shards,
+                                    data: data.clone(),
+                                    hash,
+                                    size: data.len() as u64,
                                 };
-
                                 let _ = self
                                     .swarm
                                     .behaviour_mut()
-                                    .request_response
+                                    .model_stream
                                     .send_response(channel, response);
                                 self.reputation_manager.record_success(peer);
-                            }
-                            request_response::Message::Response { response, .. } => {
-                                let chunk = TensorChunk {
-                                    request_id: response.request_id,
-                                    chunk_index: response.chunk_index,
-                                    total_chunks: response.total_chunks,
-                                    data: response.data,
-                                    compression: response.compression,
-                                };
-
-                                let _ = self.event_tx.send(NetworkEvent::TensorChunkReceived(chunk)).await;
-                                self.reputation_manager.record_success(peer);
+                                self.metrics.inc_model_shards_sent();
+                                self.metrics.add_model_bytes_sent(data.len() as u64);
                             }
                         }
-                    }
-                    request_response::Event::OutboundFailure { peer, .. } => {
-                        let was_banned = self.reputation_manager.is_banned(&peer);
-                        self.reputation_manager.record_failure(peer, FailureReason::Timeout);
-                        if !was_banned && self.reputation_manager.is_banned(&peer) {
-                            self.metrics.inc_reputation_bans();
-                        }
-                    }
-                    request_response::Event::InboundFailure { peer, .. } => {
-                        let was_banned = self.reputation_manager.is_banned(&peer);
-                        self.reputation_manager.record_failure(peer, FailureReason::MalformedMessage);
-                        if !was_banned && self.reputation_manager.is_banned(&peer) {
-                            self.metrics.inc_reputation_bans();
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            SwarmEvent::Behaviour(P2PBehaviourEvent::ModelStream(ms_event)) => {
-                match ms_event {
-                    request_response::Event::Message { peer, message } => {
-                        if self.reputation_manager.is_banned(&peer) {
-                            return;
-                        }
-
-                        match message {
-                            request_response::Message::Request { request, channel, .. } => {
-                                let shard_data = self
-                                    .model_shard_store
-                                    .lock()
-                                    .ok()
-                                    .and_then(|s| s.get(&(request.model_id.clone(), request.shard_index)).cloned());
-                                let total_shards = self
-                                    .model_shard_counts
-                                    .lock()
-                                    .ok()
-                                    .and_then(|s| s.get(&request.model_id).copied());
-
-                                if let (Some(data), Some(total_shards)) = (shard_data, total_shards) {
-                                    let hash = compute_shard_hash(&data);
-                                    let response = ModelShardResponse {
-                                        model_id: request.model_id,
-                                        shard_index: request.shard_index,
-                                        total_shards,
-                                        data: data.clone(),
-                                        hash,
-                                        size: data.len() as u64,
-                                    };
-                                    let _ = self.swarm.behaviour_mut().model_stream.send_response(channel, response);
-                                    self.reputation_manager.record_success(peer);
-                                    self.metrics.inc_model_shards_sent();
-                                    self.metrics.add_model_bytes_sent(data.len() as u64);
+                        request_response::Message::Response { response, .. } => {
+                            let actual_hash = compute_shard_hash(&response.data);
+                            if actual_hash != response.hash {
+                                let was_banned = self.reputation_manager.is_banned(&peer);
+                                self.reputation_manager
+                                    .record_failure(peer, FailureReason::ModelHashMismatch);
+                                if !was_banned && self.reputation_manager.is_banned(&peer) {
+                                    self.metrics.inc_reputation_bans();
                                 }
+                                self.metrics.inc_model_transfer_failures();
+                                return;
                             }
-                            request_response::Message::Response { response, .. } => {
-                                let actual_hash = compute_shard_hash(&response.data);
-                                if actual_hash != response.hash {
-                                    let was_banned = self.reputation_manager.is_banned(&peer);
-                                    self.reputation_manager.record_failure(peer, FailureReason::ModelHashMismatch);
-                                    if !was_banned && self.reputation_manager.is_banned(&peer) {
-                                        self.metrics.inc_reputation_bans();
-                                    }
-                                    self.metrics.inc_model_transfer_failures();
-                                    return;
-                                }
 
-                                let ModelShardResponse {
-                                    model_id,
-                                    shard_index,
-                                    data,
-                                    hash,
-                                    size,
-                                    ..
-                                } = response;
-                                let event = NetworkEvent::ModelShardReceived {
-                                    model_id,
-                                    shard_index,
-                                    data,
-                                    hash,
-                                };
-                                let _ = self.event_tx.send(event).await;
-                                self.reputation_manager.record_success(peer);
-                                self.metrics.inc_model_shards_received();
-                                self.metrics.add_model_bytes_received(size);
-                            }
+                            let ModelShardResponse {
+                                model_id,
+                                shard_index,
+                                data,
+                                hash,
+                                size,
+                                ..
+                            } = response;
+                            let event = NetworkEvent::ModelShardReceived {
+                                model_id,
+                                shard_index,
+                                data,
+                                hash,
+                            };
+                            let _ = self.event_tx.send(event).await;
+                            self.reputation_manager.record_success(peer);
+                            self.metrics.inc_model_shards_received();
+                            self.metrics.add_model_bytes_received(size);
                         }
                     }
-                    request_response::Event::OutboundFailure { peer, .. } => {
-                        let was_banned = self.reputation_manager.is_banned(&peer);
-                        self.reputation_manager.record_failure(peer, FailureReason::ModelTransferTimeout);
-                        if !was_banned && self.reputation_manager.is_banned(&peer) {
-                            self.metrics.inc_reputation_bans();
-                        }
-                        self.metrics.inc_model_transfer_failures();
-                    }
-                    request_response::Event::InboundFailure { peer, .. } => {
-                        let was_banned = self.reputation_manager.is_banned(&peer);
-                        self.reputation_manager.record_failure(peer, FailureReason::InvalidModelShard);
-                        if !was_banned && self.reputation_manager.is_banned(&peer) {
-                            self.metrics.inc_reputation_bans();
-                        }
-                        self.metrics.inc_model_transfer_failures();
-                    }
-                    _ => {}
                 }
-            }
+                request_response::Event::OutboundFailure { peer, .. } => {
+                    let was_banned = self.reputation_manager.is_banned(&peer);
+                    self.reputation_manager
+                        .record_failure(peer, FailureReason::ModelTransferTimeout);
+                    if !was_banned && self.reputation_manager.is_banned(&peer) {
+                        self.metrics.inc_reputation_bans();
+                    }
+                    self.metrics.inc_model_transfer_failures();
+                }
+                request_response::Event::InboundFailure { peer, .. } => {
+                    let was_banned = self.reputation_manager.is_banned(&peer);
+                    self.reputation_manager
+                        .record_failure(peer, FailureReason::InvalidModelShard);
+                    if !was_banned && self.reputation_manager.is_banned(&peer) {
+                        self.metrics.inc_reputation_bans();
+                    }
+                    self.metrics.inc_model_transfer_failures();
+                }
+                _ => {}
+            },
             SwarmEvent::Behaviour(P2PBehaviourEvent::Identify(_)) => {}
             SwarmEvent::Behaviour(P2PBehaviourEvent::Ping(_)) => {}
             _ => {}

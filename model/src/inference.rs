@@ -20,6 +20,7 @@ use thiserror::Error;
 use tokio::fs;
 use tokio::sync::Mutex as TokioMutex;
 
+use crate::ads::AdManager;
 use crate::registry::ModelError;
 use crate::sharding::{combine_shards, verify_shard_integrity, ShardError};
 use crate::storage::{StorageBackend, StorageError};
@@ -72,8 +73,12 @@ fn init_onnx_runtime() -> Result<(), InferenceError> {
             Ok(value) if !value.trim().is_empty() => PathBuf::from(value),
             _ => PathBuf::from(default_ort_dylib_name()),
         };
-        let builder = ort::init_from(&dylib_path)
-            .map_err(|err| format!("failed to initialize ONNX Runtime from {}: {err}", dylib_path.display()))?;
+        let builder = ort::init_from(&dylib_path).map_err(|err| {
+            format!(
+                "failed to initialize ONNX Runtime from {}: {err}",
+                dylib_path.display()
+            )
+        })?;
         builder.commit();
         Ok(())
     });
@@ -161,7 +166,10 @@ impl LoadedModel {
         self.parse_outputs(outputs)
     }
 
-    fn order_inputs(&self, inputs: Vec<InferenceTensor>) -> Result<Vec<InferenceTensor>, InferenceError> {
+    fn order_inputs(
+        &self,
+        inputs: Vec<InferenceTensor>,
+    ) -> Result<Vec<InferenceTensor>, InferenceError> {
         if self.input_names.is_empty() {
             return Ok(inputs);
         }
@@ -189,13 +197,19 @@ impl LoadedModel {
         Ok(ordered)
     }
 
-    fn tensor_to_value(&self, tensor: &InferenceTensor) -> Result<(String, Tensor<f32>), InferenceError> {
+    fn tensor_to_value(
+        &self,
+        tensor: &InferenceTensor,
+    ) -> Result<(String, Tensor<f32>), InferenceError> {
         let value = Tensor::from_array((tensor.shape.clone(), tensor.data.clone()))
             .map_err(|err: ort::Error| InferenceError::InvalidInput(err.to_string()))?;
         Ok((tensor.name.clone(), value))
     }
 
-    fn parse_outputs(&self, outputs: SessionOutputs<'_>) -> Result<Vec<InferenceOutput>, InferenceError> {
+    fn parse_outputs(
+        &self,
+        outputs: SessionOutputs<'_>,
+    ) -> Result<Vec<InferenceOutput>, InferenceError> {
         let mut results = Vec::with_capacity(outputs.len());
         for (index, (name, output)) in outputs.into_iter().enumerate() {
             let (shape, data) = output
@@ -251,7 +265,8 @@ impl InferenceMetrics {
     }
 
     pub fn inc_inference_failures(&self) {
-        self.total_inference_failures.fetch_add(1, Ordering::Relaxed);
+        self.total_inference_failures
+            .fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn inc_cache_evictions(&self) {
@@ -264,16 +279,19 @@ impl InferenceMetrics {
     }
 
     pub fn inc_model_load_failures(&self) {
-        self.total_model_load_failures.fetch_add(1, Ordering::Relaxed);
+        self.total_model_load_failures
+            .fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn add_loaded_bytes(&self, bytes: u64) {
         self.total_bytes_loaded.fetch_add(bytes, Ordering::Relaxed);
-        self.current_memory_bytes.fetch_add(bytes, Ordering::Relaxed);
+        self.current_memory_bytes
+            .fetch_add(bytes, Ordering::Relaxed);
     }
 
     pub fn sub_loaded_bytes(&self, bytes: u64) {
-        self.current_memory_bytes.fetch_sub(bytes, Ordering::Relaxed);
+        self.current_memory_bytes
+            .fetch_sub(bytes, Ordering::Relaxed);
         self.current_models_loaded.fetch_sub(1, Ordering::Relaxed);
     }
 
@@ -281,7 +299,11 @@ impl InferenceMetrics {
         self.total_inference_time_ms
             .fetch_add(sample_ms, Ordering::Relaxed);
         let prev = self.average_inference_time_ms.load(Ordering::Relaxed);
-        let next = if prev == 0 { sample_ms } else { (prev + sample_ms) / 2 };
+        let next = if prev == 0 {
+            sample_ms
+        } else {
+            (prev + sample_ms) / 2
+        };
         self.average_inference_time_ms
             .store(next, Ordering::Relaxed);
     }
@@ -366,7 +388,9 @@ impl ModelCache {
 
     pub fn model_exists(&self, model_id: &str) -> Result<bool, InferenceError> {
         ensure_running()?;
-        self.registry.model_exists(model_id).map_err(map_model_error)
+        self.registry
+            .model_exists(model_id)
+            .map_err(map_model_error)
     }
 
     pub async fn get_or_load(&self, model_id: &str) -> Result<Arc<LoadedModel>, InferenceError> {
@@ -412,9 +436,7 @@ impl ModelCache {
                 if let Err(err) = self.enforce_memory_limit().await {
                     self.models.remove(model_id);
                     self.metrics.sub_loaded_bytes(memory_size);
-                    if is_core
-                        && self.core_model_id.read().as_deref() == Some(model_id)
-                    {
+                    if is_core && self.core_model_id.read().as_deref() == Some(model_id) {
                         *self.core_model_id.write() = None;
                     }
                     let model_dir = model
@@ -423,7 +445,10 @@ impl ModelCache {
                         .map(Path::to_path_buf)
                         .unwrap_or_else(|| self.cache_dir.join(model_id));
                     if fs::remove_dir_all(&model_dir).await.is_err() {
-                        println!("failed to remove cached model directory: {}", model_dir.display());
+                        println!(
+                            "failed to remove cached model directory: {}",
+                            model_dir.display()
+                        );
                     }
                     return Err(err);
                 }
@@ -490,7 +515,10 @@ impl ModelCache {
 
         let model_dir = self.cache_dir.join(model_id);
         if fs::remove_dir_all(&model_dir).await.is_err() {
-            println!("failed to remove cached model directory: {}", model_dir.display());
+            println!(
+                "failed to remove cached model directory: {}",
+                model_dir.display()
+            );
         }
         Ok(())
     }
@@ -536,10 +564,16 @@ async fn load_model_from_shards(
     let metadata = registry.get_model(model_id).map_err(map_model_error)?;
     let shards = registry.list_shards(model_id).map_err(map_model_error)?;
     if shards.is_empty() {
-        return Err(InferenceError::ModelLoadFailed("no shards registered".to_string()));
+        return Err(InferenceError::ModelLoadFailed(
+            "no shards registered".to_string(),
+        ));
     }
 
-    println!("loading model from shards: model_id={}, shards={}", model_id, shards.len());
+    println!(
+        "loading model from shards: model_id={}, shards={}",
+        model_id,
+        shards.len()
+    );
 
     let model_dir = cache_dir.join(model_id);
     let shard_dir = model_dir.join("shards");
@@ -552,17 +586,21 @@ async fn load_model_from_shards(
         storage.download_shard(shard, &shard_path).await?;
         let valid = verify_shard_integrity(&shard_path, &shard.hash).await?;
         if !valid {
-            println!("shard integrity check failed: model={}, shard={}", model_id, shard.shard_index);
+            println!(
+                "shard integrity check failed: model={}, shard={}",
+                model_id, shard.shard_index
+            );
             return Err(InferenceError::ShardError(ShardError::HashMismatch(
                 shard.shard_index,
             )));
         }
     }
 
-    if fs::metadata(&model_path).await.is_ok()
-        && fs::remove_file(&model_path).await.is_err()
-    {
-        println!("failed to remove cached model file: {}", model_path.display());
+    if fs::metadata(&model_path).await.is_ok() && fs::remove_file(&model_path).await.is_err() {
+        println!(
+            "failed to remove cached model file: {}",
+            model_path.display()
+        );
     }
     combine_shards(&shards, &shard_dir, &model_path).await?;
 
@@ -615,6 +653,7 @@ fn create_onnx_session(model_path: &Path, num_threads: usize) -> Result<Session,
 pub struct InferenceEngine {
     cache: Arc<ModelCache>,
     metrics: SharedInferenceMetrics,
+    ad_manager: Option<Arc<AdManager>>,
 }
 
 impl InferenceEngine {
@@ -624,6 +663,7 @@ impl InferenceEngine {
         cache_dir: PathBuf,
         max_memory_bytes: usize,
         num_threads: usize,
+        ad_manager: Option<Arc<AdManager>>,
     ) -> Self {
         let metrics = Arc::new(InferenceMetrics::default());
         let cache = Arc::new(ModelCache::new(
@@ -634,7 +674,11 @@ impl InferenceEngine {
             num_threads,
             metrics.clone(),
         ));
-        Self { cache, metrics }
+        Self {
+            cache,
+            metrics,
+            ad_manager,
+        }
     }
 
     pub fn cache(&self) -> Arc<ModelCache> {
@@ -665,6 +709,7 @@ impl InferenceEngine {
         &self,
         model_id: &str,
         inputs: Vec<InferenceTensor>,
+        user_address: &str,
     ) -> Result<Vec<InferenceOutput>, InferenceError> {
         ensure_running()?;
         let start = Instant::now();
@@ -676,7 +721,42 @@ impl InferenceEngine {
         match result {
             Ok(outputs) => {
                 self.metrics.inc_inference_runs();
-                Ok(outputs)
+                if let Some(ad_manager) = self.ad_manager.as_ref() {
+                    match ad_manager.should_inject_ad(user_address) {
+                        Ok(true) => match ad_manager.inject_ad_into_outputs(
+                            outputs.clone(),
+                            user_address,
+                            model_id,
+                        ) {
+                            Ok((modified, template_id, tier)) => {
+                                if !template_id.is_empty() {
+                                    let _ = ad_manager.record_impression(
+                                        user_address,
+                                        &template_id,
+                                        model_id,
+                                        tier,
+                                    );
+                                    println!(
+                                        "ad injected for user {}, template {}",
+                                        user_address, template_id
+                                    );
+                                }
+                                Ok(modified)
+                            }
+                            Err(err) => {
+                                println!("ad injection failed: {}", err);
+                                Ok(outputs)
+                            }
+                        },
+                        Ok(false) => Ok(outputs),
+                        Err(err) => {
+                            println!("ad injection check failed: {}", err);
+                            Ok(outputs)
+                        }
+                    }
+                } else {
+                    Ok(outputs)
+                }
             }
             Err(err) => {
                 self.metrics.inc_inference_failures();

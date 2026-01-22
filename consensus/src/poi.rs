@@ -1,17 +1,11 @@
+use base64::Engine;
 use blockchain_core::hash_data;
 use blockchain_core::types::Amount;
 use blockchain_core::{Block, BlockHash, Transaction};
-use base64::Engine;
 use genesis::{check_shutdown, is_shutdown, GenesisError};
 use model::{
-    deterministic_inference,
-    model_exists,
-    outputs_match,
-    InferenceOutput,
-    InferenceTensor,
-    VerificationCache,
-    VerificationError,
-    DEFAULT_VERIFICATION_CACHE_CAPACITY,
+    deterministic_inference, model_exists, outputs_match, InferenceOutput, InferenceTensor,
+    VerificationCache, VerificationError, DEFAULT_VERIFICATION_CACHE_CAPACITY,
     DEFAULT_VERIFICATION_EPSILON,
 };
 use serde::{Deserialize, Serialize};
@@ -105,9 +99,9 @@ static INFERENCE_VERIFICATION_CACHE: OnceLock<VerificationCache> = OnceLock::new
 pub fn set_inference_verification_config(
     config: InferenceVerificationConfig,
 ) -> Result<(), ConsensusError> {
-    INFERENCE_VERIFICATION_CONFIG
-        .set(config)
-        .map_err(|_| ConsensusError::VerificationError("verification config already set".to_string()))
+    INFERENCE_VERIFICATION_CONFIG.set(config).map_err(|_| {
+        ConsensusError::VerificationError("verification config already set".to_string())
+    })
 }
 
 fn inference_verification_config() -> &'static InferenceVerificationConfig {
@@ -115,9 +109,8 @@ fn inference_verification_config() -> &'static InferenceVerificationConfig {
 }
 
 fn inference_verification_cache() -> &'static VerificationCache {
-    INFERENCE_VERIFICATION_CACHE.get_or_init(|| {
-        VerificationCache::new(inference_verification_config().cache_capacity)
-    })
+    INFERENCE_VERIFICATION_CACHE
+        .get_or_init(|| VerificationCache::new(inference_verification_config().cache_capacity))
 }
 
 fn default_inference_timeout_ms() -> u64 {
@@ -258,7 +251,11 @@ impl PoIProof {
                 let input_bytes = base64::engine::general_purpose::STANDARD
                     .decode(input)
                     .map_err(|e| ConsensusError::Serialization(e.to_string()))?;
-                let ok = verify_gradient_descent(&input_bytes, &self.output_data, &self.computation_metadata)?;
+                let ok = verify_gradient_descent(
+                    &input_bytes,
+                    &self.output_data,
+                    &self.computation_metadata,
+                )?;
                 if !ok {
                     return Err(ConsensusError::InvalidProof);
                 }
@@ -272,7 +269,8 @@ impl PoIProof {
                 let input_bytes = base64::engine::general_purpose::STANDARD
                     .decode(input)
                     .map_err(|e| ConsensusError::Serialization(e.to_string()))?;
-                let ok = verify_inference(&input_bytes, &self.output_data, &self.computation_metadata)?;
+                let ok =
+                    verify_inference(&input_bytes, &self.output_data, &self.computation_metadata)?;
                 if !ok {
                     return Err(ConsensusError::InvalidProof);
                 }
@@ -495,9 +493,9 @@ where
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
                 Err(VerificationError::Serialization("timeout".to_string()))
             }
-            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-                Err(VerificationError::Serialization("verification channel disconnected".to_string()))
-            }
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => Err(
+                VerificationError::Serialization("verification channel disconnected".to_string()),
+            ),
         };
     }
 

@@ -17,13 +17,20 @@ use crate::rpc::types::{
 #[rpc(server)]
 pub trait PublicRpc {
     #[method(name = "getBlock")]
-    async fn get_block(&self, block_height: Option<u64>, block_hash: Option<String>) -> Result<Option<BlockResponse>, RpcError>;
+    async fn get_block(
+        &self,
+        block_height: Option<u64>,
+        block_hash: Option<String>,
+    ) -> Result<Option<BlockResponse>, RpcError>;
 
     #[method(name = "getBalance")]
     async fn get_balance(&self, address: String) -> Result<BalanceResponse, RpcError>;
 
     #[method(name = "submitTransaction")]
-    async fn submit_transaction(&self, transaction: TransactionResponse) -> Result<SubmitTransactionResponse, RpcError>;
+    async fn submit_transaction(
+        &self,
+        transaction: TransactionResponse,
+    ) -> Result<SubmitTransactionResponse, RpcError>;
 
     #[method(name = "getChainInfo")]
     async fn get_chain_info(&self) -> Result<ChainInfoResponse, RpcError>;
@@ -32,7 +39,10 @@ pub trait PublicRpc {
     async fn health(&self) -> Result<HealthResponse, RpcError>;
 
     #[method(name = "getPendingTransactions")]
-    async fn get_pending_transactions(&self, limit: Option<usize>) -> Result<Vec<TransactionResponse>, RpcError>;
+    async fn get_pending_transactions(
+        &self,
+        limit: Option<usize>,
+    ) -> Result<Vec<TransactionResponse>, RpcError>;
 }
 
 #[derive(Clone)]
@@ -177,34 +187,35 @@ impl PublicRpcServer for RpcMethods {
     }
 
     async fn health(&self) -> Result<HealthResponse, RpcError> {
-        let uptime_seconds = match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
-            Ok(d) => d.as_secs(),
-            Err(_) => 0,
-        };
+        let uptime_seconds =
+            match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+                Ok(d) => d.as_secs(),
+                Err(_) => 0,
+            };
 
         let bc = self.blockchain.lock().await;
 
         let shutdown_active = genesis::is_shutdown() || bc.shutdown;
-        let latest_block_time = bc
-            .blocks
-            .last()
-            .map(|b| b.header.timestamp.0)
-            .unwrap_or(0);
+        let latest_block_time = bc.blocks.last().map(|b| b.header.timestamp.0).unwrap_or(0);
 
         let now_ts = match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
             Ok(d) => d.as_secs() as i64,
             Err(_) => 0,
         };
 
-        let peer_count: u64 = self
-            .network_metrics
-            .peers_connected
-            .load(Ordering::Relaxed);
-        let sync_status = if bc.blocks.len() <= 1 { "syncing" } else { "synced" };
+        let peer_count: u64 = self.network_metrics.peers_connected.load(Ordering::Relaxed);
+        let sync_status = if bc.blocks.len() <= 1 {
+            "syncing"
+        } else {
+            "synced"
+        };
 
         let status = if shutdown_active {
             "unhealthy"
-        } else if now_ts > 0 && latest_block_time > 0 && now_ts.saturating_sub(latest_block_time) > 60 {
+        } else if now_ts > 0
+            && latest_block_time > 0
+            && now_ts.saturating_sub(latest_block_time) > 60
+        {
             "degraded"
         } else {
             "healthy"

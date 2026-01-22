@@ -68,14 +68,22 @@ impl ConsensusStateMachine {
 
         let next = match (&self.current_state, event) {
             (_, ConsensusEvent::ShutdownTriggered) => ConsensusState::Shutdown,
-            (ConsensusState::Active, ConsensusEvent::ProofSubmitted) => ConsensusState::ProposingBlock,
-            (ConsensusState::ProposingBlock, ConsensusEvent::ProofSubmitted) => ConsensusState::ValidatingProof,
+            (ConsensusState::Active, ConsensusEvent::ProofSubmitted) => {
+                ConsensusState::ProposingBlock
+            }
+            (ConsensusState::ProposingBlock, ConsensusEvent::ProofSubmitted) => {
+                ConsensusState::ValidatingProof
+            }
             (ConsensusState::ValidatingProof, ConsensusEvent::ValidatorVoted) => {
                 self.validator_votes = self.validator_votes.saturating_add(1);
                 ConsensusState::ValidatingProof
             }
-            (ConsensusState::ValidatingProof, ConsensusEvent::QuorumReached) => ConsensusState::Finalizing,
-            (ConsensusState::ValidatingProof, ConsensusEvent::ProofInvalid) => ConsensusState::Slashing,
+            (ConsensusState::ValidatingProof, ConsensusEvent::QuorumReached) => {
+                ConsensusState::Finalizing
+            }
+            (ConsensusState::ValidatingProof, ConsensusEvent::ProofInvalid) => {
+                ConsensusState::Slashing
+            }
             (ConsensusState::Slashing, ConsensusEvent::ProofInvalid) => ConsensusState::Active,
             (ConsensusState::Finalizing, ConsensusEvent::QuorumReached) => ConsensusState::Active,
             (_, _) => self.current_state.clone(),
@@ -114,12 +122,18 @@ impl ConsensusMetrics {
     }
 
     pub fn add_rewards(&self, amount: u64) {
-        self.total_rewards_minted.fetch_add(amount, Ordering::Relaxed);
+        self.total_rewards_minted
+            .fetch_add(amount, Ordering::Relaxed);
     }
 
     pub fn observe_validation_time_ms(&self, sample_ms: u64) {
         let prev = self.average_validation_time_ms.load(Ordering::Relaxed);
-        let next = if prev == 0 { sample_ms } else { (prev + sample_ms) / 2 };
-        self.average_validation_time_ms.store(next, Ordering::Relaxed);
+        let next = if prev == 0 {
+            sample_ms
+        } else {
+            (prev + sample_ms) / 2
+        };
+        self.average_validation_time_ms
+            .store(next, Ordering::Relaxed);
     }
 }

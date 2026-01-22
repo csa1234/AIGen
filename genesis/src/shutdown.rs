@@ -1,4 +1,7 @@
-#![cfg_attr(any(test, feature = "test-utils"), allow(clippy::missing_const_for_thread_local))]
+#![cfg_attr(
+    any(test, feature = "test-utils"),
+    allow(clippy::missing_const_for_thread_local)
+)]
 
 use crate::authority::verify_ceo_signature;
 use crate::config::GenesisConfig;
@@ -6,9 +9,9 @@ use crate::types::{GenesisError, ShutdownCommand};
 #[cfg(not(any(test, feature = "test-utils")))]
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
 #[cfg(any(test, feature = "test-utils"))]
 use std::cell::{Cell, RefCell};
+use std::collections::HashSet;
 #[cfg(not(any(test, feature = "test-utils")))]
 use std::sync::atomic::AtomicBool;
 #[cfg(not(any(test, feature = "test-utils")))]

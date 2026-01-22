@@ -60,7 +60,8 @@ impl NetworkMetrics {
     }
 
     pub fn add_model_bytes_received(&self, bytes: u64) {
-        self.model_bytes_received.fetch_add(bytes, Ordering::Relaxed);
+        self.model_bytes_received
+            .fetch_add(bytes, Ordering::Relaxed);
     }
 
     pub fn inc_model_transfer_failures(&self) {
@@ -68,11 +69,13 @@ impl NetworkMetrics {
     }
 
     pub fn inc_model_announcements_sent(&self) {
-        self.model_announcements_sent.fetch_add(1, Ordering::Relaxed);
+        self.model_announcements_sent
+            .fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn inc_model_announcements_received(&self) {
-        self.model_announcements_received.fetch_add(1, Ordering::Relaxed);
+        self.model_announcements_received
+            .fetch_add(1, Ordering::Relaxed);
     }
 }
 

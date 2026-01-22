@@ -123,15 +123,15 @@ impl Block {
 
     pub fn validate_header(&self) -> Result<(), BlockchainError> {
         if !self.header.version.is_supported() {
-            return Err(BlockchainError::UnsupportedBlockVersion(self.header.version.0));
+            return Err(BlockchainError::UnsupportedBlockVersion(
+                self.header.version.0,
+            ));
         }
 
         let now = chrono::Utc::now().timestamp();
         self.header.timestamp.validate_reasonable_now(now)?;
 
-        if self.header.block_height.is_genesis()
-            && self.header.previous_hash.0 != [0u8; 32]
-        {
+        if self.header.block_height.is_genesis() && self.header.previous_hash.0 != [0u8; 32] {
             return Err(BlockchainError::Genesis(GenesisError::InvalidPreviousHash));
         }
 

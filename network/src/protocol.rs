@@ -14,11 +14,28 @@ pub enum NetworkMessage {
     Transaction(Transaction),
     PoIProof(PoIProof),
     ValidatorVote(ValidatorVote),
-    ModelShardRequest { model_id: String, shard_index: u32 },
-    ModelShardResponse { model_id: String, shard_index: u32, data: Vec<u8>, hash: [u8; 32] },
-    ModelAnnouncement { model_id: String, shard_index: u32, node_id: String },
-    ModelQuery { model_id: String },
-    TensorRequest { poi_proof_hash: [u8; 32], chunk_index: u32 },
+    ModelShardRequest {
+        model_id: String,
+        shard_index: u32,
+    },
+    ModelShardResponse {
+        model_id: String,
+        shard_index: u32,
+        data: Vec<u8>,
+        hash: [u8; 32],
+    },
+    ModelAnnouncement {
+        model_id: String,
+        shard_index: u32,
+        node_id: String,
+    },
+    ModelQuery {
+        model_id: String,
+    },
+    TensorRequest {
+        poi_proof_hash: [u8; 32],
+        chunk_index: u32,
+    },
     TensorResponse(TensorChunk),
     Ping,
     Pong,

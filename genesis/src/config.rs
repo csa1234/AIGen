@@ -55,8 +55,8 @@ impl Default for GenesisConfig {
 }
 
 pub fn parse_ceo_public_key_bytes() -> Result<[u8; 32], GenesisError> {
-    let bytes = <[u8; 32]>::from_hex(CEO_PUBLIC_KEY_HEX)
-        .map_err(|_| GenesisError::InvalidPublicKey)?;
+    let bytes =
+        <[u8; 32]>::from_hex(CEO_PUBLIC_KEY_HEX).map_err(|_| GenesisError::InvalidPublicKey)?;
     let _ = VerifyingKey::from_bytes(&bytes).map_err(|_| GenesisError::InvalidPublicKey)?;
     Ok(bytes)
 }

@@ -1,5 +1,5 @@
-use std::path::{Path, PathBuf};
 use std::net::SocketAddr;
+use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, Context, Result};
 use blockchain_core::types::Amount;
@@ -7,6 +7,7 @@ use config as config_rs;
 use consensus::InferenceVerificationConfig;
 use genesis::GenesisConfig;
 use libp2p::Multiaddr;
+use model::AdConfig;
 use network::config::NetworkConfig;
 use network::node_types::{NodeConfig, NodeType};
 
@@ -18,6 +19,8 @@ pub struct NodeConfiguration {
     pub model: ModelConfig,
     #[serde(default)]
     pub verification: InferenceVerificationConfig,
+    #[serde(default)]
+    pub ads: AdConfig,
     pub network: NetworkConfig,
     pub genesis: GenesisConfig,
     pub node: NodeConfig,
@@ -98,8 +101,12 @@ impl NodeConfiguration {
 
     pub fn save_to_file(&self, path: &Path) -> Result<()> {
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("failed to create config parent directory: {}", parent.display()))?;
+            std::fs::create_dir_all(parent).with_context(|| {
+                format!(
+                    "failed to create config parent directory: {}",
+                    parent.display()
+                )
+            })?;
         }
 
         let ext = path
@@ -306,17 +313,25 @@ impl NodeConfiguration {
         }
 
         if self.network.max_peers < 1 || self.network.max_peers > 10_000 {
-            return Err(anyhow!(
-                "network.max_peers: must be between 1 and 10000"
-            ));
+            return Err(anyhow!("network.max_peers: must be between 1 and 10000"));
         }
 
         if self.node.node_type == NodeType::Validator {
-            if self.node.validator_address.as_ref().map(|s| s.trim().is_empty()).unwrap_or(true) {
-                return Err(anyhow!("node.validator_address: required for validator node_type"));
+            if self
+                .node
+                .validator_address
+                .as_ref()
+                .map(|s| s.trim().is_empty())
+                .unwrap_or(true)
+            {
+                return Err(anyhow!(
+                    "node.validator_address: required for validator node_type"
+                ));
             }
             if self.node.stake_amount.map(|a| a.value()).unwrap_or(0) == 0 {
-                return Err(anyhow!("node.stake_amount: required and must be > 0 for validator node_type"));
+                return Err(anyhow!(
+                    "node.stake_amount: required and must be > 0 for validator node_type"
+                ));
             }
         }
 
@@ -367,6 +382,7 @@ impl Default for NodeConfiguration {
             data_dir: data_dir.clone(),
             model: ModelConfig::default_with_data_dir(&data_dir),
             verification: InferenceVerificationConfig::default(),
+            ads: AdConfig::default(),
             network: NetworkConfig::default(),
             genesis: GenesisConfig::default(),
             node: NodeConfig {
@@ -402,7 +418,10 @@ fn validate_multiaddr_with_field(field: &str, addr: &Multiaddr) -> Result<()> {
 
     if let Some(port) = tcp_port {
         if port < 1024 {
-            eprintln!("port is privileged (<1024); requires elevated privileges: field={}, port={}", field, port);
+            eprintln!(
+                "port is privileged (<1024); requires elevated privileges: field={}, port={}",
+                field, port
+            );
         }
     }
 

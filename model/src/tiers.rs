@@ -9,8 +9,8 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{ModelError, ModelRegistry};
-use blockchain_core::transaction::Transaction;
 use blockchain_core::state::ChainState;
+use blockchain_core::transaction::Transaction;
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum SubscriptionTier {
@@ -112,7 +112,10 @@ pub enum PaymentValidationError {
     #[error("invalid payload format")]
     InvalidPayload,
     #[error("tier mismatch: expected {expected:?}, got {actual:?}")]
-    TierMismatch { expected: SubscriptionTier, actual: SubscriptionTier },
+    TierMismatch {
+        expected: SubscriptionTier,
+        actual: SubscriptionTier,
+    },
     #[error("amount mismatch: expected {expected}, got {actual}")]
     AmountMismatch { expected: u64, actual: u64 },
     #[error("receiver mismatch: expected {expected}, got {actual}")]
@@ -144,7 +147,12 @@ impl QuotaTracker {
         }
     }
 
-    pub fn record_request(&mut self, user_address: Option<&str>, ip_address: Option<&str>, now: i64) {
+    pub fn record_request(
+        &mut self,
+        user_address: Option<&str>,
+        ip_address: Option<&str>,
+        now: i64,
+    ) {
         let entry = QuotaEntry {
             timestamp: now,
             user_address: user_address.map(|s| s.to_string()),
@@ -154,19 +162,36 @@ impl QuotaTracker {
         self.trim_old_entries(now);
     }
 
-    pub fn count_requests_in_window(&self, user_address: Option<&str>, ip_address: Option<&str>, now: i64, window_seconds: i64) -> usize {
+    pub fn count_requests_in_window(
+        &self,
+        user_address: Option<&str>,
+        ip_address: Option<&str>,
+        now: i64,
+        window_seconds: i64,
+    ) -> usize {
         let cutoff = now.saturating_sub(window_seconds);
-        self.entries.iter()
+        self.entries
+            .iter()
             .filter(|entry| {
-                entry.timestamp >= cutoff && (
-                    user_address.map(|addr| entry.user_address.as_ref().is_some_and(|e| e == addr)).unwrap_or(false) ||
-                    ip_address.map(|ip| entry.ip_address.as_ref().is_some_and(|e| e == ip)).unwrap_or(false)
-                )
+                entry.timestamp >= cutoff
+                    && (user_address
+                        .map(|addr| entry.user_address.as_ref().is_some_and(|e| e == addr))
+                        .unwrap_or(false)
+                        || ip_address
+                            .map(|ip| entry.ip_address.as_ref().is_some_and(|e| e == ip))
+                            .unwrap_or(false))
             })
             .count()
     }
 
-    pub fn is_within_limit(&self, user_address: Option<&str>, ip_address: Option<&str>, now: i64, window_seconds: i64, limit: u64) -> bool {
+    pub fn is_within_limit(
+        &self,
+        user_address: Option<&str>,
+        ip_address: Option<&str>,
+        now: i64,
+        window_seconds: i64,
+        limit: u64,
+    ) -> bool {
         let count = self.count_requests_in_window(user_address, ip_address, now, window_seconds);
         count < limit as usize
     }
@@ -174,7 +199,7 @@ impl QuotaTracker {
     fn trim_old_entries(&mut self, now: i64) {
         let cutoff = now.saturating_sub(30 * 24 * 60 * 60); // Keep 30 days of data
         self.entries.retain(|entry| entry.timestamp >= cutoff);
-        
+
         // Also limit by max_entries to bound memory
         if self.entries.len() > self.max_entries {
             let excess = self.entries.len() - self.max_entries;
@@ -290,10 +315,13 @@ pub fn validate_subscription_payment(
     tier_configs: &HashMap<SubscriptionTier, TierConfig>,
 ) -> Result<SubscriptionPayload, PaymentValidationError> {
     // Parse payload
-    let payload = transaction.payload.as_ref().ok_or(PaymentValidationError::InvalidPayload)?;
-    let subscription_payload: SubscriptionPayload = serde_json::from_slice(payload)
-        .map_err(|_| PaymentValidationError::InvalidPayload)?;
-    
+    let payload = transaction
+        .payload
+        .as_ref()
+        .ok_or(PaymentValidationError::InvalidPayload)?;
+    let subscription_payload: SubscriptionPayload =
+        serde_json::from_slice(payload).map_err(|_| PaymentValidationError::InvalidPayload)?;
+
     // Validate tier
     if subscription_payload.tier != expected_tier {
         return Err(PaymentValidationError::TierMismatch {
@@ -301,7 +329,7 @@ pub fn validate_subscription_payment(
             actual: subscription_payload.tier,
         });
     }
-    
+
     // Validate receiver address
     if transaction.receiver != expected_receiver {
         return Err(PaymentValidationError::ReceiverMismatch {
@@ -309,31 +337,35 @@ pub fn validate_subscription_payment(
             actual: transaction.receiver.clone(),
         });
     }
-    
+
     // Validate duration
     if subscription_payload.duration_months == 0 || subscription_payload.duration_months > 12 {
         return Err(PaymentValidationError::InvalidDuration {
             duration: subscription_payload.duration_months,
         });
     }
-    
+
     // Validate amount
-    let tier_config = tier_configs.get(&expected_tier)
-        .ok_or(PaymentValidationError::TierMismatch {
-            expected: expected_tier,
-            actual: expected_tier, // This shouldn't happen but we need a valid tier
-        })?;
-    
-    let expected_amount = tier_config.monthly_cost.saturating_mul(subscription_payload.duration_months as u64);
+    let tier_config =
+        tier_configs
+            .get(&expected_tier)
+            .ok_or(PaymentValidationError::TierMismatch {
+                expected: expected_tier,
+                actual: expected_tier, // This shouldn't happen but we need a valid tier
+            })?;
+
+    let expected_amount = tier_config
+        .monthly_cost
+        .saturating_mul(subscription_payload.duration_months as u64);
     let actual_amount = transaction.amount.value();
-    
+
     if actual_amount != expected_amount {
         return Err(PaymentValidationError::AmountMismatch {
             expected: expected_amount,
             actual: actual_amount,
         });
     }
-    
+
     Ok(subscription_payload)
 }
 
@@ -368,13 +400,14 @@ impl TierManager {
 
     pub fn load_from_chain_state(&self) -> Result<usize, TierError> {
         if let Some(chain_state) = &self.chain_state {
-            let chain_subscriptions: Vec<(String, blockchain_core::state::SubscriptionState)> = chain_state.list_subscriptions();
+            let chain_subscriptions: Vec<(String, blockchain_core::state::SubscriptionState)> =
+                chain_state.list_subscriptions();
             let mut loaded = 0;
-            
+
             for (address, sub_state) in chain_subscriptions {
-                let tier = SubscriptionTier::from_u8(sub_state.tier)
-                    .ok_or(TierError::InvalidTier)?;
-                
+                let tier =
+                    SubscriptionTier::from_u8(sub_state.tier).ok_or(TierError::InvalidTier)?;
+
                 let subscription = Subscription {
                     user_address: address.clone(),
                     tier,
@@ -386,11 +419,11 @@ impl TierManager {
                     status: SubscriptionStatus::Active, // Assume active if in chain state
                     payments: Vec::new(),
                 };
-                
+
                 self.subscriptions.insert(address, subscription);
                 loaded += 1;
             }
-            
+
             println!("subscriptions loaded from chain state");
             Ok(loaded)
         } else {
@@ -409,7 +442,7 @@ impl TierManager {
                 last_reset_timestamp: subscription.last_reset_timestamp,
                 auto_renew: subscription.auto_renew,
             };
-            
+
             chain_state.set_subscription(user_address.to_string(), sub_state);
         }
     }
@@ -425,22 +458,29 @@ impl TierManager {
         now: i64,
     ) -> Result<Subscription, TierError> {
         self.ensure_running()?;
-        
+
         // Validate payment transaction
         let payload = validate_subscription_payment(
             transaction,
-            transaction.payload.as_ref()
+            transaction
+                .payload
+                .as_ref()
                 .and_then(|p| serde_json::from_slice::<SubscriptionPayload>(p).ok())
                 .map(|p| p.tier)
                 .unwrap_or(SubscriptionTier::Free),
             expected_receiver,
             &self.configs,
-        ).map_err(|_e| TierError::PaymentFailed)?;
-        
+        )
+        .map_err(|_e| TierError::PaymentFailed)?;
+
         let tier = self.normalize_tier(&payload.user_address, payload.tier);
         let config = self.get_config(tier)?;
         let start = now;
-        let expiry = now.saturating_add(config.billing_cycle_seconds.saturating_mul(payload.duration_months as i64));
+        let expiry = now.saturating_add(
+            config
+                .billing_cycle_seconds
+                .saturating_mul(payload.duration_months as i64),
+        );
         let subscription = Subscription {
             user_address: payload.user_address.clone(),
             tier,
@@ -459,14 +499,13 @@ impl TierManager {
         };
         self.subscriptions
             .insert(payload.user_address.clone(), subscription.clone());
-        
+
         // Sync to chain state
         self.sync_subscription_to_chain(&payload.user_address, &subscription);
-        
+
         println!(
             "user_address = {}, tier = {:?}, subscription created via transaction",
-            payload.user_address,
-            subscription.tier
+            payload.user_address, subscription.tier
         );
         Ok(subscription)
     }
@@ -496,14 +535,13 @@ impl TierManager {
         };
         self.subscriptions
             .insert(user_address.to_string(), subscription.clone());
-        
+
         // Sync to chain state
         self.sync_subscription_to_chain(user_address, &subscription);
-        
+
         println!(
             "user_address = {}, tier = {:?}, subscription created",
-            user_address,
-            subscription.tier
+            user_address, subscription.tier
         );
         Ok(subscription)
     }
@@ -522,10 +560,10 @@ impl TierManager {
             .ok_or(TierError::SubscriptionNotFound)?;
         entry.status = SubscriptionStatus::Canceled;
         entry.auto_renew = false;
-        
+
         // Sync to chain state
         self.sync_subscription_to_chain(user_address, &entry.clone());
-        
+
         println!("user_address = {}, subscription canceled", user_address);
         Ok(())
     }
@@ -553,9 +591,7 @@ impl TierManager {
             entry.requests_used = 0;
             entry.last_reset_timestamp = now;
         }
-        let remaining = config
-            .request_limit
-            .saturating_sub(entry.requests_used);
+        let remaining = config.request_limit.saturating_sub(entry.requests_used);
         if remaining == 0 {
             return Err(TierError::SubscriptionInactive);
         }
@@ -578,13 +614,13 @@ impl TierManager {
                 retry_after_secs: None,
             });
         }
-        
+
         // Record in quota tracker
         {
             let mut tracker = self.quota_tracker.lock();
             tracker.record_request(Some(user_address.as_str()), ip_address, now);
         }
-        
+
         let mut entry = self
             .subscriptions
             .get_mut(&user_address)
@@ -598,11 +634,11 @@ impl TierManager {
             entry.requests_used = 0;
             entry.last_reset_timestamp = now;
         }
-        let remaining = config
-            .request_limit
-            .saturating_sub(entry.requests_used);
+        let remaining = config.request_limit.saturating_sub(entry.requests_used);
         if remaining == 0 {
-            let reset_at = entry.last_reset_timestamp.saturating_add(config.window_seconds);
+            let reset_at = entry
+                .last_reset_timestamp
+                .saturating_add(config.window_seconds);
             let retry = reset_at.saturating_sub(now);
             return Ok(RateLimitDecision {
                 allowed: false,
@@ -612,14 +648,16 @@ impl TierManager {
             });
         }
         entry.requests_used = entry.requests_used.saturating_add(1);
-        
+
         // Sync usage to chain state
         self.sync_subscription_to_chain(&user_address, &entry.clone());
-        
+
         Ok(RateLimitDecision {
             allowed: true,
             remaining: remaining.saturating_sub(1),
-            reset_at: entry.last_reset_timestamp.saturating_add(config.window_seconds),
+            reset_at: entry
+                .last_reset_timestamp
+                .saturating_add(config.window_seconds),
             retry_after_secs: None,
         })
     }
@@ -640,24 +678,30 @@ impl TierManager {
                 continue;
             }
             if entry.auto_renew {
-                if self
-                    .attempt_renewal(&mut entry, &config, now)
-                    .is_ok()
-                {
+                if self.attempt_renewal(&mut entry, &config, now).is_ok() {
                     // Sync renewed subscription to chain state
                     self.sync_subscription_to_chain(&user_address, &entry.clone());
                     renewed += 1;
-                    println!("user_address = {}, tier = {:?}, subscription renewed", user_address, tier);
+                    println!(
+                        "user_address = {}, tier = {:?}, subscription renewed",
+                        user_address, tier
+                    );
                 } else {
                     // Sync failed renewal to chain state
                     self.sync_subscription_to_chain(&user_address, &entry.clone());
-                    eprintln!("user_address = {}, tier = {:?}, subscription renewal failed", user_address, tier);
+                    eprintln!(
+                        "user_address = {}, tier = {:?}, subscription renewal failed",
+                        user_address, tier
+                    );
                 }
             } else {
                 entry.status = SubscriptionStatus::Expired;
                 // Sync expired subscription to chain state
                 self.sync_subscription_to_chain(&user_address, &entry.clone());
-                println!("user_address = {}, tier = {:?}, subscription expired", user_address, tier);
+                println!(
+                    "user_address = {}, tier = {:?}, subscription expired",
+                    user_address, tier
+                );
             }
         }
         renewed
@@ -743,7 +787,15 @@ impl TierManager {
                 billing_cycle_seconds: 2_592_000,
                 grace_period_seconds: 86_400,
                 max_context_size: 16384,
-                features: vec![FeatureFlag::BasicInference, FeatureFlag::AdvancedInference, FeatureFlag::ModelTraining, FeatureFlag::BatchProcessing, FeatureFlag::PriorityQueue, FeatureFlag::ApiAccess, FeatureFlag::CustomModels],
+                features: vec![
+                    FeatureFlag::BasicInference,
+                    FeatureFlag::AdvancedInference,
+                    FeatureFlag::ModelTraining,
+                    FeatureFlag::BatchProcessing,
+                    FeatureFlag::PriorityQueue,
+                    FeatureFlag::ApiAccess,
+                    FeatureFlag::CustomModels,
+                ],
                 allowed_models: vec![],
                 minimum_tier_for_access: None,
             });
@@ -864,7 +916,12 @@ pub fn default_tier_configs() -> HashMap<SubscriptionTier, TierConfig> {
             billing_cycle_seconds: 2_592_000,
             grace_period_seconds: 259_200,
             max_context_size: 8192,
-            features: vec![FeatureFlag::BasicInference, FeatureFlag::AdvancedInference, FeatureFlag::ApiAccess, FeatureFlag::BatchProcessing],
+            features: vec![
+                FeatureFlag::BasicInference,
+                FeatureFlag::AdvancedInference,
+                FeatureFlag::ApiAccess,
+                FeatureFlag::BatchProcessing,
+            ],
             allowed_models: vec![],
             minimum_tier_for_access: Some(SubscriptionTier::Pro),
         },
@@ -879,7 +936,15 @@ pub fn default_tier_configs() -> HashMap<SubscriptionTier, TierConfig> {
             billing_cycle_seconds: 2_592_000,
             grace_period_seconds: 604_800,
             max_context_size: 16384,
-            features: vec![FeatureFlag::BasicInference, FeatureFlag::AdvancedInference, FeatureFlag::ModelTraining, FeatureFlag::BatchProcessing, FeatureFlag::PriorityQueue, FeatureFlag::ApiAccess, FeatureFlag::CustomModels],
+            features: vec![
+                FeatureFlag::BasicInference,
+                FeatureFlag::AdvancedInference,
+                FeatureFlag::ModelTraining,
+                FeatureFlag::BatchProcessing,
+                FeatureFlag::PriorityQueue,
+                FeatureFlag::ApiAccess,
+                FeatureFlag::CustomModels,
+            ],
             allowed_models: vec![],
             minimum_tier_for_access: None,
         },

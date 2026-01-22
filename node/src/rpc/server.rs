@@ -19,8 +19,6 @@ pub async fn start_rpc_server(
     network_metrics: network::metrics::SharedNetworkMetrics,
     config: RpcConfig,
 ) -> Result<ServerHandle> {
-
-
     let server = ServerBuilder::default()
         .max_connections(config.rpc_max_connections.try_into().unwrap_or(u32::MAX))
         .build(config.rpc_addr)

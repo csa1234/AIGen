@@ -79,7 +79,10 @@ fn main() -> Result<()> {
     }
 
     let msg = match action.as_str() {
-        "approve" => format!("sip_approve:{}:{:x?}", args.proposal_id, proposal_hash_bytes),
+        "approve" => format!(
+            "sip_approve:{}:{:x?}",
+            args.proposal_id, proposal_hash_bytes
+        ),
         "veto" => format!("sip_veto:{}:{:x?}", args.proposal_id, proposal_hash_bytes),
         _ => unreachable!(),
     }
@@ -99,7 +102,8 @@ fn main() -> Result<()> {
 
     match args.output {
         Some(path) => {
-            fs::write(&path, json).with_context(|| format!("failed to write {}", path.display()))?;
+            fs::write(&path, json)
+                .with_context(|| format!("failed to write {}", path.display()))?;
         }
         None => {
             println!("{}", String::from_utf8_lossy(&json));

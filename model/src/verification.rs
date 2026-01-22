@@ -4,7 +4,7 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, OnceLock};
 use std::time::Instant;
 
-use genesis::check_shutdown;
+use genesis::{check_shutdown, CEO_WALLET};
 use parking_lot::Mutex;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
@@ -100,9 +100,7 @@ impl VerificationCache {
             last_used: now,
         };
 
-        if let std::collections::hash_map::Entry::Occupied(mut existing) =
-            inner.map.entry(key)
-        {
+        if let std::collections::hash_map::Entry::Occupied(mut existing) = inner.map.entry(key) {
             existing.insert(entry);
             inner.touch(key);
             return;
@@ -214,7 +212,7 @@ pub async fn deterministic_inference_with_engine(
         }
     }
 
-    let outputs = engine.run_inference(model_id, inputs).await?;
+    let outputs = engine.run_inference(model_id, inputs, CEO_WALLET).await?;
 
     if let (Some(cache), Some(key)) = (cache, cache_key) {
         cache.insert(key, outputs.clone());
@@ -247,10 +245,8 @@ pub fn outputs_match(
         if expected_output.data.len() != actual_output.data.len() {
             return false;
         }
-        for (expected_value, actual_value) in expected_output
-            .data
-            .iter()
-            .zip(actual_output.data.iter())
+        for (expected_value, actual_value) in
+            expected_output.data.iter().zip(actual_output.data.iter())
         {
             if (expected_value - actual_value).abs() > epsilon {
                 return false;

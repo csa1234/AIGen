@@ -1,9 +1,11 @@
 use crate::crypto::{hash_transaction, sign_message, verify_signature, PublicKey, SecretKey};
-use crate::types::{validate_address, Amount, BlockchainError, ChainId, Fee, Nonce, Timestamp, TxHash};
+use crate::types::{
+    validate_address, Amount, BlockchainError, ChainId, Fee, Nonce, Timestamp, TxHash,
+};
 use ed25519_dalek::Signature;
-use genesis::{check_shutdown, CEO_WALLET, CeoSignature};
 use genesis::CeoTransactable;
 use genesis::GenesisError;
+use genesis::{check_shutdown, CeoSignature, CEO_WALLET};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 
@@ -43,7 +45,9 @@ impl Transaction {
 
         let dummy_signature: Signature = Signature::from([0u8; 64]);
 
-        let fee = Self::calculate_fee(&sender, &receiver, amount, timestamp, nonce, priority, chain_id);
+        let fee = Self::calculate_fee(
+            &sender, &receiver, amount, timestamp, nonce, priority, chain_id,
+        );
 
         let mut tx = Transaction {
             sender,
@@ -74,7 +78,9 @@ impl Transaction {
         payload: Option<Vec<u8>>,
     ) -> Result<Self, GenesisError> {
         let chain_id = ChainId::from_str_id(&genesis::GenesisConfig::default().chain_id);
-        Self::new(sender, receiver, amount, timestamp, nonce, priority, chain_id, payload)
+        Self::new(
+            sender, receiver, amount, timestamp, nonce, priority, chain_id, payload,
+        )
     }
 
     fn update_hash(&mut self) {
@@ -152,7 +158,9 @@ impl Transaction {
             "chain_id": chain_id.value(),
         });
 
-        let size = serde_json::to_vec(&payload).map(|b| b.len() as u64).unwrap_or(0);
+        let size = serde_json::to_vec(&payload)
+            .map(|b| b.len() as u64)
+            .unwrap_or(0);
         let base_fee = Amount::new(size.saturating_div(10).saturating_add(1));
         let priority_fee = if priority {
             Amount::new(size.saturating_div(20).saturating_add(1))
@@ -252,10 +260,7 @@ impl TransactionPool {
                 _ => {}
             }
             // Then higher priority_fee first
-            b.fee
-                .priority_fee
-                .value()
-                .cmp(&a.fee.priority_fee.value())
+            b.fee.priority_fee.value().cmp(&a.fee.priority_fee.value())
         });
         self.pending = v.into();
     }

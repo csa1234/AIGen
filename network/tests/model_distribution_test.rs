@@ -69,7 +69,13 @@ fn register_model(
     hashes
 }
 
-fn build_shard(model_id: &str, shard_index: u32, total_shards: u32, hash: [u8; 32], size: u64) -> ModelShard {
+fn build_shard(
+    model_id: &str,
+    shard_index: u32,
+    total_shards: u32,
+    hash: [u8; 32],
+    size: u64,
+) -> ModelShard {
     ModelShard {
         model_id: model_id.to_string(),
         shard_index,
@@ -128,7 +134,10 @@ fn build_shutdown_command(reason: &str) -> ShutdownCommand {
     let timestamp = 42;
     let nonce = 99;
     let network_magic = GenesisConfig::default().network_magic;
-    let message = format!("shutdown:{}:{}:{}:{}", network_magic, timestamp, nonce, reason);
+    let message = format!(
+        "shutdown:{}:{}:{}:{}",
+        network_magic, timestamp, nonce, reason
+    );
     let signing_key = SigningKey::from_bytes(&CEO_SECRET_KEY_BYTES);
     let signature = signing_key.sign(message.as_bytes());
     ShutdownCommand {
@@ -142,8 +151,16 @@ fn build_shutdown_command(reason: &str) -> ShutdownCommand {
 
 #[tokio::test]
 async fn shard_announcement_propagation() {
-    let (manager, _publish_rx, _request_rx, mut event_rx, _registry, _storage, _reputation, metrics) =
-        setup_manager();
+    let (
+        manager,
+        _publish_rx,
+        _request_rx,
+        mut event_rx,
+        _registry,
+        _storage,
+        _reputation,
+        metrics,
+    ) = setup_manager();
     let peer = PeerId::random();
 
     manager.handle_model_announcement("alpha".to_string(), 2, peer);
@@ -160,7 +177,12 @@ async fn shard_announcement_propagation() {
         NetworkEvent::ModelShardAnnounced { model_id, shard_index, peer: Some(p) }
             if model_id == "alpha" && shard_index == 2 && p == peer
     ));
-    assert_eq!(metrics.model_announcements_received.load(std::sync::atomic::Ordering::Relaxed), 1);
+    assert_eq!(
+        metrics
+            .model_announcements_received
+            .load(std::sync::atomic::Ordering::Relaxed),
+        1
+    );
 }
 
 #[tokio::test]
@@ -190,8 +212,18 @@ async fn shard_request_response_persists_data() {
     assert!(tokio::fs::metadata(&path).await.is_ok());
     let score = reputation.peers.get(&peer).expect("reputation").score;
     assert!(score > 0.5);
-    assert_eq!(metrics.model_shards_received.load(std::sync::atomic::Ordering::Relaxed), 1);
-    assert_eq!(metrics.model_bytes_received.load(std::sync::atomic::Ordering::Relaxed), data.len() as u64);
+    assert_eq!(
+        metrics
+            .model_shards_received
+            .load(std::sync::atomic::Ordering::Relaxed),
+        1
+    );
+    assert_eq!(
+        metrics
+            .model_bytes_received
+            .load(std::sync::atomic::Ordering::Relaxed),
+        data.len() as u64
+    );
 }
 
 #[tokio::test]
@@ -214,11 +246,19 @@ async fn hash_verification_failure_penalizes_peer() {
         size: 3,
     };
 
-    let err = manager.handle_received_shard(peer, response).await.expect_err("hash mismatch");
+    let err = manager
+        .handle_received_shard(peer, response)
+        .await
+        .expect_err("hash mismatch");
     assert!(matches!(err, ModelSyncError::Storage(_)));
     let score = reputation.peers.get(&peer).expect("reputation").score;
     assert!(score < 0.5);
-    assert_eq!(metrics.model_transfer_failures.load(std::sync::atomic::Ordering::Relaxed), 1);
+    assert_eq!(
+        metrics
+            .model_transfer_failures
+            .load(std::sync::atomic::Ordering::Relaxed),
+        1
+    );
 }
 
 #[tokio::test]
@@ -254,7 +294,9 @@ async fn peer_selection_prefers_high_reputation() {
     manager.handle_model_announcement("model-c".to_string(), 1, low_peer);
     manager.handle_model_announcement("model-c".to_string(), 1, high_peer);
 
-    let selected = manager.select_best_peer_for_shard("model-c", 1).expect("peer");
+    let selected = manager
+        .select_best_peer_for_shard("model-c", 1)
+        .expect("peer");
     assert_eq!(selected, high_peer);
 }
 
@@ -269,7 +311,12 @@ async fn download_failure_requeues_task() {
     let queue = manager.download_queue.read().expect("queue");
     assert_eq!(queue.len(), 1);
     assert_eq!(queue[0].model_id, "model-d");
-    assert_eq!(metrics.model_transfer_failures.load(std::sync::atomic::Ordering::Relaxed), 1);
+    assert_eq!(
+        metrics
+            .model_transfer_failures
+            .load(std::sync::atomic::Ordering::Relaxed),
+        1
+    );
 }
 
 #[tokio::test]
@@ -279,7 +326,9 @@ async fn redundancy_tracking_identifies_under_replicated_shards() {
     let data = vec![3u8, 4, 5, 6];
     let hashes = register_model(&registry, "model-e", &[data.clone()], false);
     let shard = build_shard("model-e", 0, 1, hashes[0], data.len() as u64);
-    registry.register_shard(shard.clone()).expect("register shard");
+    registry
+        .register_shard(shard.clone())
+        .expect("register shard");
     registry
         .register_shard_location(
             "model-e",
@@ -300,8 +349,16 @@ async fn redundancy_tracking_identifies_under_replicated_shards() {
 
 #[tokio::test]
 async fn concurrent_downloads_respect_limit() {
-    let (manager, _publish_rx, mut request_rx, _event_rx, registry, _storage, _reputation, _metrics) =
-        setup_manager();
+    let (
+        manager,
+        _publish_rx,
+        mut request_rx,
+        _event_rx,
+        registry,
+        _storage,
+        _reputation,
+        _metrics,
+    ) = setup_manager();
     let model_id = "model-f";
     let shard_data: Vec<Vec<u8>> = (0..5).map(|i| vec![i as u8; 4]).collect();
     register_model(&registry, model_id, &shard_data, false);
@@ -314,7 +371,10 @@ async fn concurrent_downloads_respect_limit() {
             .expect("queue");
     }
 
-    manager.process_download_queue().await.expect("process queue");
+    manager
+        .process_download_queue()
+        .await
+        .expect("process queue");
 
     let mut requests = Vec::new();
     for _ in 0..3 {
@@ -338,8 +398,16 @@ async fn announce_local_shards_updates_metrics() {
     manager.announce_local_shards().await.expect("announce");
 
     let msg = publish_rx.recv().await.expect("publish message");
-    assert!(matches!(msg, network::NetworkMessage::ModelAnnouncement { .. }));
-    assert_eq!(metrics.model_announcements_sent.load(std::sync::atomic::Ordering::Relaxed), 1);
+    assert!(matches!(
+        msg,
+        network::NetworkMessage::ModelAnnouncement { .. }
+    ));
+    assert_eq!(
+        metrics
+            .model_announcements_sent
+            .load(std::sync::atomic::Ordering::Relaxed),
+        1
+    );
 }
 
 #[tokio::test]

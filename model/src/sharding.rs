@@ -125,11 +125,11 @@ pub async fn split_model_file(
         let progress = ((shard_index + 1) * 100) / total_shards;
         if progress >= next_log_percent {
             println!(
-            "split progress: {}% ({}/{})",
-            progress,
-            shard_index + 1,
-            total_shards
-        );
+                "split progress: {}% ({}/{})",
+                progress,
+                shard_index + 1,
+                total_shards
+            );
             next_log_percent += 10;
         }
     }
@@ -207,7 +207,10 @@ pub async fn combine_shards(
     output.flush().await?;
     output.sync_all().await?;
 
-    println!("combined shards into model file: path={}", output_path.display());
+    println!(
+        "combined shards into model file: path={}",
+        output_path.display()
+    );
     Ok(())
 }
 

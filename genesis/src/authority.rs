@@ -63,9 +63,7 @@ pub fn verify_ceo_transaction<T: CeoTransactable>(tx: &T) -> Result<(), GenesisE
         return Err(GenesisError::UnauthorizedCaller);
     }
 
-    let sig = tx
-        .ceo_signature()
-        .ok_or(GenesisError::InvalidSignature)?;
+    let sig = tx.ceo_signature().ok_or(GenesisError::InvalidSignature)?;
 
     verify_ceo_signature(&tx.message_to_sign(), sig)
 }

@@ -1,6 +1,6 @@
 use blockchain_core::{
-    blake3_hash, calculate_merkle_root, derive_address_from_pubkey, generate_keypair, generate_merkle_proof,
-    hash_data, keccak256, verify_merkle_proof, ChainId, Transaction,
+    blake3_hash, calculate_merkle_root, derive_address_from_pubkey, generate_keypair,
+    generate_merkle_proof, hash_data, keccak256, verify_merkle_proof, ChainId, Transaction,
 };
 
 fn mk_addr(n: u8) -> String {

@@ -166,10 +166,7 @@ pub fn select_validators_weighted(
         return Ok(Vec::new());
     }
 
-    let total_stake: u64 = filtered
-        .iter()
-        .map(|v| v.staked_amount.value())
-        .sum();
+    let total_stake: u64 = filtered.iter().map(|v| v.staked_amount.value()).sum();
     if total_stake == 0 {
         return Ok(Vec::new());
     }
@@ -252,7 +249,11 @@ impl VoteRegistry {
             .committees
             .get(&vote.block_hash)
             .ok_or(ConsensusError::InvalidVote)?;
-        if !committee.value().iter().any(|a| a == &vote.validator_address) {
+        if !committee
+            .value()
+            .iter()
+            .any(|a| a == &vote.validator_address)
+        {
             return Err(ConsensusError::InvalidVote);
         }
 
@@ -266,7 +267,10 @@ impl VoteRegistry {
         self.votes
             .entry(vote.block_hash)
             .and_modify(|votes| {
-                if !votes.iter().any(|v| v.validator_address == vote.validator_address) {
+                if !votes
+                    .iter()
+                    .any(|v| v.validator_address == vote.validator_address)
+                {
                     votes.push(vote.clone());
                 }
             })
@@ -308,7 +312,10 @@ impl VoteRegistry {
     }
 }
 
-fn verify_validator_vote_signature(vote: &ValidatorVote, pubkey: &str) -> Result<(), ConsensusError> {
+fn verify_validator_vote_signature(
+    vote: &ValidatorVote,
+    pubkey: &str,
+) -> Result<(), ConsensusError> {
     let pk_bytes = hex::decode(pubkey).map_err(|e| ConsensusError::Serialization(e.to_string()))?;
     let pk_arr: [u8; 32] = pk_bytes
         .as_slice()
@@ -322,7 +329,8 @@ fn verify_validator_vote_signature(vote: &ValidatorVote, pubkey: &str) -> Result
     let sig = Signature::from_slice(&sig_bytes).map_err(|_| ConsensusError::InvalidVote)?;
 
     let msg = bincode::serialize(&(vote.validator_address.clone(), vote.block_hash, vote.vote))?;
-    vk.verify(&msg, &sig).map_err(|_| ConsensusError::InvalidVote)?;
+    vk.verify(&msg, &sig)
+        .map_err(|_| ConsensusError::InvalidVote)?;
 
     Ok(())
 }

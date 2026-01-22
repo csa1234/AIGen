@@ -53,10 +53,7 @@ impl SubscriptionsRpcServer for RpcSubscriptions {
         }
     }
 
-    async fn subscribe_new_transactions(
-        &self,
-        pending: PendingSubscriptionSink,
-    ) {
+    async fn subscribe_new_transactions(&self, pending: PendingSubscriptionSink) {
         if let Ok(sink) = pending.accept().await {
             let mut rx = self.tx_tx.subscribe();
             info!("ws subscribeNewTransactions connected");

@@ -41,7 +41,11 @@ impl request_response::Codec for TensorStreamCodec {
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))
     }
 
-    async fn read_response<T>(&mut self, _: &Self::Protocol, io: &mut T) -> io::Result<Self::Response>
+    async fn read_response<T>(
+        &mut self,
+        _: &Self::Protocol,
+        io: &mut T,
+    ) -> io::Result<Self::Response>
     where
         T: futures::AsyncRead + Unpin + Send,
     {
@@ -50,7 +54,12 @@ impl request_response::Codec for TensorStreamCodec {
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))
     }
 
-    async fn write_request<T>(&mut self, _: &Self::Protocol, io: &mut T, req: Self::Request) -> io::Result<()>
+    async fn write_request<T>(
+        &mut self,
+        _: &Self::Protocol,
+        io: &mut T,
+        req: Self::Request,
+    ) -> io::Result<()>
     where
         T: futures::AsyncWrite + Unpin + Send,
     {
@@ -60,7 +69,12 @@ impl request_response::Codec for TensorStreamCodec {
         io.flush().await
     }
 
-    async fn write_response<T>(&mut self, _: &Self::Protocol, io: &mut T, resp: Self::Response) -> io::Result<()>
+    async fn write_response<T>(
+        &mut self,
+        _: &Self::Protocol,
+        io: &mut T,
+        resp: Self::Response,
+    ) -> io::Result<()>
     where
         T: futures::AsyncWrite + Unpin + Send,
     {
@@ -85,7 +99,10 @@ where
     io.read_exact(&mut len_buf[..]).await?;
     let len = u32::from_be_bytes(len_buf) as usize;
     if len > max_len {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "frame too large"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "frame too large",
+        ));
     }
     let mut data = vec![0u8; len];
     io.read_exact(&mut data).await?;

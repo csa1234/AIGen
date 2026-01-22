@@ -42,7 +42,11 @@ impl request_response::Codec for ModelStreamCodec {
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))
     }
 
-    async fn read_response<T>(&mut self, _: &Self::Protocol, io: &mut T) -> io::Result<Self::Response>
+    async fn read_response<T>(
+        &mut self,
+        _: &Self::Protocol,
+        io: &mut T,
+    ) -> io::Result<Self::Response>
     where
         T: futures::AsyncRead + Unpin + Send,
     {
@@ -51,7 +55,12 @@ impl request_response::Codec for ModelStreamCodec {
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))
     }
 
-    async fn write_request<T>(&mut self, _: &Self::Protocol, io: &mut T, req: Self::Request) -> io::Result<()>
+    async fn write_request<T>(
+        &mut self,
+        _: &Self::Protocol,
+        io: &mut T,
+        req: Self::Request,
+    ) -> io::Result<()>
     where
         T: futures::AsyncWrite + Unpin + Send,
     {
@@ -61,7 +70,12 @@ impl request_response::Codec for ModelStreamCodec {
         io.flush().await
     }
 
-    async fn write_response<T>(&mut self, _: &Self::Protocol, io: &mut T, resp: Self::Response) -> io::Result<()>
+    async fn write_response<T>(
+        &mut self,
+        _: &Self::Protocol,
+        io: &mut T,
+        resp: Self::Response,
+    ) -> io::Result<()>
     where
         T: futures::AsyncWrite + Unpin + Send,
     {
@@ -84,7 +98,10 @@ where
     io.read_exact(&mut len_buf[..]).await?;
     let len = u64::from_be_bytes(len_buf);
     if len > max_len {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "frame too large"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "frame too large",
+        ));
     }
     let len_usize = usize::try_from(len)
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "frame too large"))?;
@@ -99,7 +116,10 @@ where
 {
     let len = data.len() as u64;
     if len > max_len {
-        return Err(io::Error::new(io::ErrorKind::InvalidInput, "frame too large"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "frame too large",
+        ));
     }
     io.write_all(&len.to_be_bytes()).await?;
     io.write_all(data).await?;

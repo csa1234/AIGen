@@ -38,7 +38,7 @@ impl RpcError {
 
 impl From<RpcError> for ErrorObjectOwned {
     fn from(e: RpcError) -> Self {
-        ErrorObjectOwned::owned(e.code(), e.message(), None::<()> )
+        ErrorObjectOwned::owned(e.code(), e.message(), None::<()>)
     }
 }
 
@@ -181,7 +181,11 @@ impl BlockResponse {
                 block_height: b.header.block_height.0,
                 priority: b.header.priority,
             },
-            transactions: b.transactions.iter().map(TransactionResponse::from_tx).collect(),
+            transactions: b
+                .transactions
+                .iter()
+                .map(TransactionResponse::from_tx)
+                .collect(),
         }
     }
 }
@@ -216,14 +220,18 @@ impl TransactionResponse {
 
         let sig_bytes = parse_hex_bytes(&self.signature)?;
         if sig_bytes.len() != 64 {
-            return Err(RpcError::InvalidParams("signature must be 64 bytes".to_string()));
+            return Err(RpcError::InvalidParams(
+                "signature must be 64 bytes".to_string(),
+            ));
         }
         let signature = Signature::try_from(sig_bytes.as_slice())
             .map_err(|e| RpcError::InvalidParams(format!("invalid signature bytes: {e}")))?;
 
         let hash_bytes = parse_hex_bytes(&self.tx_hash)?;
         if hash_bytes.len() != 32 {
-            return Err(RpcError::InvalidParams("tx_hash must be 32 bytes".to_string()));
+            return Err(RpcError::InvalidParams(
+                "tx_hash must be 32 bytes".to_string(),
+            ));
         }
         let mut hash_arr = [0u8; 32];
         hash_arr.copy_from_slice(&hash_bytes);
@@ -279,4 +287,3 @@ impl TransactionResponse {
         Ok(tx)
     }
 }
-

@@ -1,32 +1,23 @@
 use ed25519_dalek::{Signature, Signer, SigningKey};
+use futures::future::join_all;
+use futures::StreamExt;
 use genesis::shutdown::reset_shutdown_for_tests;
 use genesis::{emergency_shutdown, CeoSignature, GenesisConfig, ShutdownCommand};
 use model::{
-    deterministic_inference_with_engine,
-    outputs_match,
-    split_model_file,
-    InferenceEngine,
-    InferenceError,
-    InferenceOutput,
-    InferenceTensor,
-    ModelMetadata,
-    ModelRegistry,
-    StorageBackend,
-    VerificationCache,
-    LocalStorage,
+    deterministic_inference_with_engine, outputs_match, split_model_file, InferenceEngine,
+    InferenceError, InferenceOutput, InferenceTensor, LocalStorage, ModelMetadata, ModelRegistry,
+    StorageBackend, VerificationCache,
 };
 use prost::Message;
-use futures::future::join_all;
-use futures::StreamExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
+use tokio::fs;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::OnceCell;
-use tokio::fs;
 
-const CEO_SECRET_KEY_HEX: &str =
-    "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60";
+const CEO_SECRET_KEY_HEX: &str = "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60";
+const TEST_USER: &str = "0x00000000000000000000000000000000000000aa";
 
 fn signing_key() -> SigningKey {
     let bytes = hex::decode(CEO_SECRET_KEY_HEX).expect("valid hex");
@@ -46,6 +37,7 @@ async fn test_verification_cache_roundtrip() {
         harness.cache_dir(),
         (size as usize) * 2,
         1,
+        None,
     );
     let cache = VerificationCache::new(8);
 
@@ -55,29 +47,21 @@ async fn test_verification_cache_roundtrip() {
         data: vec![0.42],
     };
     let expected = engine
-        .run_inference("identity", vec![input.clone()])
+        .run_inference("identity", vec![input.clone()], TEST_USER)
         .await
         .expect("run inference");
-    let outputs = deterministic_inference_with_engine(
-        &engine,
-        "identity",
-        vec![input.clone()],
-        Some(&cache),
-    )
-    .await
-    .expect("deterministic inference");
+    let outputs =
+        deterministic_inference_with_engine(&engine, "identity", vec![input.clone()], Some(&cache))
+            .await
+            .expect("deterministic inference");
 
     assert!(outputs_match(&expected, &outputs, 1e-6));
     assert_eq!(cache.len(), 1);
 
-    let outputs_again = deterministic_inference_with_engine(
-        &engine,
-        "identity",
-        vec![input],
-        Some(&cache),
-    )
-    .await
-    .expect("deterministic inference (cached)");
+    let outputs_again =
+        deterministic_inference_with_engine(&engine, "identity", vec![input], Some(&cache))
+            .await
+            .expect("deterministic inference (cached)");
     assert!(outputs_match(&expected, &outputs_again, 1e-6));
     assert_eq!(cache.len(), 1);
 }
@@ -121,7 +105,9 @@ async fn ensure_ort_available() {
                 }
             }
 
-            let root = std::env::temp_dir().join("aigen_ort_runtime").join("1.23.2");
+            let root = std::env::temp_dir()
+                .join("aigen_ort_runtime")
+                .join("1.23.2");
             let dll_path = root.join("onnxruntime.dll");
             if !dll_path.exists() {
                 download_and_extract_ort_1232(&root).await;
@@ -137,12 +123,17 @@ async fn ensure_ort_available() {
 async fn download_and_extract_ort_1232(out_dir: &Path) {
     const URL: &str = "https://github.com/microsoft/onnxruntime/releases/download/v1.23.2/onnxruntime-win-x64-1.23.2.zip";
     let zip_path = out_dir.join("onnxruntime-win-x64-1.23.2.zip");
-    fs::create_dir_all(out_dir).await.expect("create ort cache dir");
+    fs::create_dir_all(out_dir)
+        .await
+        .expect("create ort cache dir");
 
     if fs::metadata(&zip_path).await.is_err() {
         let response = reqwest::get(URL).await.expect("download onnxruntime");
         if !response.status().is_success() {
-            panic!("failed to download onnxruntime: status={}", response.status());
+            panic!(
+                "failed to download onnxruntime: status={}",
+                response.status()
+            );
         }
 
         let mut file = fs::File::create(&zip_path).await.expect("create zip file");
@@ -163,7 +154,7 @@ async fn download_and_extract_ort_1232(out_dir: &Path) {
             let entry_name = entry.name().to_string();
             let file_name = match std::path::Path::new(&entry_name).file_name() {
                 Some(name) => name.to_string_lossy().to_string(),
-                None => continue,
+                _ => continue,
             };
             if !file_name.to_lowercase().ends_with(".dll") {
                 continue;
@@ -240,7 +231,9 @@ impl TestHarness {
         let model_dir = self.root.join("source").join(model_id);
         let model_path = model_dir.join("model.onnx");
         let shard_dir = model_dir.join("shards");
-        fs::create_dir_all(&model_dir).await.expect("create model dir");
+        fs::create_dir_all(&model_dir)
+            .await
+            .expect("create model dir");
         write_identity_model(&model_path).await;
 
         let shards = split_model_file(&model_path, &shard_dir, model_id)
@@ -258,7 +251,9 @@ impl TestHarness {
             is_experimental: false,
             created_at: now_timestamp(),
         };
-        self.registry.register_model(metadata).expect("register model");
+        self.registry
+            .register_model(metadata)
+            .expect("register model");
 
         for shard in shards.iter() {
             self.registry
@@ -267,7 +262,8 @@ impl TestHarness {
         }
 
         for shard in shards.iter() {
-            let shard_path = shard_dir.join(format!("{}_shard_{}.bin", model_id, shard.shard_index));
+            let shard_path =
+                shard_dir.join(format!("{}_shard_{}.bin", model_id, shard.shard_index));
             self.storage
                 .upload_shard(shard, &shard_path)
                 .await
@@ -290,6 +286,7 @@ async fn test_load_model_from_shards() {
         harness.cache_dir(),
         (size as usize) * 2,
         1,
+        None,
     );
 
     let model = engine
@@ -314,6 +311,7 @@ async fn test_inference_execution() {
         harness.cache_dir(),
         (size as usize) * 2,
         1,
+        None,
     );
 
     let input = InferenceTensor {
@@ -322,7 +320,7 @@ async fn test_inference_execution() {
         data: vec![0.25],
     };
     let outputs = engine
-        .run_inference("identity", vec![input])
+        .run_inference("identity", vec![input], TEST_USER)
         .await
         .expect("run inference");
     assert_eq!(outputs.len(), 1);
@@ -341,6 +339,7 @@ async fn test_cache_hit_miss() {
         harness.cache_dir(),
         (size as usize) * 2,
         1,
+        None,
     );
 
     engine
@@ -355,8 +354,18 @@ async fn test_cache_hit_miss() {
         .expect("load model");
 
     let metrics = engine.metrics();
-    assert_eq!(metrics.cache_misses.load(std::sync::atomic::Ordering::Relaxed), 1);
-    assert_eq!(metrics.cache_hits.load(std::sync::atomic::Ordering::Relaxed), 1);
+    assert_eq!(
+        metrics
+            .cache_misses
+            .load(std::sync::atomic::Ordering::Relaxed),
+        1
+    );
+    assert_eq!(
+        metrics
+            .cache_hits
+            .load(std::sync::atomic::Ordering::Relaxed),
+        1
+    );
 }
 
 #[tokio::test]
@@ -373,6 +382,7 @@ async fn test_lru_eviction() {
         harness.cache_dir(),
         limit,
         1,
+        None,
     );
 
     engine
@@ -415,6 +425,7 @@ async fn test_core_model_protection() {
         harness.cache_dir(),
         limit,
         1,
+        None,
     );
 
     engine
@@ -451,6 +462,7 @@ async fn test_concurrent_inference() {
         harness.cache_dir(),
         (size as usize) * 2,
         1,
+        None,
     ));
 
     let mut futures = Vec::new();
@@ -462,7 +474,9 @@ async fn test_concurrent_inference() {
                 shape: vec![1],
                 data: vec![1.0],
             };
-            engine.run_inference("identity", vec![input]).await
+            engine
+                .run_inference("identity", vec![input], TEST_USER)
+                .await
         });
     }
 
@@ -485,6 +499,7 @@ async fn test_shutdown_blocks_inference() {
         harness.cache_dir(),
         (size as usize) * 2,
         1,
+        None,
     );
 
     let command = signed_shutdown_command(1);
@@ -495,7 +510,9 @@ async fn test_shutdown_blocks_inference() {
         shape: vec![1],
         data: vec![0.5],
     };
-    let result = engine.run_inference("identity", vec![input]).await;
+    let result = engine
+        .run_inference("identity", vec![input], TEST_USER)
+        .await;
     assert!(matches!(result, Err(InferenceError::Shutdown)));
     reset_shutdown_for_tests();
 }
@@ -512,6 +529,7 @@ async fn test_metrics_tracking() {
         harness.cache_dir(),
         (size as usize) * 2,
         1,
+        None,
     );
 
     let input = InferenceTensor {
@@ -520,7 +538,7 @@ async fn test_metrics_tracking() {
         data: vec![0.75],
     };
     engine
-        .run_inference("identity", vec![input])
+        .run_inference("identity", vec![input], TEST_USER)
         .await
         .expect("run inference");
 

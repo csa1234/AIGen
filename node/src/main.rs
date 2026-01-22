@@ -8,8 +8,8 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, Context, Result};
 use blockchain_core::{BlockHeight, Blockchain, Transaction};
-use consensus::{PoIConsensus, set_inference_verification_config};
-use model::{InferenceEngine, LocalStorage, ModelRegistry, set_global_inference_engine};
+use consensus::{set_inference_verification_config, PoIConsensus};
+use model::{set_global_inference_engine, InferenceEngine, LocalStorage, ModelRegistry};
 use network::model_sync::ModelShardRequestEnvelope;
 use network::{ModelSyncManager, NetworkEvent, NetworkMessage, P2PNode};
 use tokio::sync::{mpsc, Mutex};
@@ -74,7 +74,10 @@ async fn async_main() -> Result<()> {
                 println!("loaded config: {}", config_path.display());
                 loaded
             } else {
-                println!("config not found; using defaults: {}", config_path.display());
+                println!(
+                    "config not found; using defaults: {}",
+                    config_path.display()
+                );
                 crate::config::NodeConfiguration::default()
             };
 
@@ -82,8 +85,16 @@ async fn async_main() -> Result<()> {
             cfg = cfg.merge_with_cli(&cli);
             cfg.validate()?;
 
-            println!("starting node: node_id={}, data_dir={}", cfg.node_id, cfg.data_dir.display());
-            println!("network config: listen_addr={}, bootstrap_peers={}", cfg.network.listen_addr, cfg.network.bootstrap_peers.len());
+            println!(
+                "starting node: node_id={}, data_dir={}",
+                cfg.node_id,
+                cfg.data_dir.display()
+            );
+            println!(
+                "network config: listen_addr={}, bootstrap_peers={}",
+                cfg.network.listen_addr,
+                cfg.network.bootstrap_peers.len()
+            );
 
             let kp = if crate::keypair::keypair_exists(&cfg.keypair_path) {
                 crate::keypair::load_keypair(&cfg.keypair_path)?
@@ -125,7 +136,10 @@ async fn async_main() -> Result<()> {
     Ok(())
 }
 
-async fn run_node(cfg: crate::config::NodeConfiguration, keypair: libp2p::identity::Keypair) -> Result<()> {
+async fn run_node(
+    cfg: crate::config::NodeConfiguration,
+    keypair: libp2p::identity::Keypair,
+) -> Result<()> {
     let blockchain = Blockchain::new_with_genesis(cfg.genesis.clone());
     let chain_state = Arc::new(blockchain.state.clone());
     let blockchain = Arc::new(Mutex::new(blockchain));
@@ -170,6 +184,7 @@ async fn run_node(cfg: crate::config::NodeConfiguration, keypair: libp2p::identi
         cfg.model.cache_dir.clone(),
         cfg.model.max_memory_mb.saturating_mul(1024 * 1024),
         cfg.model.num_threads,
+        None,
     ));
     if let Err(err) = set_global_inference_engine(inference_engine.clone()) {
         eprintln!("failed to register inference engine: {}", err);

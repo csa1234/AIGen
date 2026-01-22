@@ -1,9 +1,12 @@
-use model::{HttpStorage, LocalStorage, ModelShard, StorageBackend, StorageError};
 use model::sharding::compute_file_hash;
+use model::{HttpStorage, LocalStorage, ModelShard, StorageBackend, StorageError};
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 use std::thread;
 use std::time::{Duration, SystemTime};
 use tokio::fs::{self, File};
@@ -96,9 +99,7 @@ impl TestServer {
         let running_clone = running.clone();
 
         let handle = thread::spawn(move || {
-            listener
-                .set_nonblocking(true)
-                .expect("nonblocking");
+            listener.set_nonblocking(true).expect("nonblocking");
             while running_clone.load(Ordering::SeqCst) {
                 match listener.accept() {
                     Ok((stream, _)) => {
@@ -132,7 +133,10 @@ impl Drop for TestServer {
     }
 }
 
-fn handle_connection(mut stream: TcpStream, responder: Arc<dyn Fn(&str, &str) -> HttpResponse + Send + Sync>) {
+fn handle_connection(
+    mut stream: TcpStream,
+    responder: Arc<dyn Fn(&str, &str) -> HttpResponse + Send + Sync>,
+) {
     let mut buffer = [0u8; 4096];
     let mut request = Vec::new();
     loop {
@@ -273,7 +277,9 @@ async fn test_storage_backend_error_handling() {
     let result = storage.verify_shard(&shard).await.expect("verify");
     assert!(!result);
 
-    let result = storage.download_shard(&shard, &root.join("downloaded.bin")).await;
+    let result = storage
+        .download_shard(&shard, &root.join("downloaded.bin"))
+        .await;
     assert!(matches!(result, Err(StorageError::ShardNotFound)));
 
     let bad_path = root.join("bad.bin");

@@ -3,16 +3,15 @@ use genesis::shutdown::reset_shutdown_for_tests;
 use genesis::{emergency_shutdown, CeoSignature, GenesisConfig, ShutdownCommand};
 use model::sharding::{compute_file_hash, SHARD_SIZE};
 use model::{combine_shards, split_model_file, verify_shard_integrity, ShardError};
-use std::path::Path;
 use std::io::ErrorKind;
+use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tempfile::TempDir;
 use tokio::fs::{File, OpenOptions};
 use tokio::io::{AsyncSeekExt, AsyncWriteExt};
 use tokio::sync::Notify;
 
-const CEO_SECRET_KEY_HEX: &str =
-    "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60";
+const CEO_SECRET_KEY_HEX: &str = "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60";
 
 fn signing_key() -> SigningKey {
     let bytes = hex::decode(CEO_SECRET_KEY_HEX).expect("valid hex");
@@ -175,9 +174,7 @@ async fn test_shard_integrity_verification() {
         .open(&shard_path)
         .await
         .expect("open");
-    file.seek(std::io::SeekFrom::Start(0))
-        .await
-        .expect("seek");
+    file.seek(std::io::SeekFrom::Start(0)).await.expect("seek");
     file.write_all(&[9u8; 4]).await.expect("write");
     file.flush().await.expect("flush");
 

@@ -1,5 +1,5 @@
-use blockchain_core::{ChainId, ChainState, SubscriptionState, Transaction};
 use blockchain_core::types::{Amount, Balance};
+use blockchain_core::{ChainId, ChainState, SubscriptionState, Transaction};
 use genesis::CEO_WALLET;
 
 fn mk_addr(n: u8) -> String {
@@ -13,16 +13,32 @@ fn state_fee_distribution_when_validator_is_ceo_wallet() {
     let receiver = mk_addr(10);
 
     // Seed sender balance enough for amount + fee
-    st.set_balance(sender.clone(), Balance::zero().safe_add(Amount::new(10_000)).unwrap());
+    st.set_balance(
+        sender.clone(),
+        Balance::zero().safe_add(Amount::new(10_000)).unwrap(),
+    );
     // Default validator reward address in ChainState::new is CEO_WALLET.
 
     let chain_id = ChainId::from_str_id("aigen-test");
-    let tx = Transaction::new(sender.clone(), receiver.clone(), 100, 1, 0, false, chain_id, None).unwrap();
+    let tx = Transaction::new(
+        sender.clone(),
+        receiver.clone(),
+        100,
+        1,
+        0,
+        false,
+        chain_id,
+        None,
+    )
+    .unwrap();
     st.apply_transaction(&tx).unwrap();
 
     let ceo_balance = st.get_balance(CEO_WALLET).amount().value();
     // CEO should receive both validator_share and dev_share when validator == CEO.
-    assert_eq!(ceo_balance, tx.fee.validator_share().value() + tx.fee.dev_share().value());
+    assert_eq!(
+        ceo_balance,
+        tx.fee.validator_share().value() + tx.fee.dev_share().value()
+    );
 }
 
 #[test]
@@ -36,7 +52,10 @@ fn state_transfer_success() {
     let st = ChainState::new();
     let a = mk_addr(1);
     let b = mk_addr(2);
-    st.set_balance(a.clone(), Balance::zero().safe_add(Amount::new(10)).unwrap());
+    st.set_balance(
+        a.clone(),
+        Balance::zero().safe_add(Amount::new(10)).unwrap(),
+    );
     st.transfer(&a, &b, Amount::new(3)).unwrap();
     assert_eq!(st.get_balance(&a).amount().value(), 7);
     assert_eq!(st.get_balance(&b).amount().value(), 3);
@@ -58,11 +77,24 @@ fn state_apply_transaction_fee_distribution() {
     let receiver = mk_addr(2);
 
     // Seed balance enough for amount + fee
-    st.set_balance(sender.clone(), Balance::zero().safe_add(Amount::new(10_000)).unwrap());
+    st.set_balance(
+        sender.clone(),
+        Balance::zero().safe_add(Amount::new(10_000)).unwrap(),
+    );
     st.set_validator_reward_address(mk_addr(7));
 
     let chain_id = ChainId::from_str_id("aigen-test");
-    let tx = Transaction::new(sender.clone(), receiver.clone(), 100, 1, 0, false, chain_id, None).unwrap();
+    let tx = Transaction::new(
+        sender.clone(),
+        receiver.clone(),
+        100,
+        1,
+        0,
+        false,
+        chain_id,
+        None,
+    )
+    .unwrap();
     let fee_total = tx.fee.total_fee().value();
 
     st.apply_transaction(&tx).unwrap();
@@ -76,7 +108,10 @@ fn state_apply_transaction_fee_distribution() {
     assert_eq!(dev, tx.fee.dev_share().value());
 
     // burn is not tracked as an account; validate that distributed parts do not exceed total
-    assert_eq!(tx.fee.validator_share().value() + tx.fee.dev_share().value() + tx.fee.burn_amount.value(), fee_total);
+    assert_eq!(
+        tx.fee.validator_share().value() + tx.fee.dev_share().value() + tx.fee.burn_amount.value(),
+        fee_total
+    );
 }
 
 #[test]

@@ -1,22 +1,16 @@
 use consensus::poi::verify_inference;
 use consensus::{
-    CompressionMethod,
-    ComputationMetadata,
+    set_inference_verification_config, CompressionMethod, ComputationMetadata,
     InferenceVerificationConfig,
-    set_inference_verification_config,
 };
-use genesis::shutdown::reset_shutdown_for_tests;
-use model::{
-    set_global_inference_engine,
-    InferenceEngine,
-    InferenceTensor,
-    ModelMetadata,
-    ModelRegistry,
-    StorageBackend,
-    LocalStorage,
-};
-use model::split_model_file;
 use futures::StreamExt;
+use genesis::shutdown::reset_shutdown_for_tests;
+use genesis::CEO_WALLET;
+use model::split_model_file;
+use model::{
+    set_global_inference_engine, InferenceEngine, InferenceTensor, LocalStorage, ModelMetadata,
+    ModelRegistry, StorageBackend,
+};
 use prost::Message;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -39,7 +33,7 @@ async fn test_inference_verification_success() {
         data: vec![0.25],
     };
     let expected = engine
-        .run_inference(MODEL_ID, vec![input.clone()])
+        .run_inference(MODEL_ID, vec![input.clone()], CEO_WALLET)
         .await
         .expect("run inference");
 
@@ -69,7 +63,7 @@ async fn test_inference_verification_failure() {
         data: vec![0.25],
     };
     let mut expected = engine
-        .run_inference(MODEL_ID, vec![input.clone()])
+        .run_inference(MODEL_ID, vec![input.clone()], CEO_WALLET)
         .await
         .expect("run inference");
     expected[0].data[0] += 1.0;
@@ -104,6 +98,7 @@ async fn setup_engine() -> Arc<InferenceEngine> {
                 harness.cache_dir(),
                 (size as usize) * 2,
                 1,
+                None,
             ));
             let _ = set_global_inference_engine(engine.clone());
             let _ = set_inference_verification_config(InferenceVerificationConfig {
@@ -143,7 +138,9 @@ impl TestHarness {
         let model_dir = self.root.join("source").join(model_id);
         let model_path = model_dir.join("model.onnx");
         let shard_dir = model_dir.join("shards");
-        fs::create_dir_all(&model_dir).await.expect("create model dir");
+        fs::create_dir_all(&model_dir)
+            .await
+            .expect("create model dir");
         write_identity_model(&model_path).await;
 
         let shards = split_model_file(&model_path, &shard_dir, model_id)
@@ -161,7 +158,9 @@ impl TestHarness {
             is_experimental: false,
             created_at: now_timestamp(),
         };
-        self.registry.register_model(metadata).expect("register model");
+        self.registry
+            .register_model(metadata)
+            .expect("register model");
 
         for shard in shards.iter() {
             self.registry
@@ -170,7 +169,8 @@ impl TestHarness {
         }
 
         for shard in shards.iter() {
-            let shard_path = shard_dir.join(format!("{}_shard_{}.bin", model_id, shard.shard_index));
+            let shard_path =
+                shard_dir.join(format!("{}_shard_{}.bin", model_id, shard.shard_index));
             self.storage
                 .upload_shard(shard, &shard_path)
                 .await
@@ -194,7 +194,9 @@ async fn ensure_ort_available() {
                 }
             }
 
-            let root = std::env::temp_dir().join("aigen_ort_runtime").join("1.23.2");
+            let root = std::env::temp_dir()
+                .join("aigen_ort_runtime")
+                .join("1.23.2");
             let dll_path = root.join("onnxruntime.dll");
             if !dll_path.exists() {
                 download_and_extract_ort_1232(&root).await;
@@ -210,12 +212,17 @@ async fn ensure_ort_available() {
 async fn download_and_extract_ort_1232(out_dir: &Path) {
     const URL: &str = "https://github.com/microsoft/onnxruntime/releases/download/v1.23.2/onnxruntime-win-x64-1.23.2.zip";
     let zip_path = out_dir.join("onnxruntime-win-x64-1.23.2.zip");
-    fs::create_dir_all(out_dir).await.expect("create ort cache dir");
+    fs::create_dir_all(out_dir)
+        .await
+        .expect("create ort cache dir");
 
     if fs::metadata(&zip_path).await.is_err() {
         let response = reqwest::get(URL).await.expect("download onnxruntime");
         if !response.status().is_success() {
-            panic!("failed to download onnxruntime: status={}", response.status());
+            panic!(
+                "failed to download onnxruntime: status={}",
+                response.status()
+            );
         }
 
         let mut file = fs::File::create(&zip_path).await.expect("create zip file");

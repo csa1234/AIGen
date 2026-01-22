@@ -19,6 +19,13 @@ cache_capacity = 256
 # acceptable absolute error when comparing outputs
 epsilon = 0.00001
 
+[ads]
+enabled = true
+injection_rate = 0.5
+max_ad_length = 500
+upgrade_prompt_threshold = 8
+free_tier_only = true
+
 # keypair_path is currently derived from data_dir by default.
 # keypair_path = ".\\data\\node_keypair.bin"
 keypair_path = ".\\data\\node_keypair.bin"

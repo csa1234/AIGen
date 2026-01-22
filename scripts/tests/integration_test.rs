@@ -1,4 +1,6 @@
-use aigen_scripts::{decrypt_private_key, encrypt_private_key, load_encrypted_key, save_encrypted_key};
+use aigen_scripts::{
+    decrypt_private_key, encrypt_private_key, load_encrypted_key, save_encrypted_key,
+};
 use blockchain_core::crypto;
 use ed25519_dalek::SigningKey;
 use genesis::{verify_ceo_signature, CeoSignature, ShutdownCommand};

@@ -1,8 +1,8 @@
 use blockchain_core::{Block, Blockchain, Transaction};
-use ed25519_dalek::SigningKey;
 use ed25519_dalek::Signer;
-use genesis::CEO_WALLET;
+use ed25519_dalek::SigningKey;
 use genesis::ShutdownCommand;
+use genesis::CEO_WALLET;
 
 fn reset_shutdown() {
     genesis::shutdown::reset_shutdown_for_tests();
@@ -36,7 +36,8 @@ fn mempool_rejects_insufficient_balance() {
     let receiver = mk_addr(2);
 
     // sender has 0 by default
-    let tx = Transaction::new(sender.clone(), receiver, 100, 1, 0, false, c.chain_id, None).unwrap();
+    let tx =
+        Transaction::new(sender.clone(), receiver, 100, 1, 0, false, c.chain_id, None).unwrap();
     assert!(c.add_transaction_to_pool(tx).is_err());
 }
 
@@ -46,7 +47,12 @@ fn mempool_rejects_bad_nonce() {
     let mut c = Blockchain::new();
     let sender = mk_addr(1);
     let receiver = mk_addr(2);
-    c.state.set_balance(sender.clone(), blockchain_core::types::Balance::zero().safe_add(blockchain_core::types::Amount::new(10_000)).unwrap());
+    c.state.set_balance(
+        sender.clone(),
+        blockchain_core::types::Balance::zero()
+            .safe_add(blockchain_core::types::Amount::new(10_000))
+            .unwrap(),
+    );
 
     // expected nonce is 0, provide 1
     let tx = Transaction::new(sender, receiver, 1, 1, 1, false, c.chain_id, None).unwrap();
@@ -59,12 +65,11 @@ fn ceo_shutdown_transaction_uses_payload_not_hash() {
     let mut c = Blockchain::new();
 
     // RFC8032 Ed25519 test vector 1 seed (produces public key d75a...511a).
-    let seed: [u8; 32] = hex::decode(
-        "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60",
-    )
-    .unwrap()
-    .try_into()
-    .unwrap();
+    let seed: [u8; 32] =
+        hex::decode("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60")
+            .unwrap()
+            .try_into()
+            .unwrap();
     let sk = SigningKey::from_bytes(&seed);
 
     let network_magic = c.genesis_config.network_magic;
@@ -123,8 +128,19 @@ fn mempool_orders_ceo_first() {
             .safe_add(blockchain_core::types::Amount::new(10_000))
             .unwrap(),
     );
-    let tx_normal = Transaction::new(normal_sender, mk_addr(4), 1, 1, 0, true, chain_id, None).unwrap();
-    let tx_ceo = Transaction::new(CEO_WALLET.to_string(), mk_addr(2), 1, 1, 0, true, chain_id, None).unwrap();
+    let tx_normal =
+        Transaction::new(normal_sender, mk_addr(4), 1, 1, 0, true, chain_id, None).unwrap();
+    let tx_ceo = Transaction::new(
+        CEO_WALLET.to_string(),
+        mk_addr(2),
+        1,
+        1,
+        0,
+        true,
+        chain_id,
+        None,
+    )
+    .unwrap();
 
     c.add_transaction_to_pool(tx_normal).unwrap();
     c.add_transaction_to_pool(tx_ceo.clone()).unwrap();
@@ -141,10 +157,24 @@ fn add_block_applies_state() {
     // seed sender funds
     let sender = mk_addr(1);
     let receiver = mk_addr(2);
-    c.state
-        .set_balance(sender.clone(), blockchain_core::types::Balance::zero().safe_add(blockchain_core::types::Amount::new(10_000)).unwrap());
+    c.state.set_balance(
+        sender.clone(),
+        blockchain_core::types::Balance::zero()
+            .safe_add(blockchain_core::types::Amount::new(10_000))
+            .unwrap(),
+    );
 
-    let tx = Transaction::new(sender.clone(), receiver.clone(), 100, 1, 0, false, c.chain_id, None).unwrap();
+    let tx = Transaction::new(
+        sender.clone(),
+        receiver.clone(),
+        100,
+        1,
+        0,
+        false,
+        c.chain_id,
+        None,
+    )
+    .unwrap();
     let prev = c.blocks.last().unwrap().block_hash.0;
     let b = Block::new(prev, vec![tx], 1, 1, Some(dummy_poi_proof_bytes(&sender)));
 
@@ -163,7 +193,17 @@ fn add_block_rolls_back_on_failure() {
     c.state
         .set_balance(sender.clone(), blockchain_core::types::Balance::zero());
 
-    let tx = Transaction::new(sender.clone(), receiver.clone(), 100, 1, 0, false, c.chain_id, None).unwrap();
+    let tx = Transaction::new(
+        sender.clone(),
+        receiver.clone(),
+        100,
+        1,
+        0,
+        false,
+        c.chain_id,
+        None,
+    )
+    .unwrap();
     let prev = c.blocks.last().unwrap().block_hash.0;
     let b = Block::new(prev, vec![tx], 1, 1, Some(dummy_poi_proof_bytes(&sender)));
 

@@ -50,11 +50,7 @@ pub struct SipProposal {
 
 impl SipProposal {
     pub fn message_to_sign_for_approval(&self) -> Vec<u8> {
-        format!(
-            "sip_approve:{}:{:x?}",
-            self.proposal_id, self.proposal_hash
-        )
-        .into_bytes()
+        format!("sip_approve:{}:{:x?}", self.proposal_id, self.proposal_hash).into_bytes()
     }
 
     pub fn message_to_sign_for_veto(&self) -> Vec<u8> {
@@ -83,7 +79,7 @@ impl ShutdownCommand {
 
 #[derive(Debug, Error, Serialize, Deserialize, Clone)]
 pub enum GenesisError {
-    #[error("invalid signature")] 
+    #[error("invalid signature")]
     InvalidSignature,
     #[error("unauthorized caller")]
     UnauthorizedCaller,

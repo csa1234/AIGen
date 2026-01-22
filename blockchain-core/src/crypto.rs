@@ -1,11 +1,11 @@
 use crate::block::BlockHeader;
 use crate::transaction::Transaction;
 use crate::types::{BlockHash, TxHash};
-use ed25519_dalek::{Signer, SigningKey, Signature, Verifier, VerifyingKey};
-use rand::rngs::OsRng;
-use rand::RngCore;
 use base64::engine::general_purpose;
 use base64::Engine as _;
+use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
+use rand::rngs::OsRng;
+use rand::RngCore;
 use serde_json;
 use sha2::{Digest, Sha256};
 
@@ -84,7 +84,10 @@ pub struct MerkleSibling {
     pub is_left: bool,
 }
 
-pub fn generate_merkle_proof(transactions: &[Transaction], index: usize) -> Option<Vec<MerkleSibling>> {
+pub fn generate_merkle_proof(
+    transactions: &[Transaction],
+    index: usize,
+) -> Option<Vec<MerkleSibling>> {
     if transactions.is_empty() || index >= transactions.len() {
         return None;
     }
@@ -179,7 +182,11 @@ pub fn derive_address_from_pubkey(pubkey: &PublicKey) -> String {
     out.push_str("0x");
     for (i, ch) in lower.chars().enumerate() {
         let byte = addr_hash[i / 2];
-        let nibble = if i % 2 == 0 { (byte >> 4) & 0x0f } else { byte & 0x0f };
+        let nibble = if i % 2 == 0 {
+            (byte >> 4) & 0x0f
+        } else {
+            byte & 0x0f
+        };
         if ch.is_ascii_hexdigit() && ch.is_ascii_alphabetic() && nibble >= 8 {
             out.push(ch.to_ascii_uppercase());
         } else {

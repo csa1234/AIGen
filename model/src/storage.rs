@@ -70,10 +70,18 @@ impl From<ShardError> for StorageError {
 #[async_trait(?Send)]
 pub trait StorageBackend: Send + Sync {
     /// Upload a shard file to the storage backend and return its location.
-    async fn upload_shard(&self, shard: &ModelShard, data_path: &Path) -> Result<String, StorageError>;
+    async fn upload_shard(
+        &self,
+        shard: &ModelShard,
+        data_path: &Path,
+    ) -> Result<String, StorageError>;
 
     /// Download a shard file from the storage backend to the output path.
-    async fn download_shard(&self, shard: &ModelShard, output_path: &Path) -> Result<(), StorageError>;
+    async fn download_shard(
+        &self,
+        shard: &ModelShard,
+        output_path: &Path,
+    ) -> Result<(), StorageError>;
 
     /// Verify that a shard exists and matches its expected hash.
     async fn verify_shard(&self, shard: &ModelShard) -> Result<bool, StorageError>;
@@ -121,7 +129,11 @@ impl LocalStorage {
 
 #[async_trait(?Send)]
 impl StorageBackend for LocalStorage {
-    async fn upload_shard(&self, shard: &ModelShard, data_path: &Path) -> Result<String, StorageError> {
+    async fn upload_shard(
+        &self,
+        shard: &ModelShard,
+        data_path: &Path,
+    ) -> Result<String, StorageError> {
         ensure_running()?;
         println!(
             "uploading shard to {}: model={}, shard={}",
@@ -159,7 +171,11 @@ impl StorageBackend for LocalStorage {
         Ok(primary_path.display().to_string())
     }
 
-    async fn download_shard(&self, shard: &ModelShard, output_path: &Path) -> Result<(), StorageError> {
+    async fn download_shard(
+        &self,
+        shard: &ModelShard,
+        output_path: &Path,
+    ) -> Result<(), StorageError> {
         ensure_running()?;
         println!(
             "downloading shard from {}: model={}, shard={}",
@@ -209,7 +225,9 @@ impl StorageBackend for LocalStorage {
         ensure_running()?;
         let primary = self.shard_path(shard);
         if fs::metadata(&primary).await.is_ok() {
-            return verify_shard_integrity(&primary, &shard.hash).await.map_err(StorageError::from);
+            return verify_shard_integrity(&primary, &shard.hash)
+                .await
+                .map_err(StorageError::from);
         }
 
         for replica_id in 1..self.redundancy_factor {
@@ -261,8 +279,8 @@ pub struct IpfsStorage {
 impl IpfsStorage {
     /// Create an IPFS storage backend using the provided API and gateway URLs.
     pub fn new(api_url: &str, gateway_url: &str) -> Result<Self, StorageError> {
-        let client = IpfsClient::from_str(api_url)
-            .map_err(|err| StorageError::Ipfs(err.to_string()))?;
+        let client =
+            IpfsClient::from_str(api_url).map_err(|err| StorageError::Ipfs(err.to_string()))?;
         Ok(Self {
             client,
             gateway_url: gateway_url.trim_end_matches('/').to_string(),
@@ -277,7 +295,11 @@ impl IpfsStorage {
 
 #[async_trait(?Send)]
 impl StorageBackend for IpfsStorage {
-    async fn upload_shard(&self, shard: &ModelShard, data_path: &Path) -> Result<String, StorageError> {
+    async fn upload_shard(
+        &self,
+        shard: &ModelShard,
+        data_path: &Path,
+    ) -> Result<String, StorageError> {
         ensure_running()?;
         println!(
             "uploading shard to {}: model={}, shard={}",
@@ -306,7 +328,11 @@ impl StorageBackend for IpfsStorage {
         Ok(cid)
     }
 
-    async fn download_shard(&self, shard: &ModelShard, output_path: &Path) -> Result<(), StorageError> {
+    async fn download_shard(
+        &self,
+        shard: &ModelShard,
+        output_path: &Path,
+    ) -> Result<(), StorageError> {
         ensure_running()?;
         let cid = shard.ipfs_cid.as_ref().ok_or(StorageError::ShardNotFound)?;
         let url = self.gateway_shard_url(cid);
@@ -321,7 +347,11 @@ impl StorageBackend for IpfsStorage {
             .timeout(Duration::from_secs(300))
             .build()
             .map_err(|err| StorageError::Http(err.to_string()))?;
-        let response = client.get(&url).send().await.map_err(|err| StorageError::Http(err.to_string()))?;
+        let response = client
+            .get(&url)
+            .send()
+            .await
+            .map_err(|err| StorageError::Http(err.to_string()))?;
         if !response.status().is_success() {
             return Err(StorageError::ShardNotFound);
         }
@@ -441,7 +471,11 @@ impl HttpStorage {
 
 #[async_trait(?Send)]
 impl StorageBackend for HttpStorage {
-    async fn upload_shard(&self, shard: &ModelShard, data_path: &Path) -> Result<String, StorageError> {
+    async fn upload_shard(
+        &self,
+        shard: &ModelShard,
+        data_path: &Path,
+    ) -> Result<String, StorageError> {
         ensure_running()?;
         println!(
             "uploading shard to {}: model={}, shard={}",
@@ -486,7 +520,11 @@ impl StorageBackend for HttpStorage {
         success_url.ok_or(StorageError::AllMirrorsFailed)
     }
 
-    async fn download_shard(&self, shard: &ModelShard, output_path: &Path) -> Result<(), StorageError> {
+    async fn download_shard(
+        &self,
+        shard: &ModelShard,
+        output_path: &Path,
+    ) -> Result<(), StorageError> {
         ensure_running()?;
         println!(
             "downloading shard from {}: model={}, shard={}",

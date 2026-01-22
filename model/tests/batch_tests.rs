@@ -9,23 +9,10 @@ use blockchain_core::transaction::Transaction;
 use blockchain_core::ChainState;
 
 use model::{
-    BatchError,
-    BatchJobStatus,
-    BatchPaymentPayload,
-    BatchPriority,
-    BatchQueue,
-    InferenceEngine,
-    InferenceTensor,
-    LocalStorage,
-    ModelMetadata,
-    ModelRegistry,
-    SubscriptionTier,
-    TierConfig,
-    TierManager,
+    tiers::FeatureFlag, validate_batch_payment, BatchError, BatchJobStatus, BatchPaymentPayload,
+    BatchPriority, BatchQueue, DefaultPaymentProvider, InferenceEngine, InferenceTensor,
+    LocalStorage, ModelMetadata, ModelRegistry, SubscriptionTier, TierConfig, TierManager,
     VolumeDiscountTracker,
-    DefaultPaymentProvider,
-    tiers::FeatureFlag,
-    validate_batch_payment,
 };
 
 fn test_configs() -> HashMap<SubscriptionTier, TierConfig> {
@@ -118,11 +105,7 @@ fn test_engine(registry: Arc<ModelRegistry>) -> Arc<InferenceEngine> {
     let cache_root = std::env::temp_dir().join(format!("aigen-cache-{}", Uuid::new_v4()));
     let storage = Arc::new(LocalStorage::new(storage_root));
     Arc::new(InferenceEngine::new(
-        registry,
-        storage,
-        cache_root,
-        10_000_000,
-        1,
+        registry, storage, cache_root, 10_000_000, 1, None,
     ))
 }
 
@@ -130,7 +113,12 @@ fn test_manager() -> TierManager {
     TierManager::new(test_configs(), Arc::new(DefaultPaymentProvider), None)
 }
 
-fn sample_payload(user_address: &str, priority: BatchPriority, model_id: &str, input_data: Vec<u8>) -> BatchPaymentPayload {
+fn sample_payload(
+    user_address: &str,
+    priority: BatchPriority,
+    model_id: &str,
+    input_data: Vec<u8>,
+) -> BatchPaymentPayload {
     BatchPaymentPayload {
         request_id: Uuid::new_v4().to_string(),
         user_address: user_address.to_string(),
@@ -175,23 +163,59 @@ async fn priority_queue_orders_by_priority_when_same_schedule() {
     let queue = BatchQueue::new(
         manager.clone(),
         engine,
+        None,
         chain_state,
         VolumeDiscountTracker::new(VolumeDiscountTracker::default_tiers()),
     );
 
     let now = model::now_timestamp();
     manager
-        .subscribe_user("0x00000000000000000000000000000000000000aa", SubscriptionTier::Pro, false, now)
+        .subscribe_user(
+            "0x00000000000000000000000000000000000000aa",
+            SubscriptionTier::Pro,
+            false,
+            now,
+        )
         .expect("subscribe");
 
     let input = sample_input();
-    let standard_payload = sample_payload("0x00000000000000000000000000000000000000aa", BatchPriority::Standard, "model-a", input.clone());
-    let batch_payload = sample_payload("0x00000000000000000000000000000000000000aa", BatchPriority::Batch, "model-a", input.clone());
-    let economy_payload = sample_payload("0x00000000000000000000000000000000000000aa", BatchPriority::Economy, "model-a", input.clone());
+    let standard_payload = sample_payload(
+        "0x00000000000000000000000000000000000000aa",
+        BatchPriority::Standard,
+        "model-a",
+        input.clone(),
+    );
+    let batch_payload = sample_payload(
+        "0x00000000000000000000000000000000000000aa",
+        BatchPriority::Batch,
+        "model-a",
+        input.clone(),
+    );
+    let economy_payload = sample_payload(
+        "0x00000000000000000000000000000000000000aa",
+        BatchPriority::Economy,
+        "model-a",
+        input.clone(),
+    );
 
-    let standard_tx = make_tx("0x00000000000000000000000000000000000000aa", CEO_WALLET, 10, standard_payload);
-    let batch_tx = make_tx("0x00000000000000000000000000000000000000aa", CEO_WALLET, 5, batch_payload);
-    let economy_tx = make_tx("0x00000000000000000000000000000000000000aa", CEO_WALLET, 3, economy_payload);
+    let standard_tx = make_tx(
+        "0x00000000000000000000000000000000000000aa",
+        CEO_WALLET,
+        10,
+        standard_payload,
+    );
+    let batch_tx = make_tx(
+        "0x00000000000000000000000000000000000000aa",
+        CEO_WALLET,
+        5,
+        batch_payload,
+    );
+    let economy_tx = make_tx(
+        "0x00000000000000000000000000000000000000aa",
+        CEO_WALLET,
+        3,
+        economy_payload,
+    );
 
     let standard_id = queue
         .validate_and_submit(&standard_tx, "model-a".to_string(), input.clone())
@@ -207,13 +231,34 @@ async fn priority_queue_orders_by_priority_when_same_schedule() {
         .expect("submit economy");
 
     let schedule_time = model::now_timestamp();
-    queue.reschedule_job(&standard_id, schedule_time).await.expect("reschedule");
-    queue.reschedule_job(&batch_id, schedule_time).await.expect("reschedule");
-    queue.reschedule_job(&economy_id, schedule_time).await.expect("reschedule");
+    queue
+        .reschedule_job(&standard_id, schedule_time)
+        .await
+        .expect("reschedule");
+    queue
+        .reschedule_job(&batch_id, schedule_time)
+        .await
+        .expect("reschedule");
+    queue
+        .reschedule_job(&economy_id, schedule_time)
+        .await
+        .expect("reschedule");
 
-    let first = queue.get_next_ready_job().await.expect("ready").expect("job");
-    let second = queue.get_next_ready_job().await.expect("ready").expect("job");
-    let third = queue.get_next_ready_job().await.expect("ready").expect("job");
+    let first = queue
+        .get_next_ready_job()
+        .await
+        .expect("ready")
+        .expect("job");
+    let second = queue
+        .get_next_ready_job()
+        .await
+        .expect("ready")
+        .expect("job");
+    let third = queue
+        .get_next_ready_job()
+        .await
+        .expect("ready")
+        .expect("job");
 
     assert_eq!(first.priority, BatchPriority::Standard);
     assert_eq!(second.priority, BatchPriority::Batch);
@@ -224,9 +269,25 @@ async fn priority_queue_orders_by_priority_when_same_schedule() {
 async fn payment_validation_accepts_expected_amount() {
     reset_shutdown_for_tests();
     let input = sample_input();
-    let payload = sample_payload("0x00000000000000000000000000000000000000bb", BatchPriority::Standard, "model-a", input.clone());
-    let tx = make_tx("0x00000000000000000000000000000000000000bb", CEO_WALLET, 10, payload.clone());
-    let parsed = validate_batch_payment(&tx, CEO_WALLET, Some(10), "model-a".to_string(), input.clone());
+    let payload = sample_payload(
+        "0x00000000000000000000000000000000000000bb",
+        BatchPriority::Standard,
+        "model-a",
+        input.clone(),
+    );
+    let tx = make_tx(
+        "0x00000000000000000000000000000000000000bb",
+        CEO_WALLET,
+        10,
+        payload.clone(),
+    );
+    let parsed = validate_batch_payment(
+        &tx,
+        CEO_WALLET,
+        Some(10),
+        "model-a".to_string(),
+        input.clone(),
+    );
     assert!(parsed.is_ok());
     let invalid = validate_batch_payment(&tx, CEO_WALLET, Some(5), "model-a".to_string(), input);
     assert!(invalid.is_err());
@@ -242,6 +303,7 @@ async fn job_state_transitions_update_status() {
     let queue = BatchQueue::new(
         manager.clone(),
         engine,
+        None,
         chain_state,
         VolumeDiscountTracker::new(VolumeDiscountTracker::default_tiers()),
     );
@@ -252,18 +314,29 @@ async fn job_state_transitions_update_status() {
         .subscribe_user(user_address, SubscriptionTier::Pro, false, now)
         .expect("subscribe");
     let input = sample_input();
-    let payload = sample_payload(user_address, BatchPriority::Standard, "model-a", input.clone());
+    let payload = sample_payload(
+        user_address,
+        BatchPriority::Standard,
+        "model-a",
+        input.clone(),
+    );
     let tx = make_tx(user_address, CEO_WALLET, 10, payload);
     let job_id = queue
         .validate_and_submit(&tx, "model-a".to_string(), input)
         .await
         .expect("submit");
     queue
-        .update_job_status(&job_id, BatchJobStatus::Processing, None, None)
+        .update_job_status(&job_id, BatchJobStatus::Processing, None, None, false)
         .await
         .expect("processing");
     queue
-        .update_job_status(&job_id, BatchJobStatus::Completed, Some(vec![1, 2, 3]), None)
+        .update_job_status(
+            &job_id,
+            BatchJobStatus::Completed,
+            Some(vec![1, 2, 3]),
+            None,
+            false,
+        )
         .await
         .expect("completed");
     let job = queue.get_job(&job_id).await.expect("job");
@@ -280,6 +353,7 @@ async fn batch_jobs_wait_for_schedule() {
     let queue = BatchQueue::new(
         manager.clone(),
         engine,
+        None,
         chain_state,
         VolumeDiscountTracker::new(VolumeDiscountTracker::default_tiers()),
     );
@@ -323,19 +397,37 @@ async fn tier_restrictions_block_free_tier() {
     let queue = BatchQueue::new(
         manager.clone(),
         engine,
+        None,
         chain_state,
         VolumeDiscountTracker::new(VolumeDiscountTracker::default_tiers()),
     );
 
     let now = model::now_timestamp();
     manager
-        .subscribe_user("0x00000000000000000000000000000000000000ff", SubscriptionTier::Free, false, now)
+        .subscribe_user(
+            "0x00000000000000000000000000000000000000ff",
+            SubscriptionTier::Free,
+            false,
+            now,
+        )
         .expect("subscribe");
 
     let input = sample_input();
-    let payload = sample_payload("0x00000000000000000000000000000000000000ff", BatchPriority::Standard, "model-a", input.clone());
-    let tx = make_tx("0x00000000000000000000000000000000000000ff", CEO_WALLET, 10, payload);
-    let res = queue.validate_and_submit(&tx, "model-a".to_string(), input).await;
+    let payload = sample_payload(
+        "0x00000000000000000000000000000000000000ff",
+        BatchPriority::Standard,
+        "model-a",
+        input.clone(),
+    );
+    let tx = make_tx(
+        "0x00000000000000000000000000000000000000ff",
+        CEO_WALLET,
+        10,
+        payload,
+    );
+    let res = queue
+        .validate_and_submit(&tx, "model-a".to_string(), input)
+        .await;
     assert!(matches!(res, Err(BatchError::InsufficientTier)));
 }
 
@@ -349,13 +441,19 @@ async fn concurrent_submissions_keep_all_jobs() {
     let queue = Arc::new(BatchQueue::new(
         manager.clone(),
         engine,
+        None,
         chain_state,
         VolumeDiscountTracker::new(VolumeDiscountTracker::default_tiers()),
     ));
 
     let now = model::now_timestamp();
     manager
-        .subscribe_user("0x0000000000000000000000000000000000000100", SubscriptionTier::Pro, false, now)
+        .subscribe_user(
+            "0x0000000000000000000000000000000000000100",
+            SubscriptionTier::Pro,
+            false,
+            now,
+        )
         .expect("subscribe");
 
     let mut handles = Vec::new();
@@ -386,7 +484,11 @@ async fn concurrent_submissions_keep_all_jobs() {
     }
 
     let stats = queue.get_queue_stats().await;
-    let count = stats.jobs_by_priority.get(&BatchPriority::Standard).cloned().unwrap_or(0);
+    let count = stats
+        .jobs_by_priority
+        .get(&BatchPriority::Standard)
+        .cloned()
+        .unwrap_or(0);
     assert!(count >= 5);
 }
 
@@ -400,18 +502,36 @@ async fn error_when_model_missing() {
     let queue = BatchQueue::new(
         manager.clone(),
         engine,
+        None,
         chain_state,
         VolumeDiscountTracker::new(VolumeDiscountTracker::default_tiers()),
     );
 
     let now = model::now_timestamp();
     manager
-        .subscribe_user("0x0000000000000000000000000000000000000101", SubscriptionTier::Pro, false, now)
+        .subscribe_user(
+            "0x0000000000000000000000000000000000000101",
+            SubscriptionTier::Pro,
+            false,
+            now,
+        )
         .expect("subscribe");
 
     let input = sample_input();
-    let payload = sample_payload("0x0000000000000000000000000000000000000101", BatchPriority::Standard, "missing", input.clone());
-    let tx = make_tx("0x0000000000000000000000000000000000000101", CEO_WALLET, 10, payload);
-    let res = queue.validate_and_submit(&tx, "missing".to_string(), input).await;
+    let payload = sample_payload(
+        "0x0000000000000000000000000000000000000101",
+        BatchPriority::Standard,
+        "missing",
+        input.clone(),
+    );
+    let tx = make_tx(
+        "0x0000000000000000000000000000000000000101",
+        CEO_WALLET,
+        10,
+        payload,
+    );
+    let res = queue
+        .validate_and_submit(&tx, "missing".to_string(), input)
+        .await;
     assert!(matches!(res, Err(BatchError::ModelNotFound)));
 }

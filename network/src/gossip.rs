@@ -48,10 +48,16 @@ impl GossipHandler {
     }
 
     pub fn pop_next(&mut self) -> Option<NetworkMessage> {
-        self.shutdown_queue.pop_front().or_else(|| self.normal_queue.pop_front())
+        self.shutdown_queue
+            .pop_front()
+            .or_else(|| self.normal_queue.pop_front())
     }
 
-    pub fn handle_gossip_message(&mut self, topic: &TopicHash, data: &[u8]) -> Option<NetworkMessage> {
+    pub fn handle_gossip_message(
+        &mut self,
+        topic: &TopicHash,
+        data: &[u8],
+    ) -> Option<NetworkMessage> {
         let msg = NetworkMessage::deserialize(data).ok()?;
 
         if topic.as_str() == TOPIC_SHUTDOWN {

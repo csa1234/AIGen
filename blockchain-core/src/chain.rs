@@ -4,7 +4,7 @@ use crate::transaction::{Transaction, TransactionPool};
 use crate::types::{Amount, BlockchainError, ChainId, TxHash};
 use genesis::{
     approve_sip, check_shutdown, emergency_shutdown, is_ceo_wallet, is_shutdown,
-    verify_ceo_transaction, CEO_WALLET, GenesisConfig, GenesisError, ShutdownCommand,
+    verify_ceo_transaction, GenesisConfig, GenesisError, ShutdownCommand, CEO_WALLET,
 };
 
 #[allow(dead_code)]
@@ -162,8 +162,12 @@ impl Blockchain {
 
         // Commit by pushing block.
         self.blocks.push(block);
-        self.shutdown =
-            is_shutdown() || self.blocks.last().map(|b| b.header.shutdown_flag).unwrap_or(false);
+        self.shutdown = is_shutdown()
+            || self
+                .blocks
+                .last()
+                .map(|b| b.header.shutdown_flag)
+                .unwrap_or(false);
 
         Ok(())
     }
@@ -184,8 +188,7 @@ impl Blockchain {
             // Apply transactions to temp state
             let snapshot = temp_state.snapshot();
             let apply_res: Result<(), BlockchainError> = (|| {
-                temp_state
-                    .set_validator_reward_address(CEO_WALLET.to_string());
+                temp_state.set_validator_reward_address(CEO_WALLET.to_string());
                 for tx in &block.transactions {
                     temp_state.apply_transaction(tx)?;
                 }
@@ -285,8 +288,9 @@ impl Blockchain {
                     .payload
                     .as_ref()
                     .ok_or(BlockchainError::InvalidTransaction)?;
-                let command: ShutdownCommand = bincode::deserialize(payload)
-                    .map_err(|e| BlockchainError::Genesis(GenesisError::SerializationError(e.to_string())))?;
+                let command: ShutdownCommand = bincode::deserialize(payload).map_err(|e| {
+                    BlockchainError::Genesis(GenesisError::SerializationError(e.to_string()))
+                })?;
                 emergency_shutdown(command)?;
                 Ok(())
             }
