@@ -83,13 +83,13 @@ impl Transaction {
 
     pub fn sign(mut self, secret_key: &SecretKey) -> Self {
         // The tx_hash already commits to chain_id.
-        let signature = sign_message(&self.tx_hash.0, secret_key);
+        let signature = sign_message(self.tx_hash.0.as_ref(), secret_key);
         self.signature = signature;
         self
     }
 
     pub fn verify(&self, public_key: &PublicKey) -> bool {
-        verify_signature(&self.tx_hash.0, &self.signature, public_key)
+        verify_signature(self.tx_hash.0.as_ref(), &self.signature, public_key)
     }
 
     pub fn verify_with_pubkey(&self, public_key: &PublicKey) -> Result<(), BlockchainError> {

@@ -27,18 +27,55 @@ impl Default for AccountState {
     }
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SubscriptionState {
+    pub user_address: String,
+    pub tier: u8,
+    pub start_timestamp: i64,
+    pub expiry_timestamp: i64,
+    pub requests_used: u64,
+    pub last_reset_timestamp: i64,
+    pub auto_renew: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BatchJobState {
+    pub job_id: String,
+    pub user_address: String,
+    pub priority: u8,
+    pub status: u8,
+    pub submission_time: i64,
+    pub scheduled_time: i64,
+    pub completion_time: Option<i64>,
+    pub model_id: String,
+    pub result_hash: Option<[u8; 32]>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ChainStateSnapshot {
+    pub accounts: BTreeMap<Address, AccountState>,
+    pub subscriptions: BTreeMap<Address, SubscriptionState>,
+    pub batch_jobs: BTreeMap<String, BatchJobState>,
+}
+
 #[derive(Debug, Default)]
 pub struct ChainState {
     accounts: RwLock<BTreeMap<Address, AccountState>>,
+    subscriptions: RwLock<BTreeMap<Address, SubscriptionState>>,
+    batch_jobs: RwLock<BTreeMap<String, BatchJobState>>,
     validator_reward_address: RwLock<Address>,
 }
 
 impl Clone for ChainState {
     fn clone(&self) -> Self {
         let accounts = self.accounts.read().clone();
+        let subscriptions = self.subscriptions.read().clone();
+        let batch_jobs = self.batch_jobs.read().clone();
         let validator_reward_address = self.validator_reward_address.read().clone();
         ChainState {
             accounts: RwLock::new(accounts),
+            subscriptions: RwLock::new(subscriptions),
+            batch_jobs: RwLock::new(batch_jobs),
             validator_reward_address: RwLock::new(validator_reward_address),
         }
     }
@@ -48,16 +85,24 @@ impl ChainState {
     pub fn new() -> Self {
         Self {
             accounts: RwLock::new(BTreeMap::new()),
+            subscriptions: RwLock::new(BTreeMap::new()),
+            batch_jobs: RwLock::new(BTreeMap::new()),
             validator_reward_address: RwLock::new(CEO_WALLET.to_string()),
         }
     }
 
-    pub fn snapshot(&self) -> BTreeMap<Address, AccountState> {
-        self.accounts.read().clone()
+    pub fn snapshot(&self) -> ChainStateSnapshot {
+        ChainStateSnapshot {
+            accounts: self.accounts.read().clone(),
+            subscriptions: self.subscriptions.read().clone(),
+            batch_jobs: self.batch_jobs.read().clone(),
+        }
     }
 
-    pub fn restore(&self, snapshot: BTreeMap<Address, AccountState>) {
-        *self.accounts.write() = snapshot;
+    pub fn restore(&self, snapshot: ChainStateSnapshot) {
+        *self.accounts.write() = snapshot.accounts;
+        *self.subscriptions.write() = snapshot.subscriptions;
+        *self.batch_jobs.write() = snapshot.batch_jobs;
     }
 
     pub fn set_validator_reward_address(&self, address: Address) {
@@ -86,6 +131,69 @@ impl ChainState {
             .get(address)
             .cloned()
             .unwrap_or_default()
+    }
+
+    pub fn get_subscription(&self, address: &str) -> Option<SubscriptionState> {
+        self.subscriptions.read().get(address).cloned()
+    }
+
+    pub fn set_subscription(&self, address: Address, subscription: SubscriptionState) {
+        self.subscriptions.write().insert(address, subscription);
+    }
+
+    pub fn set_batch_job(&self, job_id: String, state: BatchJobState) {
+        self.batch_jobs.write().insert(job_id, state);
+    }
+
+    pub fn get_batch_job(&self, job_id: &str) -> Option<BatchJobState> {
+        self.batch_jobs.read().get(job_id).cloned()
+    }
+
+    pub fn list_batch_jobs_by_user(&self, user_address: &str) -> Vec<BatchJobState> {
+        self.batch_jobs
+            .read()
+            .values()
+            .filter(|job| job.user_address == user_address)
+            .cloned()
+            .collect()
+    }
+
+    pub fn list_pending_batch_jobs(&self) -> Vec<BatchJobState> {
+        self.batch_jobs
+            .read()
+            .values()
+            .filter(|job| job.status == 0 || job.status == 1)
+            .cloned()
+            .collect()
+    }
+
+    pub fn update_subscription_usage(
+        &self,
+        address: &str,
+        requests_used: u64,
+    ) -> Result<(), BlockchainError> {
+        let mut subscriptions = self.subscriptions.write();
+        let entry = subscriptions
+            .get_mut(address)
+            .ok_or(BlockchainError::InvalidTransaction)?;
+        entry.requests_used = requests_used;
+        Ok(())
+    }
+
+    pub fn remove_subscription(&self, address: &str) -> Result<(), BlockchainError> {
+        let mut subscriptions = self.subscriptions.write();
+        if subscriptions.remove(address).is_none() {
+            return Err(BlockchainError::InvalidTransaction);
+        }
+        Ok(())
+    }
+
+    pub fn list_subscriptions(&self) -> Vec<(Address, SubscriptionState)> {
+        self.subscriptions
+            .read()
+            .iter()
+            .map(|(address, state)| (address.clone(), state.clone()))
+            .collect()
     }
 
     pub fn set_balance(&self, address: Address, balance: Balance) {
@@ -245,19 +353,56 @@ impl ChainState {
 
     pub fn calculate_state_root(&self) -> StateRoot {
         let accounts = self.accounts.read();
-        if accounts.is_empty() {
-            return hash_data(&[]);
+        let subscriptions = self.subscriptions.read();
+        let batch_jobs = self.batch_jobs.read();
+        if accounts.is_empty() && subscriptions.is_empty() && batch_jobs.is_empty() {
+            return hash_data(&[][..]);
         }
 
-        let mut leaves: Vec<[u8; 32]> = Vec::with_capacity(accounts.len());
+        let mut leaves: Vec<[u8; 32]> =
+            Vec::with_capacity(accounts.len().saturating_add(subscriptions.len()).saturating_add(batch_jobs.len()));
         for (addr, state) in accounts.iter() {
             let mut buf = Vec::new();
+            buf.extend_from_slice(b"acct");
             buf.extend_from_slice(addr.as_bytes());
             buf.extend_from_slice(&state.balance.amount().value().to_le_bytes());
             buf.extend_from_slice(&state.nonce.value().to_le_bytes());
             buf.push(state.is_contract as u8);
             if let Some(ch) = state.code_hash {
                 buf.extend_from_slice(&ch);
+            }
+            leaves.push(hash_data(&buf));
+        }
+
+        for (addr, subscription) in subscriptions.iter() {
+            let mut buf = Vec::new();
+            buf.extend_from_slice(b"sub");
+            buf.extend_from_slice(addr.as_bytes());
+            buf.push(subscription.tier);
+            buf.extend_from_slice(&subscription.start_timestamp.to_le_bytes());
+            buf.extend_from_slice(&subscription.expiry_timestamp.to_le_bytes());
+            buf.extend_from_slice(&subscription.requests_used.to_le_bytes());
+            buf.extend_from_slice(&subscription.last_reset_timestamp.to_le_bytes());
+            buf.push(subscription.auto_renew as u8);
+            leaves.push(hash_data(&buf));
+        }
+
+        for (job_id, job) in batch_jobs.iter() {
+            let mut buf = Vec::new();
+            buf.extend_from_slice(b"batch");
+            buf.extend_from_slice(job_id.as_bytes());
+            buf.extend_from_slice(job.user_address.as_bytes());
+            buf.push(job.priority);
+            buf.push(job.status);
+            buf.extend_from_slice(&job.submission_time.to_le_bytes());
+            buf.extend_from_slice(&job.scheduled_time.to_le_bytes());
+            buf.extend_from_slice(&job.completion_time.unwrap_or(0).to_le_bytes());
+            buf.extend_from_slice(job.model_id.as_bytes());
+            if let Some(hash) = job.result_hash {
+                buf.push(1);
+                buf.extend_from_slice(&hash);
+            } else {
+                buf.push(0);
             }
             leaves.push(hash_data(&buf));
         }

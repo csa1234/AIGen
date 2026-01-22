@@ -9,17 +9,17 @@ fn mk_addr(n: u8) -> String {
 
 #[test]
 fn hash_data_consistency() {
-    let a = hash_data(b"abc");
-    let b = hash_data(b"abc");
-    let c = hash_data(b"abcd");
+    let a = hash_data(b"abc".as_ref());
+    let b = hash_data(b"abc".as_ref());
+    let c = hash_data(b"abcd".as_ref());
     assert_eq!(a, b);
     assert_ne!(a, c);
 }
 
 #[test]
 fn keccak_and_blake3_different() {
-    let k = keccak256(b"abc");
-    let b = blake3_hash(b"abc");
+    let k = keccak256(b"abc".as_ref());
+    let b = blake3_hash(b"abc".as_ref());
     assert_ne!(k, b);
 }
 

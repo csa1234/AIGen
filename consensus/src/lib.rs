@@ -18,7 +18,13 @@ use crate::poi::{calculate_poi_reward, check_shutdown_and_halt, ConsensusError, 
 use crate::state::{ConsensusEvent, ConsensusMetrics, ConsensusStateMachine};
 use crate::validator::{QuorumResult, SlashReason, ValidatorRegistry, VoteRegistry};
 
-pub use crate::poi::{CompressionMethod, ComputationMetadata, WorkType};
+pub use crate::poi::{
+    CompressionMethod,
+    ComputationMetadata,
+    InferenceVerificationConfig,
+    WorkType,
+    set_inference_verification_config,
+};
 pub use crate::poi::PoIProof;
 pub use crate::validator::{ValidatorVote};
 

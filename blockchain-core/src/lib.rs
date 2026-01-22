@@ -10,7 +10,14 @@ pub mod state;
 pub use crate::block::{Block, BlockHeader};
 pub use crate::transaction::{Transaction, TransactionPool};
 pub use crate::chain::Blockchain;
-pub use crate::state::{AccountState, ChainState, StateRoot};
+pub use crate::state::{
+    AccountState,
+    BatchJobState,
+    ChainState,
+    ChainStateSnapshot,
+    StateRoot,
+    SubscriptionState,
+};
 pub use crate::types::{
     Address,
     Amount,

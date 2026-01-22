@@ -72,7 +72,7 @@ The L1 runs autonomously, but all critical changes and global shutdown are gated
 
 ## Proof-of-Intelligence (PoI)
 
-PoI is a consensus scheme where miners and validators prove useful AI/ML work instead of wasteful hashing. In this phase, the PoI structures and shutdown hooks are stubbed; full verification logic will be implemented in a later phase.
+PoI is a consensus scheme where miners and validators prove useful AI/ML work instead of wasteful hashing. Inference verification now runs deterministically against ONNX models with a verification cache; model storage and cache sizing are configured via node settings and environment overrides.
 
 ## Tokenomics (High-Level)
 

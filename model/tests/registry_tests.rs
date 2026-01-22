@@ -45,6 +45,8 @@ fn sample_metadata(model_id: &str, is_core_model: bool, created_at: i64) -> Mode
         shard_count: 2,
         verification_hashes: vec![[1u8; 32], [2u8; 32]],
         is_core_model,
+        minimum_tier: None,
+        is_experimental: false,
         created_at,
     }
 }

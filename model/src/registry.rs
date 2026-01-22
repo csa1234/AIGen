@@ -5,7 +5,8 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
-use tracing::{info, warn};
+
+use crate::tiers::SubscriptionTier;
 
 const MAX_SHARD_SIZE: u64 = 4_294_967_296;
 const TARGET_REDUNDANCY: usize = 3;
@@ -46,6 +47,10 @@ pub struct ModelMetadata {
     pub shard_count: u32,
     pub verification_hashes: Vec<[u8; 32]>,
     pub is_core_model: bool,
+    #[serde(default)]
+    pub minimum_tier: Option<SubscriptionTier>,
+    #[serde(default)]
+    pub is_experimental: bool,
     pub created_at: i64,
 }
 
@@ -158,6 +163,31 @@ impl ModelRegistry {
             self.models.iter().map(|entry| entry.value().clone()).collect();
         models.sort_by_key(|model| model.created_at);
         Ok(models)
+    }
+
+    pub fn list_models_for_tier(
+        &self,
+        tier: SubscriptionTier,
+    ) -> Result<Vec<ModelMetadata>, ModelError> {
+        check_shutdown()?;
+        let mut models: Vec<ModelMetadata> = self
+            .models
+            .iter()
+            .map(|entry| entry.value().clone())
+            .filter(|model| model_accessible_for_tier(model, tier))
+            .collect();
+        models.sort_by_key(|model| model.created_at);
+        Ok(models)
+    }
+
+    pub fn model_accessible_for_tier(
+        &self,
+        model_id: &str,
+        tier: SubscriptionTier,
+    ) -> Result<bool, ModelError> {
+        check_shutdown()?;
+        let metadata = self.get_model(model_id)?;
+        Ok(model_accessible_for_tier(&metadata, tier))
     }
 
     pub fn register_shard(&self, shard: ModelShard) -> Result<(), ModelError> {
@@ -288,7 +318,7 @@ impl ModelRegistry {
         }
 
         let healthy = locations.iter().filter(|loc| loc.is_healthy).count();
-        info!(
+        println!(
             "registered shard location: model={}, shard={}, backend={}, redundancy={}",
             model_id,
             shard_index,
@@ -296,7 +326,7 @@ impl ModelRegistry {
             healthy
         );
         if healthy < TARGET_REDUNDANCY {
-            warn!(
+            eprintln!(
                 "insufficient redundancy: model={}, shard={}, current={}, target={}",
                 model_id,
                 shard_index,
@@ -373,4 +403,18 @@ fn is_valid_model_id(value: &str) -> bool {
         && value
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+fn model_accessible_for_tier(metadata: &ModelMetadata, tier: SubscriptionTier) -> bool {
+    if metadata.is_core_model {
+        return true;
+    }
+    if metadata.is_experimental && tier != SubscriptionTier::Unlimited {
+        return false;
+    }
+    if let Some(required) = metadata.minimum_tier {
+        tier >= required
+    } else {
+        true
+    }
 }

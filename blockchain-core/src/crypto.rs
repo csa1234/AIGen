@@ -57,7 +57,7 @@ pub fn hash_transaction(tx: &Transaction) -> TxHash {
 
 pub fn calculate_merkle_root(transactions: &[Transaction]) -> [u8; 32] {
     if transactions.is_empty() {
-        return hash_data(&[]);
+        return hash_data(&[][..]);
     }
 
     let mut hashes: Vec<[u8; 32]> = transactions.iter().map(|tx| tx.tx_hash.0).collect();
@@ -146,7 +146,7 @@ pub fn verify_merkle_proof(leaf_hash: [u8; 32], proof: &[MerkleSibling], root: [
 pub fn generate_keypair() -> (PublicKey, SecretKey) {
     let mut rng = OsRng;
     let mut secret_bytes = [0u8; 32];
-    rng.fill_bytes(&mut secret_bytes);
+    rng.fill_bytes(secret_bytes.as_mut());
     let secret = SigningKey::from_bytes(&secret_bytes);
     let public = secret.verifying_key();
     (public, secret)
@@ -162,7 +162,7 @@ pub fn verify_signature(message: &[u8], signature: &Signature, public_key: &Publ
 
 pub fn wallet_address_from_pubkey(pubkey: &PublicKey) -> String {
     let pk_bytes = pubkey.to_bytes();
-    let hash = hash_data(&pk_bytes);
+    let hash = hash_data(pk_bytes.as_ref());
     // Ethereum-style last 20 bytes of hash
     let addr_bytes = &hash[12..];
     format!("0x{}", hex::encode(addr_bytes))
@@ -170,7 +170,7 @@ pub fn wallet_address_from_pubkey(pubkey: &PublicKey) -> String {
 
 pub fn derive_address_from_pubkey(pubkey: &PublicKey) -> String {
     let pk_bytes = pubkey.to_bytes();
-    let hash = keccak256(&pk_bytes);
+    let hash = keccak256(pk_bytes.as_ref());
     let addr_bytes = &hash[12..];
     let lower = hex::encode(addr_bytes);
     let addr_hash = keccak256(lower.as_bytes());

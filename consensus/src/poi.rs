@@ -1,11 +1,27 @@
 use blockchain_core::hash_data;
-use blockchain_core::{Block, BlockHash, Transaction};
 use blockchain_core::types::Amount;
+use blockchain_core::{Block, BlockHash, Transaction};
 use base64::Engine;
 use genesis::{check_shutdown, is_shutdown, GenesisError};
+use model::{
+    deterministic_inference,
+    model_exists,
+    outputs_match,
+    InferenceOutput,
+    InferenceTensor,
+    VerificationCache,
+    VerificationError,
+    DEFAULT_VERIFICATION_CACHE_CAPACITY,
+    DEFAULT_VERIFICATION_EPSILON,
+};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
+use std::future::Future;
+use std::sync::OnceLock;
 use thiserror::Error;
+use tokio::runtime::Builder;
+use tokio::task;
+use tracing::warn;
 
 #[derive(Debug, Error)]
 pub enum ConsensusError {
@@ -23,6 +39,8 @@ pub enum ConsensusError {
     RegistryError,
     #[error("serialization error: {0}")]
     Serialization(String),
+    #[error("verification error: {0}")]
+    VerificationError(String),
     #[error("timeout")]
     Timeout,
 }
@@ -62,6 +80,42 @@ pub struct ComputationMetadata {
     pub model_id: String,
     pub compression_method: CompressionMethod,
     pub original_size: usize,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct InferenceVerificationConfig {
+    pub cache_capacity: usize,
+    pub epsilon: f32,
+}
+
+impl Default for InferenceVerificationConfig {
+    fn default() -> Self {
+        Self {
+            cache_capacity: DEFAULT_VERIFICATION_CACHE_CAPACITY,
+            epsilon: DEFAULT_VERIFICATION_EPSILON,
+        }
+    }
+}
+
+static INFERENCE_VERIFICATION_CONFIG: OnceLock<InferenceVerificationConfig> = OnceLock::new();
+static INFERENCE_VERIFICATION_CACHE: OnceLock<VerificationCache> = OnceLock::new();
+
+pub fn set_inference_verification_config(
+    config: InferenceVerificationConfig,
+) -> Result<(), ConsensusError> {
+    INFERENCE_VERIFICATION_CONFIG
+        .set(config)
+        .map_err(|_| ConsensusError::VerificationError("verification config already set".to_string()))
+}
+
+fn inference_verification_config() -> &'static InferenceVerificationConfig {
+    INFERENCE_VERIFICATION_CONFIG.get_or_init(InferenceVerificationConfig::default)
+}
+
+fn inference_verification_cache() -> &'static VerificationCache {
+    INFERENCE_VERIFICATION_CACHE.get_or_init(|| {
+        VerificationCache::new(inference_verification_config().cache_capacity)
+    })
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -303,17 +357,152 @@ pub fn verify_inference(
 ) -> Result<bool, ConsensusError> {
     check_shutdown().map_err(|_| ConsensusError::ShutdownActive)?;
 
-    let expected_len: u32 = bincode::deserialize(input)?;
-    let out: Vec<f32> = bincode::deserialize(output)?;
-    if out.len() != expected_len as usize {
+    if metadata.model_id.trim().is_empty() {
         return Ok(false);
     }
 
-    if metadata.model_id.is_empty() {
+    match model_exists(&metadata.model_id) {
+        Ok(false) => return Ok(false),
+        Ok(true) => {}
+        Err(VerificationError::Shutdown) => return Err(ConsensusError::ShutdownActive),
+        Err(err) => {
+            eprintln!("model existence check failed: {}", err);
+            return Ok(false);
+        }
+    }
+
+    let inputs: Vec<InferenceTensor> = bincode::deserialize(input)?;
+    if inputs.is_empty() {
+        return Ok(false);
+    }
+    let expected: Vec<InferenceOutput> = bincode::deserialize(output)?;
+    if expected.is_empty() {
         return Ok(false);
     }
 
-    Ok(true)
+    let inputs_for_inference = inputs.clone();
+
+    let cache = inference_verification_cache();
+    let epsilon = inference_verification_config().epsilon;
+    let model_id = metadata.model_id.clone();
+    let outputs = block_on_verification(move || async move {
+        deterministic_inference(&model_id, inputs_for_inference, Some(cache)).await
+    });
+
+    match outputs {
+        Ok(outputs) => Ok(outputs_match(&expected, &outputs, epsilon)),
+        Err(VerificationError::Shutdown) => Err(ConsensusError::ShutdownActive),
+        Err(VerificationError::EngineUnavailable)
+        | Err(VerificationError::Inference(_))
+        | Err(VerificationError::Model(_)) => {
+            warn!("falling back to structural inference verification: {outputs:?}");
+            Ok(fallback_verify_inference(&inputs, &expected, metadata))
+        }
+        Err(err) => Err(ConsensusError::VerificationError(err.to_string())),
+    }
+}
+
+fn fallback_verify_inference(
+    inputs: &[InferenceTensor],
+    expected: &[InferenceOutput],
+    metadata: &ComputationMetadata,
+) -> bool {
+    if inputs.is_empty() || expected.is_empty() {
+        return false;
+    }
+
+    for input in inputs {
+        if input.name.trim().is_empty() {
+            return false;
+        }
+        if input.shape.is_empty() {
+            return false;
+        }
+        let mut elem_count = 1i64;
+        for dim in &input.shape {
+            if *dim <= 0 {
+                return false;
+            }
+            elem_count = match elem_count.checked_mul(*dim) {
+                Some(value) => value,
+                None => return false,
+            };
+        }
+        if input.data.len() as i64 != elem_count {
+            return false;
+        }
+        if input.data.iter().any(|value| !value.is_finite()) {
+            return false;
+        }
+    }
+
+    for output in expected {
+        if output.name.trim().is_empty() {
+            return false;
+        }
+        if output.shape.is_empty() {
+            return false;
+        }
+        let mut elem_count = 1i64;
+        for dim in &output.shape {
+            if *dim <= 0 {
+                return false;
+            }
+            elem_count = match elem_count.checked_mul(*dim) {
+                Some(value) => value,
+                None => return false,
+            };
+        }
+        if elem_count <= 0 {
+            return false;
+        }
+        if output.data.len() as i64 != elem_count {
+            return false;
+        }
+        if output.data.iter().any(|value| !value.is_finite()) {
+            return false;
+        }
+    }
+
+    if metadata.model_id.trim().is_empty() {
+        return false;
+    }
+
+    true
+}
+
+fn block_on_verification<Fut, MakeFut>(make_future: MakeFut) -> Result<Vec<InferenceOutput>, VerificationError>
+where
+    MakeFut: FnOnce() -> Fut + Send + 'static,
+    Fut: Future<Output = Result<Vec<InferenceOutput>, VerificationError>>,
+{
+    if let Ok(handle) = tokio::runtime::Handle::try_current() {
+        let can_block_in_place = std::panic::catch_unwind(|| {
+            task::block_in_place(|| {});
+        })
+        .is_ok();
+
+        if can_block_in_place {
+            return task::block_in_place(|| handle.block_on(make_future()));
+        }
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let result = match Builder::new_current_thread().enable_all().build() {
+                Ok(runtime) => runtime.block_on(make_future()),
+                Err(err) => Err(VerificationError::Serialization(err.to_string())),
+            };
+            let _ = tx.send(result);
+        });
+
+        return rx.recv().map_err(|err| VerificationError::Serialization(err.to_string()))?;
+    }
+
+    let runtime = Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|err| VerificationError::Serialization(err.to_string()))?;
+    runtime.block_on(make_future())
 }
 
 pub fn compress_gradients(gradients: &[f32]) -> Vec<u8> {

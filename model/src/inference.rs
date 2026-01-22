@@ -15,10 +15,10 @@ use ort::session::builder::GraphOptimizationLevel;
 use ort::session::{Session, SessionOutputs};
 use ort::value::Tensor;
 use parking_lot::{Mutex, RwLock};
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::fs;
 use tokio::sync::Mutex as TokioMutex;
-use tracing::{debug, error, info, warn};
 
 use crate::registry::ModelError;
 use crate::sharding::{combine_shards, verify_shard_integrity, ShardError};
@@ -108,14 +108,14 @@ fn map_model_error(err: ModelError) -> InferenceError {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InferenceTensor {
     pub name: String,
     pub shape: Vec<i64>,
     pub data: Vec<f32>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InferenceOutput {
     pub name: String,
     pub shape: Vec<i64>,
@@ -360,6 +360,15 @@ impl ModelCache {
         self.metrics.clone()
     }
 
+    pub fn registry(&self) -> Arc<ModelRegistry> {
+        self.registry.clone()
+    }
+
+    pub fn model_exists(&self, model_id: &str) -> Result<bool, InferenceError> {
+        ensure_running()?;
+        self.registry.model_exists(model_id).map_err(map_model_error)
+    }
+
     pub async fn get_or_load(&self, model_id: &str) -> Result<Arc<LoadedModel>, InferenceError> {
         ensure_running()?;
         if let Some(entry) = self.models.get(model_id) {
@@ -414,14 +423,14 @@ impl ModelCache {
                         .map(Path::to_path_buf)
                         .unwrap_or_else(|| self.cache_dir.join(model_id));
                     if fs::remove_dir_all(&model_dir).await.is_err() {
-                        debug!("failed to remove cached model directory: {}", model_dir.display());
+                        println!("failed to remove cached model directory: {}", model_dir.display());
                     }
                     return Err(err);
                 }
                 Ok(model)
             }
             Err(err) => {
-                error!("failed to load model: model_id={}, error={}", model_id, err);
+                println!("failed to load model: model_id={}, error={}", model_id, err);
                 self.metrics.inc_model_load_failures();
                 Err(err)
             }
@@ -481,7 +490,7 @@ impl ModelCache {
 
         let model_dir = self.cache_dir.join(model_id);
         if fs::remove_dir_all(&model_dir).await.is_err() {
-            debug!("failed to remove cached model directory: {}", model_dir.display());
+            println!("failed to remove cached model directory: {}", model_dir.display());
         }
         Ok(())
     }
@@ -530,7 +539,7 @@ async fn load_model_from_shards(
         return Err(InferenceError::ModelLoadFailed("no shards registered".to_string()));
     }
 
-    info!("loading model from shards: model_id={}, shards={}", model_id, shards.len());
+    println!("loading model from shards: model_id={}, shards={}", model_id, shards.len());
 
     let model_dir = cache_dir.join(model_id);
     let shard_dir = model_dir.join("shards");
@@ -543,7 +552,7 @@ async fn load_model_from_shards(
         storage.download_shard(shard, &shard_path).await?;
         let valid = verify_shard_integrity(&shard_path, &shard.hash).await?;
         if !valid {
-            warn!("shard integrity check failed: model={}, shard={}", model_id, shard.shard_index);
+            println!("shard integrity check failed: model={}, shard={}", model_id, shard.shard_index);
             return Err(InferenceError::ShardError(ShardError::HashMismatch(
                 shard.shard_index,
             )));
@@ -552,7 +561,7 @@ async fn load_model_from_shards(
 
     if fs::metadata(&model_path).await.is_ok() {
         if fs::remove_file(&model_path).await.is_err() {
-            debug!("failed to remove cached model file: {}", model_path.display());
+            println!("failed to remove cached model file: {}", model_path.display());
         }
     }
     combine_shards(&shards, &shard_dir, &model_path).await?;
@@ -632,8 +641,16 @@ impl InferenceEngine {
         self.cache.clone()
     }
 
+    pub fn model_exists(&self, model_id: &str) -> Result<bool, InferenceError> {
+        self.cache.model_exists(model_id)
+    }
+
     pub fn metrics(&self) -> SharedInferenceMetrics {
         self.metrics.clone()
+    }
+
+    pub fn registry(&self) -> Arc<ModelRegistry> {
+        self.cache.registry()
     }
 
     pub fn get_metrics(&self) -> InferenceStats {
@@ -663,7 +680,7 @@ impl InferenceEngine {
             }
             Err(err) => {
                 self.metrics.inc_inference_failures();
-                error!("inference failed: model_id={}, error={}", model_id, err);
+                println!("inference failed: model_id={}, error={}", model_id, err);
                 Err(err)
             }
         }

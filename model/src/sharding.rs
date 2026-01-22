@@ -12,7 +12,6 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 use tokio::fs::{self, File};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tracing::{debug, info, warn};
 
 use crate::registry::ModelShard;
 
@@ -31,10 +30,12 @@ pub enum ShardError {
     ShardNotFound(String),
     #[error("shutdown active")]
     Shutdown,
+    #[error("genesis error: {0}")]
+    Genesis(#[from] genesis::GenesisError),
 }
 
 fn ensure_running() -> Result<(), ShardError> {
-    check_shutdown().map_err(|_| ShardError::Shutdown)
+    check_shutdown().map_err(ShardError::Genesis)
 }
 
 /// Split a model file into 4GB shards with SHA-256 verification hashes.
@@ -53,7 +54,7 @@ pub async fn split_model_file(
         return Err(ShardError::InvalidSequence);
     }
 
-    info!(
+    println!(
         "splitting model file: path={}, size={}",
         model_path.display(),
         file_size
@@ -79,7 +80,7 @@ pub async fn split_model_file(
             ensure_running()?;
             let to_read = min(BUFFER_SIZE as u64, shard_target - shard_written) as usize;
             let mut buffer = vec![0u8; to_read];
-            let read = source.read(&mut buffer).await?;
+            let read: usize = source.read(&mut buffer).await?;
             if read == 0 {
                 break;
             }
@@ -100,7 +101,7 @@ pub async fn split_model_file(
         let mut hash = [0u8; 32];
         hash.copy_from_slice(&digest);
 
-        debug!(
+        println!(
             "created shard {}/{}: hash={}",
             shard_index + 1,
             total_shards,
@@ -120,12 +121,12 @@ pub async fn split_model_file(
 
         let progress = ((shard_index + 1) * 100) / total_shards;
         if progress >= next_log_percent {
-            info!(
-                "split progress: {}% ({}/{})",
-                progress,
-                shard_index + 1,
-                total_shards
-            );
+            println!(
+            "split progress: {}% ({}/{})",
+            progress,
+            shard_index + 1,
+            total_shards
+        );
             next_log_percent += 10;
         }
     }
@@ -179,7 +180,7 @@ pub async fn combine_shards(
 
         let actual_hash = compute_file_hash(&shard_path).await?;
         if actual_hash != shard.hash {
-            warn!(
+            eprintln!(
                 "shard integrity check failed: shard={}, expected={}, actual={}",
                 shard.shard_index,
                 hex::encode(shard.hash),
@@ -203,7 +204,7 @@ pub async fn combine_shards(
     output.flush().await?;
     output.sync_all().await?;
 
-    info!("combined shards into model file: path={}", output_path.display());
+    println!("combined shards into model file: path={}", output_path.display());
     Ok(())
 }
 

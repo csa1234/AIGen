@@ -159,7 +159,7 @@ impl Block {
         self.validate_transactions()?;
 
         if let Some(sig) = &self.header.ceo_signature {
-            verify_ceo_signature(&self.block_hash.0, sig)?;
+            verify_ceo_signature(self.block_hash.0.as_ref(), sig)?;
             // CEO-signed blocks are administrative overrides.
             // They may be accepted even during shutdown for recovery.
             return Ok(());

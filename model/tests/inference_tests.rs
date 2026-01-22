@@ -2,8 +2,18 @@ use ed25519_dalek::{Signature, Signer, SigningKey};
 use genesis::shutdown::reset_shutdown_for_tests;
 use genesis::{emergency_shutdown, CeoSignature, GenesisConfig, ShutdownCommand};
 use model::{
-    split_model_file, InferenceEngine, InferenceError, InferenceTensor, ModelMetadata,
-    ModelRegistry, StorageBackend, LocalStorage,
+    deterministic_inference_with_engine,
+    outputs_match,
+    split_model_file,
+    InferenceEngine,
+    InferenceError,
+    InferenceOutput,
+    InferenceTensor,
+    ModelMetadata,
+    ModelRegistry,
+    StorageBackend,
+    VerificationCache,
+    LocalStorage,
 };
 use prost::Message;
 use futures::future::join_all;
@@ -22,6 +32,77 @@ fn signing_key() -> SigningKey {
     let bytes = hex::decode(CEO_SECRET_KEY_HEX).expect("valid hex");
     let seed: [u8; 32] = bytes.as_slice().try_into().expect("valid seed length");
     SigningKey::from_bytes(&seed)
+}
+
+#[tokio::test]
+async fn test_verification_cache_roundtrip() {
+    reset_shutdown_for_tests();
+    ensure_ort_available().await;
+    let harness = TestHarness::new("verification_cache");
+    let size = harness.add_identity_model("identity", false).await;
+    let engine = InferenceEngine::new(
+        harness.registry.clone(),
+        harness.storage.clone(),
+        harness.cache_dir(),
+        (size as usize) * 2,
+        1,
+    );
+    let cache = VerificationCache::new(8);
+
+    let input = InferenceTensor {
+        name: "input".to_string(),
+        shape: vec![1],
+        data: vec![0.42],
+    };
+    let expected = engine
+        .run_inference("identity", vec![input.clone()])
+        .await
+        .expect("run inference");
+    let outputs = deterministic_inference_with_engine(
+        &engine,
+        "identity",
+        vec![input.clone()],
+        Some(&cache),
+    )
+    .await
+    .expect("deterministic inference");
+
+    assert!(outputs_match(&expected, &outputs, 1e-6));
+    assert_eq!(cache.len(), 1);
+
+    let outputs_again = deterministic_inference_with_engine(
+        &engine,
+        "identity",
+        vec![input],
+        Some(&cache),
+    )
+    .await
+    .expect("deterministic inference (cached)");
+    assert!(outputs_match(&expected, &outputs_again, 1e-6));
+    assert_eq!(cache.len(), 1);
+}
+
+#[test]
+fn test_verification_cache_eviction() {
+    let cache = VerificationCache::new(2);
+    let output = vec![InferenceOutput {
+        name: "output".to_string(),
+        shape: vec![1],
+        data: vec![1.0],
+    }];
+
+    let key_a = [1u8; 32];
+    let key_b = [2u8; 32];
+    let key_c = [3u8; 32];
+
+    cache.insert(key_a, output.clone());
+    cache.insert(key_b, output.clone());
+    cache.insert(key_c, output.clone());
+
+    assert_eq!(cache.len(), 2);
+    assert!(cache.get(&key_a).is_none());
+    assert!(cache.get(&key_b).is_some());
+    assert!(cache.get(&key_c).is_some());
 }
 
 static ORT_INIT: OnceCell<()> = OnceCell::const_new();
@@ -173,6 +254,8 @@ impl TestHarness {
             shard_count: shards.len() as u32,
             verification_hashes: shards.iter().map(|shard| shard.hash).collect(),
             is_core_model: is_core,
+            minimum_tier: None,
+            is_experimental: false,
             created_at: now_timestamp(),
         };
         self.registry.register_model(metadata).expect("register model");

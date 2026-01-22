@@ -1,4 +1,4 @@
-use blockchain_core::{ChainId, ChainState, Transaction};
+use blockchain_core::{ChainId, ChainState, SubscriptionState, Transaction};
 use blockchain_core::types::{Amount, Balance};
 use genesis::CEO_WALLET;
 
@@ -92,10 +92,52 @@ fn snapshot_and_restore() {
 }
 
 #[test]
+fn snapshot_and_restore_subscription() {
+    let st = ChainState::new();
+    let address = mk_addr(3);
+    let subscription = SubscriptionState {
+        user_address: address.clone(),
+        tier: 1,
+        start_timestamp: 10,
+        expiry_timestamp: 100,
+        requests_used: 5,
+        last_reset_timestamp: 10,
+        auto_renew: true,
+    };
+    st.set_subscription(address.clone(), subscription.clone());
+    let snap = st.snapshot();
+    st.remove_subscription(&address).unwrap();
+    assert!(st.get_subscription(&address).is_none());
+    st.restore(snap);
+    assert_eq!(st.get_subscription(&address), Some(subscription));
+}
+
+#[test]
 fn state_root_changes_when_state_changes() {
     let st = ChainState::new();
     let r1 = st.calculate_state_root();
     st.mint_tokens(&mk_addr(1), Amount::new(1)).unwrap();
+    let r2 = st.calculate_state_root();
+    assert_ne!(r1, r2);
+}
+
+#[test]
+fn state_root_changes_when_subscription_changes() {
+    let st = ChainState::new();
+    let r1 = st.calculate_state_root();
+    let address = mk_addr(4);
+    st.set_subscription(
+        address.clone(),
+        SubscriptionState {
+            user_address: address,
+            tier: 2,
+            start_timestamp: 1,
+            expiry_timestamp: 100,
+            requests_used: 0,
+            last_reset_timestamp: 1,
+            auto_renew: false,
+        },
+    );
     let r2 = st.calculate_state_root();
     assert_ne!(r1, r2);
 }

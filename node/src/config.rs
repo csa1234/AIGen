@@ -4,6 +4,7 @@ use std::net::SocketAddr;
 use anyhow::{anyhow, Context, Result};
 use blockchain_core::types::Amount;
 use config as config_rs;
+use consensus::InferenceVerificationConfig;
 use genesis::GenesisConfig;
 use libp2p::Multiaddr;
 use network::config::NetworkConfig;
@@ -13,11 +14,39 @@ use network::node_types::{NodeConfig, NodeType};
 pub struct NodeConfiguration {
     pub node_id: String,
     pub data_dir: PathBuf,
+    #[serde(default)]
+    pub model: ModelConfig,
+    #[serde(default)]
+    pub verification: InferenceVerificationConfig,
     pub network: NetworkConfig,
     pub genesis: GenesisConfig,
     pub node: NodeConfig,
     pub rpc: RpcConfig,
     pub keypair_path: PathBuf,
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct ModelConfig {
+    pub cache_dir: PathBuf,
+    pub max_memory_mb: usize,
+    pub num_threads: usize,
+}
+
+impl ModelConfig {
+    pub fn default_with_data_dir(data_dir: &Path) -> Self {
+        Self {
+            cache_dir: data_dir.join("model-cache"),
+            max_memory_mb: 2048,
+            num_threads: 0,
+        }
+    }
+}
+
+impl Default for ModelConfig {
+    fn default() -> Self {
+        let data_dir = NodeConfiguration::default_data_dir();
+        Self::default_with_data_dir(&data_dir)
+    }
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -58,8 +87,13 @@ impl NodeConfiguration {
             .build()
             .with_context(|| format!("failed to load config file: {}", path.display()))?;
 
-        cfg.try_deserialize::<NodeConfiguration>()
-            .with_context(|| format!("failed to deserialize config: {}", path.display()))
+        let mut cfg = cfg
+            .try_deserialize::<NodeConfiguration>()
+            .with_context(|| format!("failed to deserialize config: {}", path.display()))?;
+        if cfg.model.cache_dir.as_os_str().is_empty() {
+            cfg.model.cache_dir = cfg.data_dir.join("model-cache");
+        }
+        Ok(cfg)
     }
 
     pub fn save_to_file(&self, path: &Path) -> Result<()> {
@@ -91,6 +125,7 @@ impl NodeConfiguration {
         }
         if let Ok(v) = std::env::var("AIGEN_DATA_DIR") {
             self.data_dir = PathBuf::from(v);
+            self.model.cache_dir = self.data_dir.join("model-cache");
         }
         if let Ok(v) = std::env::var("AIGEN_LISTEN_ADDR") {
             if let Ok(ma) = v.parse::<Multiaddr>() {
@@ -143,6 +178,32 @@ impl NodeConfiguration {
             }
         }
 
+        if let Ok(v) = std::env::var("AIGEN_MODEL_CACHE_DIR") {
+            if !v.trim().is_empty() {
+                self.model.cache_dir = PathBuf::from(v);
+            }
+        }
+        if let Ok(v) = std::env::var("AIGEN_MODEL_MAX_MEMORY_MB") {
+            if let Ok(n) = v.parse::<usize>() {
+                self.model.max_memory_mb = n;
+            }
+        }
+        if let Ok(v) = std::env::var("AIGEN_MODEL_NUM_THREADS") {
+            if let Ok(n) = v.parse::<usize>() {
+                self.model.num_threads = n;
+            }
+        }
+        if let Ok(v) = std::env::var("AIGEN_VERIFICATION_CACHE_CAPACITY") {
+            if let Ok(n) = v.parse::<usize>() {
+                self.verification.cache_capacity = n;
+            }
+        }
+        if let Ok(v) = std::env::var("AIGEN_VERIFICATION_EPSILON") {
+            if let Ok(n) = v.parse::<f32>() {
+                self.verification.epsilon = n;
+            }
+        }
+
         self.keypair_path = crate::keypair::default_keypair_path(&self.data_dir);
 
         self
@@ -156,12 +217,14 @@ impl NodeConfiguration {
                 }
                 if let Some(v) = &args.data_dir {
                     self.data_dir = v.clone();
+                    self.model.cache_dir = self.data_dir.join("model-cache");
                 }
                 self.keypair_path = crate::keypair::default_keypair_path(&self.data_dir);
             }
             crate::cli::Commands::Start(args) => {
                 if let Some(v) = &args.data_dir {
                     self.data_dir = v.clone();
+                    self.model.cache_dir = self.data_dir.join("model-cache");
                 }
                 if let Some(v) = &args.listen_addr {
                     if let Ok(ma) = v.parse::<Multiaddr>() {
@@ -275,6 +338,13 @@ impl NodeConfiguration {
             return Err(anyhow!("rpc.rpc_addr: port must not be 0"));
         }
 
+        if self.model.max_memory_mb == 0 {
+            return Err(anyhow!("model.max_memory_mb: must be > 0"));
+        }
+        if self.verification.epsilon <= 0.0 {
+            return Err(anyhow!("verification.epsilon: must be > 0"));
+        }
+
         Ok(())
     }
 
@@ -295,6 +365,8 @@ impl Default for NodeConfiguration {
         Self {
             node_id: "node-1".to_string(),
             data_dir: data_dir.clone(),
+            model: ModelConfig::default_with_data_dir(&data_dir),
+            verification: InferenceVerificationConfig::default(),
             network: NetworkConfig::default(),
             genesis: GenesisConfig::default(),
             node: NodeConfig {
@@ -330,7 +402,7 @@ fn validate_multiaddr_with_field(field: &str, addr: &Multiaddr) -> Result<()> {
 
     if let Some(port) = tcp_port {
         if port < 1024 {
-            tracing::warn!(field = %field, port = port, "port is privileged (<1024); requires elevated privileges");
+            eprintln!("port is privileged (<1024); requires elevated privileges: field={}, port={}", field, port);
         }
     }
 

@@ -17,7 +17,6 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
-use tracing::{debug, error, info, warn};
 
 use crate::registry::ModelShard;
 use crate::sharding::{compute_file_hash, verify_shard_integrity, ShardError};
@@ -124,7 +123,7 @@ impl LocalStorage {
 impl StorageBackend for LocalStorage {
     async fn upload_shard(&self, shard: &ModelShard, data_path: &Path) -> Result<String, StorageError> {
         ensure_running()?;
-        info!(
+        println!(
             "uploading shard to {}: model={}, shard={}",
             self.backend_type(),
             shard.model_id,
@@ -139,7 +138,7 @@ impl StorageBackend for LocalStorage {
 
         if !verify_shard_integrity(&primary_path, &shard.hash).await? {
             let actual_hash = compute_file_hash(&primary_path).await?;
-            warn!(
+            eprintln!(
                 "shard integrity check failed: shard={}, expected={}, actual={}",
                 shard.shard_index,
                 hex::encode(shard.hash),
@@ -162,7 +161,7 @@ impl StorageBackend for LocalStorage {
 
     async fn download_shard(&self, shard: &ModelShard, output_path: &Path) -> Result<(), StorageError> {
         ensure_running()?;
-        info!(
+        println!(
             "downloading shard from {}: model={}, shard={}",
             self.backend_type(),
             shard.model_id,
@@ -190,11 +189,11 @@ impl StorageBackend for LocalStorage {
             fs::create_dir_all(parent).await?;
         }
         let bytes = fs::copy(&source, output_path).await?;
-        debug!("download progress: {}/{} bytes", bytes, bytes);
+        println!("download progress: {}/{} bytes", bytes, bytes);
 
         if !verify_shard_integrity(output_path, &shard.hash).await? {
             let actual_hash = compute_file_hash(output_path).await?;
-            warn!(
+            eprintln!(
                 "shard integrity check failed: shard={}, expected={}, actual={}",
                 shard.shard_index,
                 hex::encode(shard.hash),
@@ -280,7 +279,7 @@ impl IpfsStorage {
 impl StorageBackend for IpfsStorage {
     async fn upload_shard(&self, shard: &ModelShard, data_path: &Path) -> Result<String, StorageError> {
         ensure_running()?;
-        info!(
+        println!(
             "uploading shard to {}: model={}, shard={}",
             self.backend_type(),
             shard.model_id,
@@ -311,7 +310,7 @@ impl StorageBackend for IpfsStorage {
         ensure_running()?;
         let cid = shard.ipfs_cid.as_ref().ok_or(StorageError::ShardNotFound)?;
         let url = self.gateway_shard_url(cid);
-        info!(
+        println!(
             "downloading shard from {}: model={}, shard={}",
             self.backend_type(),
             shard.model_id,
@@ -339,14 +338,14 @@ impl StorageBackend for IpfsStorage {
             let chunk = chunk.map_err(|err| StorageError::Http(err.to_string()))?;
             output.write_all(&chunk).await?;
             downloaded += chunk.len() as u64;
-            debug!("download progress: {}/{} bytes", downloaded, total);
+            println!("download progress: {}/{} bytes", downloaded, total);
         }
         output.flush().await?;
         output.sync_all().await?;
 
         if !verify_shard_integrity(output_path, &shard.hash).await? {
             let actual_hash = compute_file_hash(output_path).await?;
-            warn!(
+            eprintln!(
                 "shard integrity check failed: shard={}, expected={}, actual={}",
                 shard.shard_index,
                 hex::encode(shard.hash),
@@ -360,9 +359,10 @@ impl StorageBackend for IpfsStorage {
 
     async fn verify_shard(&self, shard: &ModelShard) -> Result<bool, StorageError> {
         ensure_running()?;
-        let cid = match shard.ipfs_cid.as_ref() {
-            Some(cid) => cid,
-            None => return Ok(false),
+        let cid = if let Some(cid) = shard.ipfs_cid.as_ref() {
+            cid
+        } else {
+            return Ok(false);
         };
         let url = self.gateway_shard_url(cid);
         let client = Client::builder()
@@ -443,7 +443,7 @@ impl HttpStorage {
 impl StorageBackend for HttpStorage {
     async fn upload_shard(&self, shard: &ModelShard, data_path: &Path) -> Result<String, StorageError> {
         ensure_running()?;
-        info!(
+        println!(
             "uploading shard to {}: model={}, shard={}",
             self.backend_type(),
             shard.model_id,
@@ -467,14 +467,14 @@ impl StorageBackend for HttpStorage {
                     success_url = Some(url);
                 }
                 Ok(response) => {
-                    error!(
+                    eprintln!(
                         "storage operation failed: backend={}, error={}",
                         self.backend_type(),
                         response.status()
                     );
                 }
                 Err(err) => {
-                    error!(
+                    eprintln!(
                         "storage operation failed: backend={}, error={}",
                         self.backend_type(),
                         err
@@ -488,13 +488,13 @@ impl StorageBackend for HttpStorage {
 
     async fn download_shard(&self, shard: &ModelShard, output_path: &Path) -> Result<(), StorageError> {
         ensure_running()?;
-        info!(
+        println!(
             "downloading shard from {}: model={}, shard={}",
             self.backend_type(),
             shard.model_id,
             shard.shard_index
         );
-        debug!("http storage timeout: {}s", self.timeout.as_secs());
+        println!("http storage timeout: {}s", self.timeout.as_secs());
 
         for (index, _) in self.mirror_urls.iter().enumerate() {
             ensure_running()?;
@@ -502,7 +502,7 @@ impl StorageBackend for HttpStorage {
             let response = match self.client.get(&url).send().await {
                 Ok(response) => response,
                 Err(err) => {
-                    error!(
+                    eprintln!(
                         "storage operation failed: backend={}, error={}",
                         self.backend_type(),
                         err
@@ -529,10 +529,10 @@ impl StorageBackend for HttpStorage {
                     Ok(chunk) => {
                         output.write_all(&chunk).await?;
                         downloaded += chunk.len() as u64;
-                        debug!("download progress: {}/{} bytes", downloaded, total);
+                        println!("download progress: {}/{} bytes", downloaded, total);
                     }
                     Err(err) => {
-                        error!(
+                        eprintln!(
                             "storage operation failed: backend={}, error={}",
                             self.backend_type(),
                             err
@@ -553,7 +553,7 @@ impl StorageBackend for HttpStorage {
 
             if !verify_shard_integrity(output_path, &shard.hash).await? {
                 let actual_hash = compute_file_hash(output_path).await?;
-                warn!(
+                eprintln!(
                     "shard integrity check failed: shard={}, expected={}, actual={}",
                     shard.shard_index,
                     hex::encode(shard.hash),
@@ -601,14 +601,14 @@ impl StorageBackend for HttpStorage {
                     success = true;
                 }
                 Ok(response) => {
-                    error!(
+                    eprintln!(
                         "storage operation failed: backend={}, error={}",
                         self.backend_type(),
                         response.status()
                     );
                 }
                 Err(err) => {
-                    error!(
+                    eprintln!(
                         "storage operation failed: backend={}, error={}",
                         self.backend_type(),
                         err

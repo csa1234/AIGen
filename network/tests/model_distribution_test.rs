@@ -58,6 +58,8 @@ fn register_model(
         shard_count: shard_data.len() as u32,
         verification_hashes: hashes.clone(),
         is_core_model: is_core,
+        minimum_tier: None,
+        is_experimental: false,
         created_at: SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("time")

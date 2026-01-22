@@ -15,6 +15,7 @@
 - Rust (stable toolchain)
 - Cargo (bundled with Rust)
 - Git
+- ONNX Runtime (required for model inference/verification tests; set `ORT_DYLIB_PATH` if using a custom install)
 
 ### Install Rust
 

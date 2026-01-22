@@ -162,6 +162,7 @@ impl PublicRpcServer for RpcMethods {
 
         let snapshot = bc.state.snapshot();
         let total_supply = snapshot
+            .accounts
             .values()
             .map(|a| a.balance.amount().value())
             .sum::<u64>();

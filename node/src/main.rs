@@ -8,19 +8,17 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, Context, Result};
 use blockchain_core::{BlockHeight, Blockchain, Transaction};
-use consensus::PoIConsensus;
-use model::{LocalStorage, ModelRegistry};
+use consensus::{PoIConsensus, set_inference_verification_config};
+use model::{InferenceEngine, LocalStorage, ModelRegistry, set_global_inference_engine};
 use network::model_sync::ModelShardRequestEnvelope;
 use network::{ModelSyncManager, NetworkEvent, NetworkMessage, P2PNode};
 use tokio::sync::{mpsc, Mutex};
-use tracing::{info, warn};
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .init();
+fn main() -> Result<()> {
+    tokio::runtime::Runtime::new()?.block_on(async_main())
+}
 
+async fn async_main() -> Result<()> {
     let cli = crate::cli::parse_cli();
 
     match &cli.command {
@@ -58,11 +56,11 @@ async fn main() -> Result<()> {
 
             cfg.save_to_file(&config_path)?;
 
-            info!(
-                config_path = %config_path.display(),
-                data_dir = %cfg.data_dir.display(),
-                keypair_path = %cfg.keypair_path.display(),
-                "init complete"
+            println!(
+                "init complete: config_path={}, data_dir={}, keypair_path={}",
+                config_path.display(),
+                cfg.data_dir.display(),
+                cfg.keypair_path.display()
             );
         }
         crate::cli::Commands::Start(args) => {
@@ -73,10 +71,10 @@ async fn main() -> Result<()> {
 
             let mut cfg = if config_path.exists() {
                 let loaded = crate::config::NodeConfiguration::load_from_file(&config_path)?;
-                info!(path = %config_path.display(), "loaded config");
+                println!("loaded config: {}", config_path.display());
                 loaded
             } else {
-                info!(path = %config_path.display(), "config not found; using defaults");
+                println!("config not found; using defaults: {}", config_path.display());
                 crate::config::NodeConfiguration::default()
             };
 
@@ -84,8 +82,8 @@ async fn main() -> Result<()> {
             cfg = cfg.merge_with_cli(&cli);
             cfg.validate()?;
 
-            info!(node_id = %cfg.node_id, data_dir = %cfg.data_dir.display(), "starting node");
-            info!(listen_addr = %cfg.network.listen_addr, bootstrap_peers = cfg.network.bootstrap_peers.len(), "network config");
+            println!("starting node: node_id={}, data_dir={}", cfg.node_id, cfg.data_dir.display());
+            println!("network config: listen_addr={}, bootstrap_peers={}", cfg.network.listen_addr, cfg.network.bootstrap_peers.len());
 
             let kp = if crate::keypair::keypair_exists(&cfg.keypair_path) {
                 crate::keypair::load_keypair(&cfg.keypair_path)?
@@ -108,7 +106,7 @@ async fn main() -> Result<()> {
 
             if args.show_peer_id {
                 let peer_id = libp2p::PeerId::from(kp.public());
-                info!(peer_id = %peer_id, "generated keypair");
+                println!("generated keypair: peer_id={}", peer_id);
             }
         }
         crate::cli::Commands::Version(args) => {
@@ -139,7 +137,7 @@ async fn run_node(cfg: crate::config::NodeConfiguration, keypair: libp2p::identi
         P2PNode::new(keypair, cfg.network.clone(), Some(cfg.node.clone()))?;
     let local_peer_id = p2p_node.local_peer_id;
     let network_metrics = p2p_node.metrics();
-    info!(peer_id = %local_peer_id, "p2p initialized");
+    println!("p2p initialized: peer_id={}", local_peer_id);
 
     let rpc_handle = if cfg.rpc.rpc_enabled {
         Some(
@@ -166,6 +164,24 @@ async fn run_node(cfg: crate::config::NodeConfiguration, keypair: libp2p::identi
     let (publish_tx, publish_rx) = mpsc::channel::<NetworkMessage>(1024);
     let model_registry = Arc::new(ModelRegistry::new());
     let model_storage = Arc::new(LocalStorage::new(cfg.data_dir.join("models")));
+    let inference_engine = Arc::new(InferenceEngine::new(
+        model_registry.clone(),
+        model_storage.clone(),
+        cfg.model.cache_dir.clone(),
+        cfg.model.max_memory_mb.saturating_mul(1024 * 1024),
+        cfg.model.num_threads,
+    ));
+    if let Err(err) = set_global_inference_engine(inference_engine.clone()) {
+        eprintln!("failed to register inference engine: {}", err);
+    }
+    if let Err(err) = set_inference_verification_config(cfg.verification.clone()) {
+        eprintln!("failed to set verification config: {}", err);
+    }
+    let preload_engine = inference_engine.clone();
+    // Preload core model inline to avoid Send trait issues
+    if let Err(err) = preload_engine.preload_core_model().await {
+        eprintln!("failed to preload core model: {}", err);
+    }
     let model_reputation = p2p_node.reputation_manager.clone();
     let model_metrics = p2p_node.metrics();
     let (model_request_tx, model_request_rx) = mpsc::channel::<ModelShardRequestEnvelope>(256);
@@ -196,7 +212,7 @@ async fn run_node(cfg: crate::config::NodeConfiguration, keypair: libp2p::identi
                     let _ = publish_tx.send(NetworkMessage::ValidatorVote(vote)).await;
                 }
                 _ => {
-                    warn!("unhandled consensus network message variant");
+                    eprintln!("unhandled consensus network message variant");
                 }
             }
         }
@@ -233,7 +249,7 @@ async fn run_node(cfg: crate::config::NodeConfiguration, keypair: libp2p::identi
                         };
                         match ev {
                             NetworkEvent::PeerDiscovered(peer_id) => {
-                                info!(peer_id = %peer_id, "peer discovered");
+                                println!("peer discovered: peer_id={}", peer_id);
                             }
                             NetworkEvent::MessageReceived(msg) => {
                                 match msg {
@@ -250,10 +266,10 @@ async fn run_node(cfg: crate::config::NodeConfiguration, keypair: libp2p::identi
                                                     let _ = block_broadcast_tx.send(b.clone());
                                                 }
                                                 bc.remove_transactions_from_pool(&hashes);
-                                                info!(height = bc.blocks.len().saturating_sub(1), "block added");
+                                                println!("block added: height={}", bc.blocks.len().saturating_sub(1));
                                             }
                                             Err(e) => {
-                                                warn!(error = %e, "failed to add block");
+                                                eprintln!("failed to add block: {}", e);
                                             }
                                         }
                                     }
@@ -261,7 +277,7 @@ async fn run_node(cfg: crate::config::NodeConfiguration, keypair: libp2p::identi
                                         let mut bc = blockchain.lock().await;
                                         let tx_for_pool = tx.clone();
                                         if let Err(e) = bc.add_transaction_to_pool(tx_for_pool) {
-                                            warn!(error = %e, "failed to add transaction to pool");
+                                            eprintln!("failed to add transaction to pool: {}", e);
                                         } else {
                                             let _ = tx_broadcast_tx.send(tx);
                                         }
@@ -307,15 +323,15 @@ async fn run_node(cfg: crate::config::NodeConfiguration, keypair: libp2p::identi
                                                             let _ = block_broadcast_tx.send(b.clone());
                                                         }
                                                         bc.remove_transactions_from_pool(&hashes);
-                                                        info!(height = bc.blocks.len().saturating_sub(1), "block added");
+                                                        println!("block added: height={}", bc.blocks.len().saturating_sub(1));
                                                     }
                                                     Err(e) => {
-                                                        warn!(error = %e, "failed to add block");
+                                                        eprintln!("failed to add block: {}", e);
                                                     }
                                                 }
                                             }
                                             Err(e) => {
-                                                warn!(error = %e, "poi submission rejected");
+                                                eprintln!("poi submission rejected: {}", e);
                                             }
                                         }
                                     }
@@ -327,12 +343,12 @@ async fn run_node(cfg: crate::config::NodeConfiguration, keypair: libp2p::identi
                                 }
                             }
                             NetworkEvent::ShutdownSignal => {
-                                warn!("shutdown signal received from network");
+                                eprintln!("shutdown signal received from network");
                                 break;
                             }
                             NetworkEvent::ModelQueryReceived { model_id, .. } => {
                                 if let Err(err) = model_sync.handle_model_query(&model_id).await {
-                                    warn!(error = %err, "failed to handle model query");
+                                    eprintln!("failed to handle model query: {}", err);
                                 }
                             }
                             _ => {}
@@ -343,14 +359,14 @@ async fn run_node(cfg: crate::config::NodeConfiguration, keypair: libp2p::identi
         })
     };
 
-    info!("node started; waiting for shutdown");
+    println!("node started; waiting for shutdown");
 
     tokio::select! {
         _ = shutdown_rx.recv() => {
-            warn!("shutdown signal received from consensus");
+            eprintln!("shutdown signal received from consensus");
         }
         _ = tokio::signal::ctrl_c() => {
-            warn!("ctrl-c received");
+            eprintln!("ctrl-c received");
         }
         _ = async {
             loop {
@@ -360,7 +376,7 @@ async fn run_node(cfg: crate::config::NodeConfiguration, keypair: libp2p::identi
                 tokio::time::sleep(std::time::Duration::from_secs(1)).await;
             }
         } => {
-            warn!("shutdown active (genesis)");
+            eprintln!("shutdown active (genesis)");
         }
     }
 
@@ -374,7 +390,7 @@ async fn run_node(cfg: crate::config::NodeConfiguration, keypair: libp2p::identi
     let mut network_task = network_task;
     let net_join = tokio::time::timeout(join_timeout, async { (&mut network_task).await }).await;
     if net_join.is_err() {
-        warn!("network task did not exit in time; aborting");
+        eprintln!("network task did not exit in time; aborting");
         network_task.abort();
         let _ = network_task.await;
     }
@@ -382,11 +398,11 @@ async fn run_node(cfg: crate::config::NodeConfiguration, keypair: libp2p::identi
     let mut p2p_task = p2p_task;
     let p2p_join = tokio::time::timeout(join_timeout, async { (&mut p2p_task).await }).await;
     if p2p_join.is_err() {
-        warn!("p2p task did not exit in time; aborting");
+        eprintln!("p2p task did not exit in time; aborting");
         p2p_task.abort();
         let _ = p2p_task.await;
     }
 
-    info!("node exiting");
+    println!("node exiting");
     Ok(())
 }

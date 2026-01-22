@@ -61,7 +61,7 @@ pub fn load_keypair(path: &Path) -> Result<Keypair> {
             .with_context(|| format!("failed to stat keypair file: {}", path.display()))?;
         let mode = meta.permissions().mode() & 0o777;
         if mode & 0o077 != 0 {
-            tracing::warn!(path = %path.display(), mode = %format!("{:o}", mode), "keypair file permissions are too permissive");
+            eprintln!("keypair file permissions are too permissive: path={}, mode={:o}", path.display(), mode);
         }
     }
 
@@ -69,7 +69,7 @@ pub fn load_keypair(path: &Path) -> Result<Keypair> {
 }
 
 fn validate_keypair(keypair: &Keypair) -> Result<()> {
-    let msg = b"aigen-keypair-validation";
+    let msg = b"aigen-keypair-validation".as_ref();
     let sig = keypair
         .sign(msg)
         .map_err(|e| anyhow!("keypair failed to sign test message: {e}"))?;
