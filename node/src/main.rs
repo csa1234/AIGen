@@ -9,7 +9,7 @@ use std::sync::Arc;
 use anyhow::{anyhow, Context, Result};
 use blockchain_core::{BlockHeight, Blockchain, Transaction};
 use consensus::{set_inference_verification_config, PoIConsensus};
-use model::{set_global_inference_engine, InferenceEngine, LocalStorage, ModelRegistry};
+use model::{set_global_inference_engine, InferenceEngine, LocalStorage, ModelRegistry, TierManager, AdManager};
 use network::model_sync::ModelShardRequestEnvelope;
 use network::{ModelSyncManager, NetworkEvent, NetworkMessage, P2PNode};
 use tokio::sync::{mpsc, Mutex};
@@ -178,13 +178,22 @@ async fn run_node(
     let (publish_tx, publish_rx) = mpsc::channel::<NetworkMessage>(1024);
     let model_registry = Arc::new(ModelRegistry::new());
     let model_storage = Arc::new(LocalStorage::new(cfg.data_dir.join("models")));
+    
+    // Initialize TierManager and AdManager with configuration
+    let tier_manager = Arc::new(TierManager::with_chain_state(
+        model::default_tier_configs(),
+        Arc::new(model::DefaultPaymentProvider),
+        chain_state.clone(),
+    ));
+    let ad_manager = Arc::new(AdManager::new(tier_manager.clone(), cfg.ads.clone()));
+    
     let inference_engine = Arc::new(InferenceEngine::new(
         model_registry.clone(),
         model_storage.clone(),
         cfg.model.cache_dir.clone(),
         cfg.model.max_memory_mb.saturating_mul(1024 * 1024),
         cfg.model.num_threads,
-        None,
+        Some(ad_manager.clone()),
     ));
     if let Err(err) = set_global_inference_engine(inference_engine.clone()) {
         eprintln!("failed to register inference engine: {}", err);

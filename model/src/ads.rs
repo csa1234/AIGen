@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fs;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
@@ -19,8 +20,11 @@ pub struct AdConfig {
     pub enabled: bool,
     pub injection_rate: f64,
     pub max_ad_length: usize,
+    pub max_total_output_length: Option<usize>,
     pub upgrade_prompt_threshold: u64,
     pub free_tier_only: bool,
+    pub templates: Option<Vec<AdTemplate>>,
+    pub template_file_path: Option<String>,
 }
 
 impl Default for AdConfig {
@@ -29,8 +33,11 @@ impl Default for AdConfig {
             enabled: true,
             injection_rate: 0.5,
             max_ad_length: 500,
+            max_total_output_length: None,
             upgrade_prompt_threshold: 8,
             free_tier_only: true,
+            templates: None,
+            template_file_path: None,
         }
     }
 }
@@ -127,13 +134,36 @@ pub struct AdManager {
 
 impl AdManager {
     pub fn new(tier_manager: Arc<TierManager>, config: AdConfig) -> Self {
+        let templates = Self::load_templates(&config);
         Self {
             tier_manager,
-            ad_templates: Arc::new(RwLock::new(default_ad_templates())),
+            ad_templates: Arc::new(RwLock::new(templates)),
             impression_tracker: Arc::new(DashMap::new()),
             config,
             current_template_index: Arc::new(AtomicUsize::new(0)),
         }
+    }
+
+    fn load_templates(config: &AdConfig) -> Vec<AdTemplate> {
+        // Try to load templates from config first
+        if let Some(ref templates) = config.templates {
+            return templates.clone();
+        }
+        
+        // Try to load from template file if specified
+        if let Some(ref file_path) = config.template_file_path {
+            if let Ok(content) = fs::read_to_string(file_path) {
+                if let Ok(templates) = serde_json::from_str::<Vec<AdTemplate>>(&content) {
+                    return templates;
+                }
+                if let Ok(templates) = toml::from_str::<Vec<AdTemplate>>(&content) {
+                    return templates;
+                }
+            }
+        }
+        
+        // Fall back to default templates
+        default_ad_templates()
     }
 
     pub fn with_default_config(tier_manager: Arc<TierManager>) -> Self {
@@ -227,19 +257,36 @@ impl AdManager {
             if outputs.is_empty() {
                 return Ok((outputs, String::new(), SubscriptionTier::Free));
             }
+            
+            // Find a text-capable output to append ad to
+            let text_output_index = self.find_text_capable_output(&outputs);
+            
             let generated = self.generate_ad_payload(user_address, model_id)?;
             let mut outputs = outputs;
-            let index = outputs
-                .iter()
-                .position(|output| output.name == "output")
-                .unwrap_or(0);
-            let separator = "\n\n---\n";
-            let mut text = data_to_string(&outputs[index].data);
-            text.push_str(separator);
-            text.push_str(&generated.content);
-            let data = string_to_data(&text);
-            outputs[index].data = data;
-            outputs[index].shape = vec![outputs[index].data.len() as i64];
+            
+            if let Some(_index) = text_output_index {
+                // Check total output length limit
+                if let Some(max_total_length) = self.config.max_total_output_length {
+                    let current_total_length: usize = outputs.iter()
+                        .map(|output| output.data.len())
+                        .sum();
+                    let ad_length = generated.content.len();
+                    
+                    if current_total_length + ad_length > max_total_length {
+                        // Skip ad injection if it would exceed total length limit
+                        return Ok((outputs, String::new(), SubscriptionTier::Free));
+                    }
+                }
+                
+                // Append ad as separate output entry to preserve original output
+                let ad_output = InferenceOutput {
+                    name: "ad_text".to_string(),
+                    shape: vec![generated.content.len() as i64],
+                    data: string_to_data(&generated.content),
+                };
+                outputs.push(ad_output);
+            }
+            
             Ok((outputs, generated.template_id, generated.tier))
         }));
         match result {
@@ -267,6 +314,21 @@ impl AdManager {
             Ok(outcome) => outcome,
             Err(_) => Err(AdError::SerializationError("panic".to_string())),
         }
+    }
+
+    fn find_text_capable_output(&self, outputs: &[InferenceOutput]) -> Option<usize> {
+        // Look for outputs that are likely text-capable based on name and shape
+        for (index, output) in outputs.iter().enumerate() {
+            // Check if output name suggests text capability
+            let name_lower = output.name.to_lowercase();
+            if name_lower.contains("text") || name_lower.contains("output") || name_lower.contains("response") {
+                // Check if shape is suitable for text (1D or small dimensions)
+                if output.shape.len() <= 2 && output.shape.iter().all(|&dim| dim <= 10000) {
+                    return Some(index);
+                }
+            }
+        }
+        None
     }
 
     pub fn record_impression(
@@ -541,14 +603,6 @@ pub fn default_ad_templates() -> Vec<AdTemplate> {
             active: true,
         },
     ]
-}
-
-fn data_to_string(data: &[f32]) -> String {
-    let bytes: Vec<u8> = data
-        .iter()
-        .map(|value| value.round().clamp(0.0, 255.0) as u8)
-        .collect();
-    String::from_utf8_lossy(&bytes).to_string()
 }
 
 fn string_to_data(text: &str) -> Vec<f32> {

@@ -109,9 +109,17 @@ fn injects_ads_into_outputs() {
         .expect("inject");
     assert!(!template_id.is_empty());
     assert_eq!(tier, SubscriptionTier::Free);
-    let text = text_from_data(&modified[0].data);
-    assert!(text.contains("Hello"));
-    assert!(text.contains("AIGEN"));
+    
+    // Original output should remain unchanged
+    let original_text = text_from_data(&modified[0].data);
+    assert!(original_text.contains("Hello"));
+    assert!(!original_text.contains("AIGEN"));
+    
+    // Ad should be in a separate output
+    let ad_output = modified.iter().find(|output| output.name == "ad_text");
+    assert!(ad_output.is_some());
+    let ad_text = text_from_data(&ad_output.unwrap().data);
+    assert!(ad_text.contains("AIGEN"));
 }
 
 #[test]
