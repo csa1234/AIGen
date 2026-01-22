@@ -19,6 +19,11 @@ fn main() -> Result<()> {
 }
 
 async fn async_main() -> Result<()> {
+    // Initialize tracing subscriber
+    tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .init();
+
     let cli = crate::cli::parse_cli();
 
     match &cli.command {

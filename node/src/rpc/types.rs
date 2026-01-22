@@ -197,7 +197,7 @@ impl TransactionResponse {
             sender_public_key: None,
             receiver: tx.receiver.clone(),
             amount: tx.amount.value(),
-            signature: to_hex_bytes(&tx.signature.to_bytes()),
+            signature: to_hex_bytes(&tx.signature.to_bytes()[..]),
             timestamp: tx.timestamp.0,
             nonce: tx.nonce.value(),
             priority: tx.priority,
@@ -210,7 +210,7 @@ impl TransactionResponse {
             ceo_signature: tx
                 .ceo_signature
                 .as_ref()
-                .map(|s| to_hex_bytes(&s.inner().to_bytes())),
+                .map(|s| to_hex_bytes(&s.inner().to_bytes()[..])),
         }
     }
 
@@ -236,11 +236,13 @@ impl TransactionResponse {
         let mut hash_arr = [0u8; 32];
         hash_arr.copy_from_slice(&hash_bytes);
 
+        #[allow(non_snake_case)]
         let payload = match self.payload {
             Some(p) => Some(parse_hex_bytes(&p)?),
             None => None,
         };
 
+        #[allow(non_snake_case)]
         let ceo_signature = match self.ceo_signature {
             Some(s) => {
                 let b = parse_hex_bytes(&s)?;

@@ -4,7 +4,6 @@ use anyhow::Result;
 use blockchain_core::{Block, Blockchain, Transaction};
 use jsonrpsee::server::{ServerBuilder, ServerHandle};
 use tokio::sync::{broadcast, Mutex};
-use tracing::info;
 
 use crate::config::RpcConfig;
 use crate::rpc::ceo::{CeoRpcMethods, CeoRpcServer};
@@ -36,7 +35,7 @@ pub async fn start_rpc_server(
 
     let handle = server.start(module);
 
-    info!(rpc_addr = %addr, "rpc server started");
+    println!("rpc server started on {}", addr);
 
     Ok(handle)
 }
