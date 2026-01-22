@@ -21,7 +21,6 @@ use std::sync::OnceLock;
 use thiserror::Error;
 use tokio::runtime::Builder;
 use tokio::task;
-use tracing::warn;
 
 #[derive(Debug, Error)]
 pub enum ConsensusError {
@@ -395,7 +394,7 @@ pub fn verify_inference(
         Err(VerificationError::EngineUnavailable)
         | Err(VerificationError::Inference(_))
         | Err(VerificationError::Model(_)) => {
-            warn!("falling back to structural inference verification: {outputs:?}");
+            println!("falling back to structural inference verification: {outputs:?}");
             Ok(fallback_verify_inference(&inputs, &expected, metadata))
         }
         Err(err) => Err(ConsensusError::VerificationError(err.to_string())),
@@ -423,9 +422,10 @@ fn fallback_verify_inference(
             if *dim <= 0 {
                 return false;
             }
-            elem_count = match elem_count.checked_mul(*dim) {
-                Some(value) => value,
-                None => return false,
+            elem_count = if let Some(value) = elem_count.checked_mul(*dim) {
+                value
+            } else {
+                return false;
             };
         }
         if input.data.len() as i64 != elem_count {
@@ -448,9 +448,10 @@ fn fallback_verify_inference(
             if *dim <= 0 {
                 return false;
             }
-            elem_count = match elem_count.checked_mul(*dim) {
-                Some(value) => value,
-                None => return false,
+            elem_count = if let Some(value) = elem_count.checked_mul(*dim) {
+                value
+            } else {
+                return false;
             };
         }
         if elem_count <= 0 {

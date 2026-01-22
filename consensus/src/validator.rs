@@ -80,9 +80,10 @@ impl ValidatorRegistry {
         }
 
         let removed = self.validators.remove(address);
-        match removed {
-            Some((_, v)) => Ok(v.staked_amount),
-            None => Err(ConsensusError::RegistryError),
+        if let Some((_, v)) = removed {
+            Ok(v.staked_amount)
+        } else {
+            Err(ConsensusError::RegistryError)
         }
     }
 
@@ -283,9 +284,10 @@ impl VoteRegistry {
             return Err(ConsensusError::ShutdownActive);
         }
 
-        let votes = match self.votes.get(block_hash) {
-            Some(v) => v,
-            None => return Ok(QuorumResult::Pending),
+        let votes = if let Some(v) = self.votes.get(block_hash) {
+            v
+        } else {
+            return Ok(QuorumResult::Pending);
         };
 
         if total_validators == 0 {

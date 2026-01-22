@@ -233,9 +233,10 @@ async fn download_and_extract_ort_1232(out_dir: &Path) {
         for index in 0..archive.len() {
             let mut entry = archive.by_index(index).expect("zip entry");
             let entry_name = entry.name().to_string();
-            let file_name = match std::path::Path::new(&entry_name).file_name() {
-                Some(name) => name.to_string_lossy().to_string(),
-                None => continue,
+            let file_name = if let Some(name) = std::path::Path::new(&entry_name).file_name() {
+                name.to_string_lossy().to_string()
+            } else {
+                continue;
             };
             if !file_name.to_lowercase().ends_with(".dll") {
                 continue;

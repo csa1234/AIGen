@@ -81,7 +81,7 @@ where
     T: AsyncRead + Unpin + Send,
 {
     let mut len_buf = [0u8; 8];
-    io.read_exact(&mut len_buf).await?;
+    io.read_exact(&mut len_buf[..]).await?;
     let len = u64::from_be_bytes(len_buf);
     if len > max_len {
         return Err(io::Error::new(io::ErrorKind::InvalidData, "frame too large"));
