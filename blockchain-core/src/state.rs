@@ -354,13 +354,12 @@ impl ChainState {
     pub fn calculate_state_root(&self) -> StateRoot {
         let accounts = self.accounts.read();
         let subscriptions = self.subscriptions.read();
-        let batch_jobs = self.batch_jobs.read();
-        if accounts.is_empty() && subscriptions.is_empty() && batch_jobs.is_empty() {
+        if accounts.is_empty() && subscriptions.is_empty() {
             return hash_data(&[][..]);
         }
 
         let mut leaves: Vec<[u8; 32]> =
-            Vec::with_capacity(accounts.len().saturating_add(subscriptions.len()).saturating_add(batch_jobs.len()));
+            Vec::with_capacity(accounts.len().saturating_add(subscriptions.len()));
         for (addr, state) in accounts.iter() {
             let mut buf = Vec::new();
             buf.extend_from_slice(b"acct");
@@ -384,26 +383,6 @@ impl ChainState {
             buf.extend_from_slice(&subscription.requests_used.to_le_bytes());
             buf.extend_from_slice(&subscription.last_reset_timestamp.to_le_bytes());
             buf.push(subscription.auto_renew as u8);
-            leaves.push(hash_data(&buf));
-        }
-
-        for (job_id, job) in batch_jobs.iter() {
-            let mut buf = Vec::new();
-            buf.extend_from_slice(b"batch");
-            buf.extend_from_slice(job_id.as_bytes());
-            buf.extend_from_slice(job.user_address.as_bytes());
-            buf.push(job.priority);
-            buf.push(job.status);
-            buf.extend_from_slice(&job.submission_time.to_le_bytes());
-            buf.extend_from_slice(&job.scheduled_time.to_le_bytes());
-            buf.extend_from_slice(&job.completion_time.unwrap_or(0).to_le_bytes());
-            buf.extend_from_slice(job.model_id.as_bytes());
-            if let Some(hash) = job.result_hash {
-                buf.push(1);
-                buf.extend_from_slice(&hash);
-            } else {
-                buf.push(0);
-            }
             leaves.push(hash_data(&buf));
         }
 

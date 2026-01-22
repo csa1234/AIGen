@@ -117,6 +117,8 @@ pub enum PaymentValidationError {
     AmountMismatch { expected: u64, actual: u64 },
     #[error("receiver mismatch: expected {expected}, got {actual}")]
     ReceiverMismatch { expected: String, actual: String },
+    #[error("sender mismatch: expected {expected}, got {actual}")]
+    SenderMismatch { expected: String, actual: String },
     #[error("invalid duration: {duration}")]
     InvalidDuration { duration: u32 },
 }

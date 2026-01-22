@@ -14,7 +14,6 @@ use model::{
     BatchPaymentPayload,
     BatchPriority,
     BatchQueue,
-    BatchRequest,
     InferenceEngine,
     InferenceTensor,
     LocalStorage,
@@ -241,24 +240,24 @@ async fn job_state_transitions_update_status() {
     let engine = test_engine(registry);
     let chain_state = Arc::new(ChainState::new());
     let queue = BatchQueue::new(
-        manager,
+        manager.clone(),
         engine,
         chain_state,
         VolumeDiscountTracker::new(VolumeDiscountTracker::default_tiers()),
     );
 
-    let request = BatchRequest {
-        request_id: Uuid::new_v4().to_string(),
-        user_address: "0x00000000000000000000000000000000000000cc".to_string(),
-        priority: BatchPriority::Standard,
-        submission_time: 0,
-        scheduled_time: 0,
-        model_id: "model-a".to_string(),
-        input_data: sample_input(),
-        payment_tx_hash: blockchain_core::TxHash([0u8; 32]),
-    };
-
-    let job_id = queue.submit_job(request).await.expect("submit");
+    let now = model::now_timestamp();
+    let user_address = "0x00000000000000000000000000000000000000cc";
+    manager
+        .subscribe_user(user_address, SubscriptionTier::Pro, false, now)
+        .expect("subscribe");
+    let input = sample_input();
+    let payload = sample_payload(user_address, BatchPriority::Standard, "model-a", input.clone());
+    let tx = make_tx(user_address, CEO_WALLET, 10, payload);
+    let job_id = queue
+        .validate_and_submit(&tx, "model-a".to_string(), input)
+        .await
+        .expect("submit");
     queue
         .update_job_status(&job_id, BatchJobStatus::Processing, None, None)
         .await
@@ -279,23 +278,24 @@ async fn batch_jobs_wait_for_schedule() {
     let engine = test_engine(registry);
     let chain_state = Arc::new(ChainState::new());
     let queue = BatchQueue::new(
-        manager,
+        manager.clone(),
         engine,
         chain_state,
         VolumeDiscountTracker::new(VolumeDiscountTracker::default_tiers()),
     );
 
-    let request = BatchRequest {
-        request_id: Uuid::new_v4().to_string(),
-        user_address: "0x00000000000000000000000000000000000000dd".to_string(),
-        priority: BatchPriority::Batch,
-        submission_time: 0,
-        scheduled_time: 0,
-        model_id: "model-a".to_string(),
-        input_data: sample_input(),
-        payment_tx_hash: blockchain_core::TxHash([0u8; 32]),
-    };
-    queue.submit_job(request).await.expect("submit");
+    let now = model::now_timestamp();
+    let user_address = "0x00000000000000000000000000000000000000dd";
+    manager
+        .subscribe_user(user_address, SubscriptionTier::Pro, false, now)
+        .expect("subscribe");
+    let input = sample_input();
+    let payload = sample_payload(user_address, BatchPriority::Batch, "model-a", input.clone());
+    let tx = make_tx(user_address, CEO_WALLET, 5, payload);
+    queue
+        .validate_and_submit(&tx, "model-a".to_string(), input)
+        .await
+        .expect("submit");
     let next = queue.get_next_ready_job().await.expect("ready");
     assert!(next.is_none());
 }
@@ -362,17 +362,23 @@ async fn concurrent_submissions_keep_all_jobs() {
     for _ in 0..5 {
         let queue = queue.clone();
         handles.push(tokio::spawn(async move {
-            let request = BatchRequest {
-                request_id: Uuid::new_v4().to_string(),
-                user_address: "0x0000000000000000000000000000000000000100".to_string(),
-                priority: BatchPriority::Standard,
-                submission_time: 0,
-                scheduled_time: 0,
-                model_id: "model-a".to_string(),
-                input_data: sample_input(),
-                payment_tx_hash: blockchain_core::TxHash([0u8; 32]),
-            };
-            queue.submit_job(request).await.expect("submit");
+            let input = sample_input();
+            let payload = sample_payload(
+                "0x0000000000000000000000000000000000000100",
+                BatchPriority::Standard,
+                "model-a",
+                input.clone(),
+            );
+            let tx = make_tx(
+                "0x0000000000000000000000000000000000000100",
+                CEO_WALLET,
+                10,
+                payload,
+            );
+            queue
+                .validate_and_submit(&tx, "model-a".to_string(), input)
+                .await
+                .expect("submit");
         }));
     }
     for handle in handles {

@@ -430,7 +430,7 @@ impl BatchQueue {
         self.discount_tracker.clone()
     }
 
-    pub async fn submit_job(&self, mut request: BatchRequest) -> Result<String, BatchError> {
+    async fn submit_job(&self, mut request: BatchRequest) -> Result<String, BatchError> {
         check_shutdown().map_err(|_| BatchError::Shutdown)?;
         let now = now_timestamp();
         request.submission_time = now;
@@ -932,6 +932,13 @@ pub fn validate_batch_payment(
         return Err(PaymentValidationError::ReceiverMismatch {
             expected: expected_receiver.to_string(),
             actual: transaction.receiver.clone(),
+        });
+    }
+
+    if transaction.sender != batch_payload.user_address {
+        return Err(PaymentValidationError::SenderMismatch {
+            expected: batch_payload.user_address.clone(),
+            actual: transaction.sender.clone(),
         });
     }
 

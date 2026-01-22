@@ -14,7 +14,6 @@ use model::{
     BatchPaymentPayload,
     BatchPriority,
     BatchQueue,
-    BatchRequest,
     BatchWorker,
     InferenceEngine,
     InferenceTensor,
@@ -342,17 +341,18 @@ async fn chain_state_persists_job_updates() {
         VolumeDiscountTracker::new(VolumeDiscountTracker::default_tiers()),
     );
 
-    let request = BatchRequest {
-        request_id: Uuid::new_v4().to_string(),
-        user_address: "0x00000000000000000000000000000000000001ff".to_string(),
-        priority: BatchPriority::Standard,
-        submission_time: 0,
-        scheduled_time: 0,
-        model_id: "model-a".to_string(),
-        input_data: sample_input(),
-        payment_tx_hash: blockchain_core::TxHash([0u8; 32]),
-    };
-    let job_id = queue.submit_job(request).await.expect("submit");
+    let now = model::now_timestamp();
+    let user_address = "0x00000000000000000000000000000000000001ff";
+    manager
+        .subscribe_user(user_address, SubscriptionTier::Pro, false, now)
+        .expect("subscribe");
+    let input = sample_input();
+    let payload = sample_payload(user_address, BatchPriority::Standard, "model-a", input.clone());
+    let tx = make_tx(user_address, CEO_WALLET, 10, payload);
+    let job_id = queue
+        .validate_and_submit(&tx, "model-a".to_string(), input)
+        .await
+        .expect("submit");
     queue
         .update_job_status(&job_id, BatchJobStatus::Completed, Some(vec![4]), None)
         .await
