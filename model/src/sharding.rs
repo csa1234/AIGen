@@ -7,7 +7,7 @@
 use std::cmp::min;
 use std::path::Path;
 
-use genesis::check_shutdown;
+use genesis::{check_shutdown, GenesisError};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 use tokio::fs::{self, File};
@@ -35,7 +35,10 @@ pub enum ShardError {
 }
 
 fn ensure_running() -> Result<(), ShardError> {
-    check_shutdown().map_err(ShardError::Genesis)
+    check_shutdown().map_err(|err| match err {
+        GenesisError::ShutdownActive => ShardError::Shutdown,
+        other => ShardError::Genesis(other),
+    })
 }
 
 /// Split a model file into 4GB shards with SHA-256 verification hashes.
@@ -60,7 +63,7 @@ pub async fn split_model_file(
         file_size
     );
 
-    let total_shards = ((file_size + SHARD_SIZE - 1) / SHARD_SIZE) as u32;
+    let total_shards = file_size.div_ceil(SHARD_SIZE) as u32;
     fs::create_dir_all(output_dir).await?;
 
     let mut source = File::open(model_path).await?;

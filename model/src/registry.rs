@@ -348,8 +348,8 @@ impl ModelRegistry {
         Ok(entry
             .locations
             .iter()
-            .cloned()
             .filter(|loc| loc.is_healthy)
+            .cloned()
             .collect())
     }
 
@@ -395,6 +395,12 @@ impl ModelRegistry {
             }
         }
         Ok(results)
+    }
+}
+
+impl Default for ModelRegistry {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

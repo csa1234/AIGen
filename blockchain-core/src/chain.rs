@@ -29,9 +29,24 @@ enum ChainWorkType {
     Inference,
 }
 
-fn calculate_poi_reward_local(proof: &ChainPoIProof) -> Amount {
+fn validate_poi_difficulty(work_hash: &[u8; 32], difficulty: u64) -> Result<u64, BlockchainError> {
+    if difficulty == 0 {
+        return Err(BlockchainError::InvalidTransaction);
+    }
+    let mut prefix = [0u8; 16];
+    prefix.copy_from_slice(&work_hash[..16]);
+    let value = u128::from_be_bytes(prefix);
+    let target = u128::MAX / difficulty as u128;
+    if value > target {
+        return Err(BlockchainError::InvalidTransaction);
+    }
+    Ok(difficulty)
+}
+
+fn calculate_poi_reward_local(proof: &ChainPoIProof) -> Result<Amount, BlockchainError> {
+    let difficulty = validate_poi_difficulty(&proof.work_hash, proof.difficulty)?;
     let base = 100u64;
-    let factor = (proof.difficulty / 1000).max(1);
+    let factor = (difficulty / 1000).max(1);
     let mut reward = base.saturating_mul(factor);
 
     match proof.work_type {
@@ -44,7 +59,7 @@ fn calculate_poi_reward_local(proof: &ChainPoIProof) -> Amount {
         ChainWorkType::MatrixMultiplication => {}
     }
 
-    Amount::new(reward)
+    Ok(Amount::new(reward))
 }
 
 #[derive(Debug)]
@@ -119,7 +134,7 @@ impl Blockchain {
                 .as_ref()
                 .ok_or(BlockchainError::InvalidTransaction)?;
             let proof: ChainPoIProof = serde_json::from_slice(proof_bytes)?;
-            let reward = calculate_poi_reward_local(&proof);
+            let reward = calculate_poi_reward_local(&proof)?;
             self.state.mint_tokens(&proof.miner_address, reward)?;
 
             let committee = proof
@@ -185,7 +200,7 @@ impl Blockchain {
                     .as_ref()
                     .ok_or(BlockchainError::InvalidTransaction)?;
                 let proof: ChainPoIProof = serde_json::from_slice(proof_bytes)?;
-                let reward = calculate_poi_reward_local(&proof);
+                let reward = calculate_poi_reward_local(&proof)?;
                 temp_state.mint_tokens(&proof.miner_address, reward)?;
 
                 let committee = proof
@@ -307,5 +322,11 @@ impl Blockchain {
         } else {
             self
         }
+    }
+}
+
+impl Default for Blockchain {
+    fn default() -> Self {
+        Self::new()
     }
 }

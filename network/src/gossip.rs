@@ -32,23 +32,15 @@ pub fn topic_shutdown() -> Topic {
     Topic::new(TOPIC_SHUTDOWN)
 }
 
+#[derive(Default)]
 pub struct GossipHandler {
     pub shutdown_queue: VecDeque<NetworkMessage>,
     pub normal_queue: VecDeque<NetworkMessage>,
 }
 
-impl Default for GossipHandler {
-    fn default() -> Self {
-        Self {
-            shutdown_queue: VecDeque::new(),
-            normal_queue: VecDeque::new(),
-        }
-    }
-}
-
 impl GossipHandler {
     pub fn enqueue(&mut self, msg: NetworkMessage) {
-        if msg.priority() >= 255 {
+        if msg.priority() == 255 {
             self.shutdown_queue.push_back(msg);
         } else {
             self.normal_queue.push_back(msg);

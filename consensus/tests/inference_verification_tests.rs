@@ -109,6 +109,7 @@ async fn setup_engine() -> Arc<InferenceEngine> {
             let _ = set_inference_verification_config(InferenceVerificationConfig {
                 cache_capacity: 16,
                 epsilon: 1e-6,
+                timeout_ms: 10_000,
             });
             engine
         })

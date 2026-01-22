@@ -118,6 +118,7 @@ pub struct ModelSyncManager {
 }
 
 impl ModelSyncManager {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         registry: Arc<ModelRegistry>,
         local_storage: Arc<LocalStorage>,

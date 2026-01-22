@@ -129,10 +129,10 @@ impl Block {
         let now = chrono::Utc::now().timestamp();
         self.header.timestamp.validate_reasonable_now(now)?;
 
-        if self.header.block_height.is_genesis() {
-            if self.header.previous_hash.0 != [0u8; 32] {
-                return Err(BlockchainError::Genesis(GenesisError::InvalidPreviousHash));
-            }
+        if self.header.block_height.is_genesis()
+            && self.header.previous_hash.0 != [0u8; 32]
+        {
+            return Err(BlockchainError::Genesis(GenesisError::InvalidPreviousHash));
         }
 
         let expected_merkle = calculate_merkle_root(&self.transactions);

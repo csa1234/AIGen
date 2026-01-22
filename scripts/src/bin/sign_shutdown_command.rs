@@ -57,7 +57,7 @@ fn main() -> Result<()> {
         password.as_str(),
     )?);
 
-    let signing_key = SigningKey::from_bytes(&*secret_bytes);
+    let signing_key = SigningKey::from_bytes(&secret_bytes);
 
     let timestamp = chrono::Utc::now().timestamp();
     let message = format!(

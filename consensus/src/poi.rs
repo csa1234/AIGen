@@ -14,10 +14,10 @@ use model::{
     DEFAULT_VERIFICATION_CACHE_CAPACITY,
     DEFAULT_VERIFICATION_EPSILON,
 };
-use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::future::Future;
 use std::sync::OnceLock;
+use std::time::Duration;
 use thiserror::Error;
 use tokio::runtime::Builder;
 use tokio::task;
@@ -85,6 +85,8 @@ pub struct ComputationMetadata {
 pub struct InferenceVerificationConfig {
     pub cache_capacity: usize,
     pub epsilon: f32,
+    #[serde(default = "default_inference_timeout_ms")]
+    pub timeout_ms: u64,
 }
 
 impl Default for InferenceVerificationConfig {
@@ -92,6 +94,7 @@ impl Default for InferenceVerificationConfig {
         Self {
             cache_capacity: DEFAULT_VERIFICATION_CACHE_CAPACITY,
             epsilon: DEFAULT_VERIFICATION_EPSILON,
+            timeout_ms: default_inference_timeout_ms(),
         }
     }
 }
@@ -117,6 +120,10 @@ fn inference_verification_cache() -> &'static VerificationCache {
     })
 }
 
+fn default_inference_timeout_ms() -> u64 {
+    10_000
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PoIProof {
     pub work_hash: [u8; 32],
@@ -132,6 +139,7 @@ pub struct PoIProof {
 }
 
 impl PoIProof {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         miner_address: String,
         work_type: WorkType,
@@ -168,6 +176,7 @@ impl PoIProof {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn work_payload_bytes(
         miner_address: &str,
         work_type: WorkType,
@@ -210,6 +219,8 @@ impl PoIProof {
             return Err(ConsensusError::InvalidProof);
         }
 
+        validate_work_difficulty(&self.work_hash, self.difficulty)?;
+
         let now = chrono::Utc::now().timestamp();
         if self.timestamp <= 0 {
             return Err(ConsensusError::InvalidProof);
@@ -228,7 +239,12 @@ impl PoIProof {
                 let input_bytes = base64::engine::general_purpose::STANDARD
                     .decode(input)
                     .map_err(|e| ConsensusError::Serialization(e.to_string()))?;
-                let ok = verify_matrix_multiplication(&input_bytes, &self.output_data, &self.computation_metadata)?;
+                let ok = verify_matrix_multiplication(
+                    &input_bytes,
+                    &self.output_data,
+                    &self.computation_metadata,
+                    &self.work_hash,
+                )?;
                 if !ok {
                     return Err(ConsensusError::InvalidProof);
                 }
@@ -267,10 +283,44 @@ impl PoIProof {
     }
 }
 
+fn validate_work_difficulty(work_hash: &[u8; 32], difficulty: u64) -> Result<u64, ConsensusError> {
+    if difficulty == 0 {
+        return Err(ConsensusError::InvalidProof);
+    }
+    let mut prefix = [0u8; 16];
+    prefix.copy_from_slice(&work_hash[..16]);
+    let value = u128::from_be_bytes(prefix);
+    let target = u128::MAX / difficulty as u128;
+    if value > target {
+        return Err(ConsensusError::InvalidProof);
+    }
+    Ok(difficulty)
+}
+
+fn matrix_sample_index(
+    work_hash: &[u8; 32],
+    counter: u64,
+    rows: usize,
+    cols: usize,
+) -> (usize, usize) {
+    let mut buf = Vec::with_capacity(40);
+    buf.extend_from_slice(work_hash);
+    buf.extend_from_slice(&counter.to_le_bytes());
+    let digest = hash_data(&buf);
+    let mut r_bytes = [0u8; 8];
+    r_bytes.copy_from_slice(&digest[..8]);
+    let mut c_bytes = [0u8; 8];
+    c_bytes.copy_from_slice(&digest[8..16]);
+    let r = (u64::from_le_bytes(r_bytes) % rows as u64) as usize;
+    let c = (u64::from_le_bytes(c_bytes) % cols as u64) as usize;
+    (r, c)
+}
+
 pub fn verify_matrix_multiplication(
     input: &[u8],
     output: &[u8],
     metadata: &ComputationMetadata,
+    work_hash: &[u8; 32],
 ) -> Result<bool, ConsensusError> {
     check_shutdown().map_err(|_| ConsensusError::ShutdownActive)?;
 
@@ -291,11 +341,9 @@ pub fn verify_matrix_multiplication(
         return Ok(false);
     }
 
-    let mut rng = rand::thread_rng();
     let checks = 8usize.min(rows * cols);
-    for _ in 0..checks {
-        let r = rng.gen_range(0..rows);
-        let c = rng.gen_range(0..cols);
+    for idx in 0..checks {
+        let (r, c) = matrix_sample_index(work_hash, idx as u64, rows, cols);
         let mut acc = 0.0f32;
         for k in 0..inner {
             acc += a[r * inner + k] * b[k * cols + c];
@@ -384,95 +432,29 @@ pub fn verify_inference(
     let cache = inference_verification_cache();
     let epsilon = inference_verification_config().epsilon;
     let model_id = metadata.model_id.clone();
-    let outputs = block_on_verification(move || async move {
+    let timeout_ms = inference_verification_config().timeout_ms.max(1);
+    let timeout = Duration::from_millis(timeout_ms);
+    let outputs = block_on_verification(timeout, move || async move {
         deterministic_inference(&model_id, inputs_for_inference, Some(cache)).await
     });
 
     match outputs {
         Ok(outputs) => Ok(outputs_match(&expected, &outputs, epsilon)),
+        Err(VerificationError::Serialization(msg)) if msg == "timeout" => {
+            Err(ConsensusError::Timeout)
+        }
         Err(VerificationError::Shutdown) => Err(ConsensusError::ShutdownActive),
         Err(VerificationError::EngineUnavailable)
         | Err(VerificationError::Inference(_))
-        | Err(VerificationError::Model(_)) => {
-            println!("falling back to structural inference verification: {outputs:?}");
-            Ok(fallback_verify_inference(&inputs, &expected, metadata))
-        }
+        | Err(VerificationError::Model(_)) => Err(ConsensusError::InvalidProof),
         Err(err) => Err(ConsensusError::VerificationError(err.to_string())),
     }
 }
 
-fn fallback_verify_inference(
-    inputs: &[InferenceTensor],
-    expected: &[InferenceOutput],
-    metadata: &ComputationMetadata,
-) -> bool {
-    if inputs.is_empty() || expected.is_empty() {
-        return false;
-    }
-
-    for input in inputs {
-        if input.name.trim().is_empty() {
-            return false;
-        }
-        if input.shape.is_empty() {
-            return false;
-        }
-        let mut elem_count = 1i64;
-        for dim in &input.shape {
-            if *dim <= 0 {
-                return false;
-            }
-            elem_count = if let Some(value) = elem_count.checked_mul(*dim) {
-                value
-            } else {
-                return false;
-            };
-        }
-        if input.data.len() as i64 != elem_count {
-            return false;
-        }
-        if input.data.iter().any(|value| !value.is_finite()) {
-            return false;
-        }
-    }
-
-    for output in expected {
-        if output.name.trim().is_empty() {
-            return false;
-        }
-        if output.shape.is_empty() {
-            return false;
-        }
-        let mut elem_count = 1i64;
-        for dim in &output.shape {
-            if *dim <= 0 {
-                return false;
-            }
-            elem_count = if let Some(value) = elem_count.checked_mul(*dim) {
-                value
-            } else {
-                return false;
-            };
-        }
-        if elem_count <= 0 {
-            return false;
-        }
-        if output.data.len() as i64 != elem_count {
-            return false;
-        }
-        if output.data.iter().any(|value| !value.is_finite()) {
-            return false;
-        }
-    }
-
-    if metadata.model_id.trim().is_empty() {
-        return false;
-    }
-
-    true
-}
-
-fn block_on_verification<Fut, MakeFut>(make_future: MakeFut) -> Result<Vec<InferenceOutput>, VerificationError>
+fn block_on_verification<Fut, MakeFut>(
+    timeout: Duration,
+    make_future: MakeFut,
+) -> Result<Vec<InferenceOutput>, VerificationError>
 where
     MakeFut: FnOnce() -> Fut + Send + 'static,
     Fut: Future<Output = Result<Vec<InferenceOutput>, VerificationError>>,
@@ -484,34 +466,59 @@ where
         .is_ok();
 
         if can_block_in_place {
-            return task::block_in_place(|| handle.block_on(make_future()));
+            return task::block_in_place(|| {
+                handle.block_on(async move {
+                    match tokio::time::timeout(timeout, make_future()).await {
+                        Ok(result) => result,
+                        Err(_) => Err(VerificationError::Serialization("timeout".to_string())),
+                    }
+                })
+            });
         }
 
         let (tx, rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
             let result = match Builder::new_current_thread().enable_all().build() {
-                Ok(runtime) => runtime.block_on(make_future()),
+                Ok(runtime) => runtime.block_on(async move {
+                    match tokio::time::timeout(timeout, make_future()).await {
+                        Ok(result) => result,
+                        Err(_) => Err(VerificationError::Serialization("timeout".to_string())),
+                    }
+                }),
                 Err(err) => Err(VerificationError::Serialization(err.to_string())),
             };
             let _ = tx.send(result);
         });
 
-        return rx.recv().map_err(|err| VerificationError::Serialization(err.to_string()))?;
+        return match rx.recv_timeout(timeout) {
+            Ok(result) => result,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                Err(VerificationError::Serialization("timeout".to_string()))
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                Err(VerificationError::Serialization("verification channel disconnected".to_string()))
+            }
+        };
     }
 
     let runtime = Builder::new_current_thread()
         .enable_all()
         .build()
         .map_err(|err| VerificationError::Serialization(err.to_string()))?;
-    runtime.block_on(make_future())
+    runtime.block_on(async move {
+        match tokio::time::timeout(timeout, make_future()).await {
+            Ok(result) => result,
+            Err(_) => Err(VerificationError::Serialization("timeout".to_string())),
+        }
+    })
 }
 
 pub fn compress_gradients(gradients: &[f32]) -> Vec<u8> {
     let mut out = Vec::with_capacity(gradients.len());
     for &g in gradients {
-        let clamped = g.max(-1.0).min(1.0);
+        let clamped = g.clamp(-1.0, 1.0);
         let q = ((clamped + 1.0) * 127.5).round() as i32;
-        out.push(q.max(0).min(255) as u8);
+        out.push(q.clamp(0, 255) as u8);
     }
     out
 }
@@ -524,14 +531,14 @@ pub fn decompress_gradients(compressed: &[u8]) -> Vec<f32> {
 }
 
 pub fn compress_gradients_4bit(gradients: &[f32]) -> Vec<u8> {
-    let mut out = Vec::with_capacity((gradients.len() + 1) / 2);
+    let mut out = Vec::with_capacity(gradients.len().div_ceil(2));
     let mut i = 0;
     while i < gradients.len() {
-        let g0 = gradients[i].max(-1.0).min(1.0);
-        let q0 = (((g0 + 1.0) * 7.5).round() as i32).max(0).min(15) as u8;
+        let g0 = gradients[i].clamp(-1.0, 1.0);
+        let q0 = (((g0 + 1.0) * 7.5).round() as i32).clamp(0, 15) as u8;
         let q1 = if i + 1 < gradients.len() {
-            let g1 = gradients[i + 1].max(-1.0).min(1.0);
-            (((g1 + 1.0) * 7.5).round() as i32).max(0).min(15) as u8
+            let g1 = gradients[i + 1].clamp(-1.0, 1.0);
+            (((g1 + 1.0) * 7.5).round() as i32).clamp(0, 15) as u8
         } else {
             0
         };
@@ -558,9 +565,10 @@ pub fn decompress_gradients_4bit(compressed: &[u8], target_len: usize) -> Vec<f3
     out
 }
 
-pub fn calculate_poi_reward(proof: &PoIProof) -> Amount {
+pub fn calculate_poi_reward(proof: &PoIProof) -> Result<Amount, ConsensusError> {
+    let difficulty = validate_work_difficulty(&proof.work_hash, proof.difficulty)?;
     let base = 100u64;
-    let factor = (proof.difficulty / 1000).max(1);
+    let factor = (difficulty / 1000).max(1);
     let mut reward = base.saturating_mul(factor);
 
     match proof.work_type {
@@ -573,7 +581,7 @@ pub fn calculate_poi_reward(proof: &PoIProof) -> Amount {
         WorkType::MatrixMultiplication => {}
     }
 
-    Amount::new(reward)
+    Ok(Amount::new(reward))
 }
 
 pub struct PoIBlockProducer {

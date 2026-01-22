@@ -126,7 +126,7 @@ impl PoIConsensus {
                     .as_ref()
                     .ok_or(ConsensusError::InvalidProof)?;
                 let decoded: PoIProof = serde_json::from_slice(proof_bytes)?;
-                let reward = calculate_poi_reward(&decoded);
+                let reward = calculate_poi_reward(&decoded)?;
                 self.metrics.add_rewards(reward.value());
                 self.metrics.inc_accepted();
                 self.metrics

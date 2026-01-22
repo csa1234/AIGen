@@ -59,7 +59,7 @@ mod multiaddr_serde {
         use serde::de::Error as _;
         use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-        pub fn serialize<S>(value: &Vec<Multiaddr>, serializer: S) -> Result<S::Ok, S::Error>
+        pub fn serialize<S>(value: &[Multiaddr], serializer: S) -> Result<S::Ok, S::Error>
         where
             S: Serializer,
         {

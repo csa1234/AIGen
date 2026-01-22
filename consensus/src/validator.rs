@@ -297,7 +297,7 @@ impl VoteRegistry {
         let yes = votes.value().iter().filter(|v| v.vote).count();
         let no = votes.value().iter().filter(|v| !v.vote).count();
 
-        let threshold = (total_validators * 2 + 2) / 3;
+        let threshold = (total_validators * 2).div_ceil(3);
         if yes >= threshold {
             return Ok(QuorumResult::Approved);
         }

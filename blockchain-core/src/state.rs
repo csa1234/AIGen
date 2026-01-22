@@ -408,7 +408,7 @@ impl ChainState {
         }
 
         while leaves.len() > 1 {
-            let mut next = Vec::with_capacity((leaves.len() + 1) / 2);
+            let mut next = Vec::with_capacity(leaves.len().div_ceil(2));
             for pair in leaves.chunks(2) {
                 let left = pair[0];
                 let right = if pair.len() == 2 { pair[1] } else { pair[0] };

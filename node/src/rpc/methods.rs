@@ -126,7 +126,7 @@ impl PublicRpcServer for RpcMethods {
         let tx = transaction.into_tx()?;
 
         let derived_addr = blockchain_core::derive_address_from_pubkey(&public_key);
-        if derived_addr.to_ascii_lowercase() != tx.sender.to_ascii_lowercase() {
+        if !derived_addr.eq_ignore_ascii_case(&tx.sender) {
             return Err(RpcError::InvalidParams(
                 "sender does not match sender_public_key".to_string(),
             ));

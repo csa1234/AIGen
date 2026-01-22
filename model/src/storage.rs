@@ -214,10 +214,10 @@ impl StorageBackend for LocalStorage {
 
         for replica_id in 1..self.redundancy_factor {
             let candidate = self.replica_path(shard, replica_id);
-            if fs::metadata(&candidate).await.is_ok() {
-                if verify_shard_integrity(&candidate, &shard.hash).await? {
-                    return Ok(true);
-                }
+            if fs::metadata(&candidate).await.is_ok()
+                && verify_shard_integrity(&candidate, &shard.hash).await?
+            {
+                return Ok(true);
             }
         }
 

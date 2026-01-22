@@ -412,10 +412,10 @@ impl ModelCache {
                 if let Err(err) = self.enforce_memory_limit().await {
                     self.models.remove(model_id);
                     self.metrics.sub_loaded_bytes(memory_size);
-                    if is_core {
-                        if self.core_model_id.read().as_deref() == Some(model_id) {
-                            *self.core_model_id.write() = None;
-                        }
+                    if is_core
+                        && self.core_model_id.read().as_deref() == Some(model_id)
+                    {
+                        *self.core_model_id.write() = None;
                     }
                     let model_dir = model
                         .model_path
@@ -559,10 +559,10 @@ async fn load_model_from_shards(
         }
     }
 
-    if fs::metadata(&model_path).await.is_ok() {
-        if fs::remove_file(&model_path).await.is_err() {
-            println!("failed to remove cached model file: {}", model_path.display());
-        }
+    if fs::metadata(&model_path).await.is_ok()
+        && fs::remove_file(&model_path).await.is_err()
+    {
+        println!("failed to remove cached model file: {}", model_path.display());
     }
     combine_shards(&shards, &shard_dir, &model_path).await?;
 

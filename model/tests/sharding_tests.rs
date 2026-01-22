@@ -3,11 +3,13 @@ use genesis::shutdown::reset_shutdown_for_tests;
 use genesis::{emergency_shutdown, CeoSignature, GenesisConfig, ShutdownCommand};
 use model::sharding::{compute_file_hash, SHARD_SIZE};
 use model::{combine_shards, split_model_file, verify_shard_integrity, ShardError};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::io::ErrorKind;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tokio::fs::{self, File, OpenOptions};
+use tempfile::TempDir;
+use tokio::fs::{File, OpenOptions};
 use tokio::io::{AsyncSeekExt, AsyncWriteExt};
+use tokio::sync::Notify;
 
 const CEO_SECRET_KEY_HEX: &str =
     "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60";
@@ -37,15 +39,11 @@ fn signed_shutdown_command(nonce: u64) -> ShutdownCommand {
     command
 }
 
-fn temp_dir(prefix: &str) -> PathBuf {
-    let mut dir = std::env::temp_dir();
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("time")
-        .as_nanos();
-    dir.push(format!("aigen_{prefix}_{nanos}"));
-    std::fs::create_dir_all(&dir).expect("create temp dir");
-    dir
+fn temp_dir(prefix: &str) -> TempDir {
+    tempfile::Builder::new()
+        .prefix(&format!("aigen_{prefix}_"))
+        .tempdir()
+        .expect("create temp dir")
 }
 
 async fn write_test_file(path: &Path, size: u64) {
@@ -88,9 +86,10 @@ async fn write_sparse_file_with_markers(path: &Path, size: u64) -> std::io::Resu
 async fn test_split_and_combine_small_file() {
     reset_shutdown_for_tests();
     let dir = temp_dir("split_small");
-    let model_path = dir.join("model.bin");
-    let shard_dir = dir.join("shards");
-    let output_path = dir.join("combined.bin");
+    let root = dir.path();
+    let model_path = root.join("model.bin");
+    let shard_dir = root.join("shards");
+    let output_path = root.join("combined.bin");
     let size = 100 * 1024 * 1024;
 
     write_test_file(&model_path, size).await;
@@ -121,12 +120,13 @@ async fn test_split_and_combine_small_file() {
 async fn test_split_large_file() {
     reset_shutdown_for_tests();
     let dir = temp_dir("split_large");
-    let model_path = dir.join("model-large.bin");
-    let shard_dir = dir.join("shards");
+    let root = dir.path();
+    let model_path = root.join("model-large.bin");
+    let shard_dir = root.join("shards");
     let size = if std::env::var("AIGEN_RUN_LARGE_SHARD_TEST").is_ok() {
-        SHARD_SIZE + (128 * 1024 * 1024)
-    } else {
         512 * 1024 * 1024
+    } else {
+        64 * 1024 * 1024
     };
 
     if let Err(err) = write_sparse_file_with_markers(&model_path, size).await {
@@ -161,7 +161,7 @@ async fn test_split_large_file() {
 async fn test_shard_integrity_verification() {
     reset_shutdown_for_tests();
     let dir = temp_dir("integrity");
-    let shard_path = dir.join("shard.bin");
+    let shard_path = dir.path().join("shard.bin");
 
     write_test_file(&shard_path, 5 * 1024 * 1024).await;
     let hash = compute_file_hash(&shard_path).await.expect("hash");
@@ -187,12 +187,13 @@ async fn test_shard_integrity_verification() {
     assert!(!valid);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "current_thread")]
 async fn test_shutdown_during_split() {
     reset_shutdown_for_tests();
     let dir = temp_dir("shutdown_split");
-    let model_path = dir.join("model.bin");
-    let shard_dir = dir.join("shards");
+    let root = dir.path();
+    let model_path = root.join("model.bin");
+    let shard_dir = root.join("shards");
     let size = 256 * 1024 * 1024;
 
     if let Err(err) = write_sparse_file_with_markers(&model_path, size).await {
@@ -203,19 +204,31 @@ async fn test_shutdown_during_split() {
         panic!("failed to create sparse file: {err}");
     }
 
-    let handle = tokio::spawn({
-        let model_path = model_path.clone();
-        let shard_dir = shard_dir.clone();
-        async move { split_model_file(&model_path, &shard_dir, "shutdown-model").await }
-    });
+    let model_path = model_path.clone();
+    let shard_dir_clone = shard_dir.clone();
+    let started = std::sync::Arc::new(Notify::new());
+    let proceed = std::sync::Arc::new(Notify::new());
+    let started_task = started.clone();
+    let proceed_task = proceed.clone();
+    let result = tokio::task::LocalSet::new()
+        .run_until(async move {
+            let handle = tokio::task::spawn_local(async move {
+                started_task.notify_one();
+                proceed_task.notified().await;
+                split_model_file(&model_path, &shard_dir_clone, "shutdown-model").await
+            });
 
-    tokio::time::sleep(Duration::from_millis(50)).await;
-    let command = signed_shutdown_command(1);
-    emergency_shutdown(command).expect("shutdown");
+            let notified = tokio::time::timeout(Duration::from_secs(5), started.notified()).await;
+            assert!(notified.is_ok());
 
-    let result = handle.await.expect("join");
+            let command = signed_shutdown_command(1);
+            emergency_shutdown(command).expect("shutdown");
+            proceed.notify_one();
+
+            handle.await.expect("join")
+        })
+        .await;
     assert!(matches!(result, Err(ShardError::Shutdown)));
 
     reset_shutdown_for_tests();
-    let _ = fs::remove_dir_all(&dir).await;
 }

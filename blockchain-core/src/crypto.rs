@@ -63,7 +63,7 @@ pub fn calculate_merkle_root(transactions: &[Transaction]) -> [u8; 32] {
     let mut hashes: Vec<[u8; 32]> = transactions.iter().map(|tx| tx.tx_hash.0).collect();
 
     while hashes.len() > 1 {
-        let mut next = Vec::with_capacity((hashes.len() + 1) / 2);
+        let mut next = Vec::with_capacity(hashes.len().div_ceil(2));
         for pair in hashes.chunks(2) {
             let left = pair[0];
             let right = if pair.len() == 2 { pair[1] } else { pair[0] };
@@ -106,7 +106,7 @@ pub fn generate_merkle_proof(transactions: &[Transaction], index: usize) -> Opti
             is_left: is_right, // if current is right child, sibling is left
         });
 
-        let mut next = Vec::with_capacity((layer.len() + 1) / 2);
+        let mut next = Vec::with_capacity(layer.len().div_ceil(2));
         for pair in layer.chunks(2) {
             let left = pair[0];
             let right = if pair.len() == 2 { pair[1] } else { pair[0] };

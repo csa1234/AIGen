@@ -1,3 +1,5 @@
+#![cfg_attr(any(test, feature = "test-utils"), allow(clippy::missing_const_for_thread_local))]
+
 use crate::authority::verify_ceo_signature;
 use crate::config::GenesisConfig;
 use crate::types::{GenesisError, ShutdownCommand};
@@ -16,7 +18,7 @@ use std::sync::Mutex;
 
 #[cfg(any(test, feature = "test-utils"))]
 thread_local! {
-    static SHUTDOWN_FLAG_TL: Cell<bool> = Cell::new(false);
+    static SHUTDOWN_FLAG_TL: Cell<bool> = const { Cell::new(false) };
     static SHUTDOWN_REGISTRY_TL: RefCell<ShutdownRegistry> = RefCell::new(ShutdownRegistry::default());
 }
 
@@ -36,12 +38,12 @@ static SHUTDOWN_REGISTRY: Lazy<Mutex<ShutdownRegistry>> =
 fn shutdown_flag_load() -> bool {
     #[cfg(any(test, feature = "test-utils"))]
     {
-        return SHUTDOWN_FLAG_TL.with(|f| f.get());
+        SHUTDOWN_FLAG_TL.with(|f| f.get())
     }
 
     #[cfg(not(any(test, feature = "test-utils")))]
     {
-        return SHUTDOWN_FLAG.load(Ordering::SeqCst);
+        SHUTDOWN_FLAG.load(Ordering::SeqCst)
     }
 }
 
@@ -49,7 +51,6 @@ fn shutdown_flag_store(value: bool) {
     #[cfg(any(test, feature = "test-utils"))]
     {
         SHUTDOWN_FLAG_TL.with(|f| f.set(value));
-        return;
     }
 
     #[cfg(not(any(test, feature = "test-utils")))]
@@ -73,7 +74,7 @@ pub fn emergency_shutdown(command: ShutdownCommand) -> Result<(), GenesisError> 
 
     #[cfg(any(test, feature = "test-utils"))]
     {
-        return SHUTDOWN_REGISTRY_TL.with(|r| {
+        SHUTDOWN_REGISTRY_TL.with(|r| {
             let mut registry = r.borrow_mut();
             if registry.nonces.contains(&command.nonce) {
                 return Err(GenesisError::ReplayAttack);
@@ -82,7 +83,7 @@ pub fn emergency_shutdown(command: ShutdownCommand) -> Result<(), GenesisError> 
             registry.commands.push(command);
             shutdown_flag_store(true);
             Ok(())
-        });
+        })
     }
 
     #[cfg(not(any(test, feature = "test-utils")))]
@@ -98,7 +99,7 @@ pub fn emergency_shutdown(command: ShutdownCommand) -> Result<(), GenesisError> 
         registry.nonces.insert(command.nonce);
         registry.commands.push(command);
         shutdown_flag_store(true);
-        return Ok(());
+        Ok(())
     }
 }
 
@@ -117,12 +118,12 @@ pub fn check_shutdown() -> Result<(), GenesisError> {
 pub fn shutdown_registry() -> ShutdownRegistry {
     #[cfg(any(test, feature = "test-utils"))]
     {
-        return SHUTDOWN_REGISTRY_TL.with(|r| r.borrow().clone());
+        SHUTDOWN_REGISTRY_TL.with(|r| r.borrow().clone())
     }
 
     #[cfg(not(any(test, feature = "test-utils")))]
     {
-        return SHUTDOWN_REGISTRY
+        SHUTDOWN_REGISTRY
             .lock()
             .expect("shutdown registry mutex poisoned")
             .clone();
@@ -136,7 +137,6 @@ pub fn reset_shutdown_for_tests() {
     #[cfg(any(test, feature = "test-utils"))]
     {
         SHUTDOWN_REGISTRY_TL.with(|r| *r.borrow_mut() = ShutdownRegistry::default());
-        return;
     }
 
     #[cfg(not(any(test, feature = "test-utils")))]

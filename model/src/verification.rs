@@ -100,8 +100,10 @@ impl VerificationCache {
             last_used: now,
         };
 
-        if inner.map.contains_key(&key) {
-            inner.map.insert(key, entry);
+        if let std::collections::hash_map::Entry::Occupied(mut existing) =
+            inner.map.entry(key)
+        {
+            existing.insert(entry);
             inner.touch(key);
             return;
         }

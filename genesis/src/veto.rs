@@ -128,10 +128,10 @@ pub fn can_deploy_sip(proposal_id: &str) -> bool {
 
     let registry = SIP_REGISTRY.lock().expect("sip registry mutex poisoned");
 
-    match registry.statuses.get(proposal_id) {
-        Some(SipStatus::Approved) | Some(SipStatus::Deployed) => true,
-        _ => false,
-    }
+    matches!(
+        registry.statuses.get(proposal_id),
+        Some(SipStatus::Approved) | Some(SipStatus::Deployed)
+    )
 }
 
 pub fn get_sip_status(proposal_id: &str) -> Option<SipStatus> {

@@ -63,7 +63,7 @@ fn main() -> Result<()> {
         println!("Public Key (hex): {public_hex}");
         println!("PLAINTEXT Private Key File: {}", priv_path.display());
         println!("Public Key File: {}", pub_path.display());
-        println!("");
+        println!();
         println!("NEXT STEPS:");
         println!("1. Delete the plaintext private key file after testing");
         println!("2. Update genesis/src/config.rs:");
@@ -88,7 +88,7 @@ fn main() -> Result<()> {
     println!("Public Key (hex): {public_hex}");
     println!("Encrypted Private Key: {}", enc_path.display());
     println!("Public Key File: {}", pub_path.display());
-    println!("");
+    println!();
     println!("NEXT STEPS:");
     println!("1. Backup {key_name}.encrypted.json to secure offline storage");
     println!("2. Update genesis/src/config.rs:");

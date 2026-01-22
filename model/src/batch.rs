@@ -324,7 +324,7 @@ impl VolumeDiscountTracker {
         let mut entry = self
             .user_jobs
             .entry(user_address.to_string())
-            .or_insert_with(VecDeque::new);
+            .or_default();
         entry.push_back(timestamp);
         Self::trim_old_entries(&mut entry, timestamp);
     }
@@ -978,6 +978,7 @@ fn serialize_outputs(outputs: Vec<InferenceOutput>) -> Result<Vec<u8>, BatchErro
     serde_json::to_vec(&outputs).map_err(|err| BatchError::InferenceFailed(err.to_string()))
 }
 
+#[allow(clippy::match_like_matches_macro)]
 fn is_transient_error(err: &InferenceError) -> bool {
     match err {
         InferenceError::InferenceFailed(_)

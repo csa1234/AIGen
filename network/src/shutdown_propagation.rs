@@ -38,7 +38,7 @@ pub trait ShutdownBroadcaster {
 pub async fn broadcast_shutdown(
     command: ShutdownCommand,
     _config: ShutdownPropagationConfig,
-    mut broadcaster: Option<&mut dyn ShutdownBroadcaster>,
+    broadcaster: Option<&mut dyn ShutdownBroadcaster>,
 ) -> Result<(), NetworkError> {
     // Verify CEO signature before broadcasting
     verify_ceo_signature(&command.message_to_sign(), &command.ceo_signature)?;
@@ -56,7 +56,7 @@ pub async fn broadcast_shutdown(
     };
 
     // Broadcast to the network (best-effort) before triggering local shutdown.
-    if let Some(b) = broadcaster.as_deref_mut() {
+    if let Some(b) = broadcaster {
         b.broadcast_shutdown_message(msg.clone());
     }
 

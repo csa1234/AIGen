@@ -157,8 +157,8 @@ impl QuotaTracker {
         self.entries.iter()
             .filter(|entry| {
                 entry.timestamp >= cutoff && (
-                    user_address.map(|addr| entry.user_address.as_ref().map_or(false, |e| e == addr)).unwrap_or(false) ||
-                    ip_address.map(|ip| entry.ip_address.as_ref().map_or(false, |e| e == ip)).unwrap_or(false)
+                    user_address.map(|addr| entry.user_address.as_ref().is_some_and(|e| e == addr)).unwrap_or(false) ||
+                    ip_address.map(|ip| entry.ip_address.as_ref().is_some_and(|e| e == ip)).unwrap_or(false)
                 )
             })
             .count()
@@ -452,7 +452,7 @@ impl TierManager {
                 amount: transaction.amount.value(),
                 timestamp: now,
                 status: PaymentStatus::Confirmed,
-                reference: Some(format!("tx:{}", hex::encode(&transaction.tx_hash.0))),
+                reference: Some(format!("tx:{}", hex::encode(transaction.tx_hash.0))),
             }],
         };
         self.subscriptions

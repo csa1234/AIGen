@@ -69,7 +69,7 @@ fn main() -> Result<()> {
         &encrypted,
         password.as_str(),
     )?);
-    let signing_key = SigningKey::from_bytes(&*secret_bytes);
+    let signing_key = SigningKey::from_bytes(&secret_bytes);
 
     let proposal_hash_bytes = parse_hash_32(&args.proposal_hash)?;
 

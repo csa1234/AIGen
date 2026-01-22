@@ -28,6 +28,7 @@ impl Transaction {
     ///
     /// This initializes a placeholder signature for unsigned transaction creation.
     /// Call `sign()` before submitting a non-CEO transaction to a chain.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         sender: String,
         receiver: String,
@@ -40,8 +41,7 @@ impl Transaction {
     ) -> Result<Self, GenesisError> {
         check_shutdown()?;
 
-        let dummy_signature = Signature::try_from(&[0u8; 64])
-            .map_err(|e| GenesisError::SerializationError(format!("dummy sig: {}", e)))?;
+        let dummy_signature: Signature = Signature::from([0u8; 64]);
 
         let fee = Self::calculate_fee(&sender, &receiver, amount, timestamp, nonce, priority, chain_id);
 
