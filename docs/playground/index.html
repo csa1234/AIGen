@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AIGEN AI Playground</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/11.0.0/marked.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-javascript.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-python.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-bash.min.js"></script>
+</head>
+<body>
+    <div class="app-container">
+        <!-- Header -->
+        <header class="header">
+            <div class="header-left">
+                <div class="logo">
+                    <h1>AIGEN</h1>
+                    <span class="logo-subtitle">AI Playground</span>
+                </div>
+            </div>
+            <div class="header-center">
+                <div class="connection-status">
+                    <span class="status-indicator" id="connectionStatus"></span>
+                    <span class="status-text" id="connectionText">Connecting...</span>
+                </div>
+            </div>
+            <div class="header-right">
+                <div class="quota-display">
+                    <span class="quota-label">Quota:</span>
+                    <span class="quota-value" id="quotaValue">--</span>
+                </div>
+                <button class="settings-btn" id="settingsBtn" aria-label="Settings">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="3"></circle>
+                        <path d="m12 1 1.68 2.32a1 1 0 0 0 .8.48h3.04a1 1 0 0 1 .99 1.18l-1.1 3.86a1 1 0 0 0-.01.27v4.24a1 1 0 0 0 .01.27l1.1 3.86a1 1 0 0 1-.99 1.18h-3.04a1 1 0 0 0-.8.48L12 23l-1.68-2.32a1 1 0 0 0-.8-.48H6.48a1 1 0 0 1-.99-1.18l1.1-3.86a1 1 0 0 0 .01-.27V11.4a1 1 0 0 0-.01-.27L4.5 7.27a1 1 0 0 1 .99-1.18h3.04a1 1 0 0 0 .8-.48L12 1z"></path>
+                    </svg>
+                </button>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <div class="main-content">
+            <!-- Sidebar -->
+            <aside class="sidebar">
+                <div class="sidebar-section">
+                    <h3>Model</h3>
+                    <select class="model-selector" id="modelSelector">
+                        <option value="mistral-7b">Mistral 7B</option>
+                        <option value="llama2-13b">Llama 2 13B</option>
+                        <option value="codegen-16b">CodeGen 16B</option>
+                    </select>
+                </div>
+
+                <div class="sidebar-section">
+                    <h3>Tier</h3>
+                    <select class="tier-selector" id="tierSelector">
+                        <option value="free">Free (10/month)</option>
+                        <option value="basic">Basic (100/month)</option>
+                        <option value="pro">Pro (1000/month)</option>
+                        <option value="unlimited">Unlimited (Pay-per-use)</option>
+                    </select>
+                </div>
+
+                <div class="sidebar-section">
+                    <h3>Connection</h3>
+                    <div class="connection-settings">
+                        <label for="rpcUrl">RPC URL:</label>
+                        <input type="text" id="rpcUrl" value="http://localhost:9944" class="connection-input">
+                        
+                        <label for="wsUrl">WebSocket URL:</label>
+                        <input type="text" id="wsUrl" value="ws://localhost:9944" class="connection-input">
+                    </div>
+                </div>
+
+                <div class="sidebar-section">
+                    <button class="new-chat-btn" id="newChatBtn">New Chat</button>
+                    <button class="export-btn" id="exportBtn">Export Chat</button>
+                </div>
+            </aside>
+
+            <!-- Chat Area -->
+            <div class="chat-area">
+                <div class="chat-messages" id="chatMessages">
+                    <div class="welcome-message">
+                        <h2>Welcome to AIGEN AI Playground</h2>
+                        <p>Start chatting with AI models powered by the AIGEN blockchain. Select a model and tier, then type your message below.</p>
+                        <div class="quick-actions">
+                            <button class="quick-action" data-message="Hello! How can you help me today?">Hello!</button>
+                            <button class="quick-action" data-message="Explain quantum computing in simple terms">Explain quantum computing</button>
+                            <button class="quick-action" data-message="Write a Python function to calculate fibonacci numbers">Write Python code</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="chat-input-container">
+                    <div class="input-controls">
+                        <label class="streaming-toggle">
+                            <input type="checkbox" id="streamingToggle" checked>
+                            <span>Streaming</span>
+                        </label>
+                        <div class="token-counter">
+                            <span id="tokenCount">0</span> tokens
+                        </div>
+                    </div>
+                    <div class="chat-input-wrapper">
+                        <textarea 
+                            id="chatInput" 
+                            placeholder="Type your message here... (Shift+Enter for new line)"
+                            rows="1"
+                            maxlength="4000"
+                        ></textarea>
+                        <button class="send-btn" id="sendBtn" disabled>
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <line x1="22" y1="2" x2="11" y2="13"></line>
+                                <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Settings Modal -->
+    <div class="modal" id="settingsModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Settings</h2>
+                <button class="modal-close" id="modalClose">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="settings-section">
+                    <h3>Connection</h3>
+                    <label for="settingsRpcUrl">RPC URL:</label>
+                    <input type="text" id="settingsRpcUrl" value="http://localhost:9944">
+                    
+                    <label for="settingsWsUrl">WebSocket URL:</label>
+                    <input type="text" id="settingsWsUrl" value="ws://localhost:9944">
+                </div>
+
+                <div class="settings-section">
+                    <h3>Wallet</h3>
+                    <label for="walletAddress">Wallet Address (optional):</label>
+                    <input type="text" id="walletAddress" placeholder="Enter wallet address for authentication">
+                </div>
+
+                <div class="settings-section">
+                    <h3>Model Parameters</h3>
+                    <label for="maxTokens">Max Tokens: <span id="maxTokensValue">2048</span></label>
+                    <input type="range" id="maxTokens" min="128" max="4096" value="2048" step="128">
+                    
+                    <label for="temperature">Temperature: <span id="temperatureValue">0.7</span></label>
+                    <input type="range" id="temperature" min="0" max="2" value="0.7" step="0.1">
+                </div>
+
+                <div class="settings-section">
+                    <h3>Theme</h3>
+                    <label class="theme-toggle">
+                        <input type="checkbox" id="themeToggle">
+                        <span>Dark Mode</span>
+                    </label>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-secondary" id="resetSettingsBtn">Reset to Defaults</button>
+                <button class="btn-primary" id="saveSettingsBtn">Save Settings</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Loading Overlay -->
+    <div class="loading-overlay" id="loadingOverlay">
+        <div class="loading-spinner"></div>
+        <div class="loading-text">Connecting to AIGEN...</div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
