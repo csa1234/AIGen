@@ -29,18 +29,29 @@ pub struct NodeConfiguration {
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct ModelConfig {
     pub cache_dir: PathBuf,
+    pub model_storage_path: PathBuf,
+    pub core_model_id: Option<String>,
+    pub worker_mode: bool,
     pub max_memory_mb: usize,
     pub num_threads: usize,
+    pub download_timeout_secs: u64,
+    pub min_redundancy_nodes: usize,
 }
 
 impl ModelConfig {
     pub fn default_with_data_dir(data_dir: &Path) -> Self {
         Self {
             cache_dir: data_dir.join("model-cache"),
+            model_storage_path: data_dir.join("models"),
+            core_model_id: None,
+            worker_mode: false,
             max_memory_mb: 2048,
             num_threads: 0,
+            download_timeout_secs: 30,
+            min_redundancy_nodes: 5,
         }
     }
 }
@@ -93,8 +104,16 @@ impl NodeConfiguration {
         let mut cfg = cfg
             .try_deserialize::<NodeConfiguration>()
             .with_context(|| format!("failed to deserialize config: {}", path.display()))?;
-        if cfg.model.cache_dir.as_os_str().is_empty() {
-            cfg.model.cache_dir = cfg.data_dir.join("model-cache");
+        if cfg.model.cache_dir.as_os_str().is_empty()
+            || cfg.model.model_storage_path.as_os_str().is_empty()
+        {
+            cfg.derive_model_paths();
+        }
+        if cfg.model.download_timeout_secs == 0 {
+            cfg.model.download_timeout_secs = 30;
+        }
+        if cfg.model.min_redundancy_nodes == 0 {
+            cfg.model.min_redundancy_nodes = 5;
         }
         Ok(cfg)
     }
@@ -126,13 +145,18 @@ impl NodeConfiguration {
         Ok(())
     }
 
+    pub fn derive_model_paths(&mut self) {
+        self.model.cache_dir = self.data_dir.join("model-cache");
+        self.model.model_storage_path = self.data_dir.join("models");
+    }
+
     pub fn merge_with_env(mut self) -> Self {
         if let Ok(v) = std::env::var("AIGEN_NODE_ID") {
             self.node_id = v;
         }
         if let Ok(v) = std::env::var("AIGEN_DATA_DIR") {
             self.data_dir = PathBuf::from(v);
-            self.model.cache_dir = self.data_dir.join("model-cache");
+            self.derive_model_paths();
         }
         if let Ok(v) = std::env::var("AIGEN_LISTEN_ADDR") {
             if let Ok(ma) = v.parse::<Multiaddr>() {
@@ -200,6 +224,16 @@ impl NodeConfiguration {
                 self.model.num_threads = n;
             }
         }
+        if let Ok(v) = std::env::var("AIGEN_CORE_MODEL_ID") {
+            if !v.trim().is_empty() {
+                self.model.core_model_id = Some(v);
+            }
+        }
+        if let Ok(v) = std::env::var("AIGEN_WORKER_MODE") {
+            if let Ok(b) = v.parse::<bool>() {
+                self.model.worker_mode = b;
+            }
+        }
         if let Ok(v) = std::env::var("AIGEN_VERIFICATION_CACHE_CAPACITY") {
             if let Ok(n) = v.parse::<usize>() {
                 self.verification.cache_capacity = n;
@@ -224,14 +258,20 @@ impl NodeConfiguration {
                 }
                 if let Some(v) = &args.data_dir {
                     self.data_dir = v.clone();
-                    self.model.cache_dir = self.data_dir.join("model-cache");
+                    self.derive_model_paths();
+                }
+                if let Some(model) = &args.model {
+                    self.model.core_model_id = Some(model.clone());
+                }
+                if let Some(role) = &args.role {
+                    self.model.worker_mode = role.to_lowercase() == "worker";
                 }
                 self.keypair_path = crate::keypair::default_keypair_path(&self.data_dir);
             }
             crate::cli::Commands::Start(args) => {
                 if let Some(v) = &args.data_dir {
                     self.data_dir = v.clone();
-                    self.model.cache_dir = self.data_dir.join("model-cache");
+                    self.derive_model_paths();
                 }
                 if let Some(v) = &args.listen_addr {
                     if let Ok(ma) = v.parse::<Multiaddr>() {
@@ -272,6 +312,12 @@ impl NodeConfiguration {
                 }
                 if args.disable_rpc {
                     self.rpc.rpc_enabled = false;
+                }
+                if let Some(model) = &args.model {
+                    self.model.core_model_id = Some(model.clone());
+                }
+                if let Some(role) = &args.role {
+                    self.model.worker_mode = role.to_lowercase() == "worker";
                 }
 
                 self.keypair_path = crate::keypair::default_keypair_path(&self.data_dir);
@@ -359,6 +405,22 @@ impl NodeConfiguration {
         if self.verification.epsilon <= 0.0 {
             return Err(anyhow!("verification.epsilon: must be > 0"));
         }
+
+        if self.model.worker_mode && self.model.core_model_id.is_none() {
+            return Err(anyhow!("model.core_model_id: required when worker_mode is enabled"));
+        }
+        if self.model.download_timeout_secs == 0 {
+            return Err(anyhow!("model.download_timeout_secs: must be > 0"));
+        }
+        if self.model.min_redundancy_nodes == 0 {
+            return Err(anyhow!("model.min_redundancy_nodes: must be > 0"));
+        }
+        std::fs::create_dir_all(&self.model.model_storage_path).with_context(|| {
+            format!(
+                "model.model_storage_path: failed to create directory: {}",
+                self.model.model_storage_path.display()
+            )
+        })?;
 
         Ok(())
     }

@@ -112,6 +112,83 @@ Invoke-RestMethod -Uri "http://localhost:9944" -Method POST -ContentType "applic
 
 ---
 
+## Step 4.5: Initialize with AI Model (Optional)
+
+### Register Core AI Model
+
+Before initializing nodes with AI capabilities, register the model metadata:
+
+```powershell
+# Example: Register Mistral-7B model
+# (In production, this would be done via governance/admin RPC)
+# For testing, models are pre-registered in the genesis configuration
+```
+
+### Initialize AI Worker Node
+
+```powershell
+# Initialize node with core AI model
+cargo run -p node --bin node -- init --node-id ai-worker-1 --model mistral-7b --role worker
+
+# Start the AI worker node
+cargo run -p node --bin node -- start
+```
+
+**What happens during startup:**
+1. Node checks if `mistral-7b` exists in model registry
+2. Queries network for model shards
+3. Downloads missing shards (with 30-second timeout)
+4. Verifies shard integrity (SHA-256)
+5. Loads model into memory
+6. Announces shard availability to network
+
+**Expected output:**
+```
+loading core model: mistral-7b
+downloading 4 missing shards for core model
+core model shards downloaded successfully
+loading core model into memory...
+core model loaded successfully: mistral-7b
+core AI model ready for inference
+```
+
+### Initialize Non-Worker Node
+
+```powershell
+# Regular node without AI inference
+cargo run -p node --bin node -- init --node-id full-node-1
+
+# Or specify model but not as worker (lazy loading)
+cargo run -p node --bin node -- init --node-id full-node-2 --model mistral-7b
+```
+
+**Worker vs Non-Worker:**
+- **Worker nodes** (`--role worker`): Require core model on startup, fail if unavailable
+- **Non-worker nodes**: Continue without core model, load on-demand via RPC
+
+### Troubleshooting Model Loading
+
+**Timeout errors:**
+```powershell
+# Increase timeout via environment variable
+$env:AIGEN_MODEL_DOWNLOAD_TIMEOUT_SECS = "60"
+cargo run -p node --bin node -- start
+```
+
+**Missing model metadata:**
+```
+Error: core model 'mistral-7b' not found in registry
+```
+Solution: Register model metadata via admin RPC or genesis configuration
+
+**Insufficient peers:**
+```
+warning: core model redundancy below target (2 < 5)
+```
+Solution: Start more nodes with the same model to increase redundancy
+
+## Step 5: Multi-Node Testnet (Full Experience)
+
 ## Step 5: Multi-Node Testnet (Full Experience)
 
 ### Windows PowerShell Method
@@ -274,6 +351,36 @@ $body = @{jsonrpc="2.0";id=2;method="getPeers";params=@()} | ConvertTo-Json
 $body = @{jsonrpc="2.0";id=3;method="getBlocks";params=@(@{"from":0;"to":10})} | ConvertTo-Json
 
 # Test each method
+Invoke-RestMethod -Uri "http://localhost:9944" -Method POST -ContentType "application/json" -Body $body
+```
+
+### Test AI Inference (If Model Loaded)
+
+```powershell
+# Check if core model is loaded
+$body = @{
+    jsonrpc = "2.0"
+    id = 1
+    method = "getModelInfo"
+    params = @(@{model_id = "mistral-7b"})
+} | ConvertTo-Json -Depth 10
+
+Invoke-RestMethod -Uri "http://localhost:9944" -Method POST -ContentType "application/json" -Body $body
+
+# Submit inference request (requires subscription or payment)
+$body = @{
+    jsonrpc = "2.0"
+    id = 2
+    method = "chatCompletion"
+    params = @{
+        messages = @(
+            @{role = "user"; content = "Hello, AI!"}
+        )
+        model_id = "mistral-7b"
+        stream = $false
+    }
+} | ConvertTo-Json -Depth 10
+
 Invoke-RestMethod -Uri "http://localhost:9944" -Method POST -ContentType "application/json" -Body $body
 ```
 

@@ -144,6 +144,139 @@ async fn async_main() -> Result<()> {
     Ok(())
 }
 
+async fn load_core_model(
+    cfg: &crate::config::NodeConfiguration,
+    registry: Arc<ModelRegistry>,
+    model_sync: Arc<ModelSyncManager>,
+    inference_engine: Arc<InferenceEngine>,
+) -> Result<()> {
+    let Some(core_model_id) = &cfg.model.core_model_id else {
+        println!("no core model specified; skipping model loading");
+        return Ok(());
+    };
+
+    println!("loading core model: {}", core_model_id);
+
+    let model_exists = registry
+        .model_exists(core_model_id)
+        .map_err(|e| anyhow!("registry check failed: {}", e))?;
+
+    if !model_exists {
+        return Err(anyhow!(
+            "core model '{}' not found in registry; register model metadata first",
+            core_model_id
+        ));
+    }
+
+    model_sync
+        .query_model_shards(core_model_id)
+        .await
+        .map_err(|e| anyhow!("shard query failed: {}", e))?;
+
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+    let metadata = registry
+        .get_model(core_model_id)
+        .map_err(|e| anyhow!("failed to get model metadata: {}", e))?;
+    let registered_shards = registry
+        .list_shards(core_model_id)
+        .map_err(|e| anyhow!("failed to list shards: {}", e))?;
+
+    let missing_shards: Vec<u32> = (0..metadata.shard_count)
+        .filter(|idx| !registered_shards.iter().any(|s| s.shard_index == *idx))
+        .collect();
+
+    if !missing_shards.is_empty() {
+        println!(
+            "downloading {} missing shards for core model",
+            missing_shards.len()
+        );
+
+        for shard_idx in &missing_shards {
+            model_sync
+                .request_shard_download(core_model_id.clone(), *shard_idx)
+                .map_err(|e| anyhow!("failed to queue shard download: {}", e))?;
+        }
+
+        let timeout = std::time::Duration::from_secs(cfg.model.download_timeout_secs);
+        let download_result = tokio::time::timeout(timeout, async {
+            loop {
+                model_sync
+                    .process_download_queue()
+                    .await
+                    .map_err(|e| anyhow!("download processing failed: {}", e))?;
+
+                let current_shards = registry
+                    .list_shards(core_model_id)
+                    .map_err(|e| anyhow!("failed to list shards: {}", e))?;
+
+                if current_shards.len() >= metadata.shard_count as usize {
+                    break;
+                }
+
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            }
+            Ok::<(), anyhow::Error>(())
+        })
+        .await;
+
+        match download_result {
+            Ok(Ok(())) => println!("core model shards downloaded successfully"),
+            Ok(Err(e)) => return Err(anyhow!("shard download failed: {}", e)),
+            Err(_) => {
+                return Err(anyhow!(
+                    "core model download timeout after {} seconds",
+                    cfg.model.download_timeout_secs
+                ))
+            }
+        }
+    }
+
+    println!("loading core model into memory...");
+    let load_result =
+        tokio::time::timeout(std::time::Duration::from_secs(30), inference_engine.preload_core_model())
+            .await;
+
+    match load_result {
+        Ok(Ok(Some(_))) => {
+            println!("core model loaded successfully: {}", core_model_id);
+        }
+        Ok(Ok(None)) => {
+            return Err(anyhow!("core model not found after download"));
+        }
+        Ok(Err(e)) => {
+            return Err(anyhow!("model loading failed: {}", e));
+        }
+        Err(_) => {
+            return Err(anyhow!("model loading timeout after 30 seconds"));
+        }
+    }
+
+    model_sync
+        .announce_local_shards()
+        .await
+        .map_err(|e| anyhow!("failed to announce shards: {}", e))?;
+
+    let mut min_replicas = usize::MAX;
+    for idx in 0..metadata.shard_count {
+        let count = registry
+            .get_shard_locations(core_model_id, idx)
+            .map(|locs| locs.len())
+            .unwrap_or(0);
+        if count < min_replicas {
+            min_replicas = count;
+        }
+    }
+    if min_replicas < cfg.model.min_redundancy_nodes {
+        eprintln!(
+            "warning: core model redundancy below target ({} < {})",
+            min_replicas,
+            cfg.model.min_redundancy_nodes
+        );
+    }
+
+    Ok(())
+}
 async fn run_node(
     cfg: crate::config::NodeConfiguration,
     keypair: libp2p::identity::Keypair,
@@ -171,7 +304,7 @@ async fn run_node(
 
     let (publish_tx, publish_rx) = mpsc::channel::<NetworkMessage>(1024);
     let model_registry = Arc::new(ModelRegistry::new());
-    let model_storage = Arc::new(LocalStorage::new(cfg.data_dir.join("models")));
+    let model_storage = Arc::new(LocalStorage::new(cfg.model.model_storage_path.clone()));
     
     // Initialize TierManager and AdManager with configuration
     let tier_manager = Arc::new(TierManager::with_chain_state(
@@ -195,11 +328,6 @@ async fn run_node(
     if let Err(err) = set_inference_verification_config(cfg.verification.clone()) {
         eprintln!("failed to set verification config: {}", err);
     }
-    let preload_engine = inference_engine.clone();
-    // Preload core model inline to avoid Send trait issues
-    if let Err(err) = preload_engine.preload_core_model().await {
-        eprintln!("failed to preload core model: {}", err);
-    }
     let model_reputation = p2p_node.reputation_manager.clone();
     let model_metrics = p2p_node.metrics();
     let (model_request_tx, model_request_rx) = mpsc::channel::<ModelShardRequestEnvelope>(256);
@@ -214,6 +342,8 @@ async fn run_node(
         model_event_tx,
         cfg.node_id.clone(),
     ));
+
+    // networking tasks are spawned below; defer core model loading until after they start
 
     let discount_tracker = model::VolumeDiscountTracker::new(model::VolumeDiscountTracker::default_tiers());
     let batch_queue = Arc::new(model::BatchQueue::new(
@@ -413,6 +543,30 @@ async fn run_node(
             }
         })
     };
+
+    if cfg.model.core_model_id.is_some() {
+        let load_result = load_core_model(
+            &cfg,
+            model_registry.clone(),
+            model_sync.clone(),
+            inference_engine.clone(),
+        )
+        .await;
+
+        match load_result {
+            Ok(()) => {
+                println!("core AI model ready for inference");
+            }
+            Err(e) => {
+                if cfg.model.worker_mode {
+                    return Err(anyhow!("worker node failed to load core model: {}", e));
+                } else {
+                    eprintln!("warning: core model loading failed: {}", e);
+                    eprintln!("node will continue without AI inference capabilities");
+                }
+            }
+        }
+    }
 
     println!("node started; waiting for shutdown");
 

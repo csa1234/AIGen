@@ -36,6 +36,10 @@ pub struct InitArgs {
     /// Overwrite existing config/keypair
     #[arg(long, default_value_t = false)]
     pub force: bool,
+    #[arg(long)]
+    pub model: Option<String>,
+    #[arg(long)]
+    pub role: Option<String>,
 }
 
 #[derive(Parser, Debug, Clone)]
@@ -73,6 +77,10 @@ pub struct StartArgs {
     /// Disable RPC server
     #[arg(long, default_value_t = false)]
     pub disable_rpc: bool,
+    #[arg(long)]
+    pub model: Option<String>,
+    #[arg(long)]
+    pub role: Option<String>,
 }
 
 #[derive(Parser, Debug, Clone)]
