@@ -4,6 +4,7 @@
 
 - [Introduction](#introduction)
 - [Public API Methods](#public-api-methods)
+- [Real-Time AI Inference](#real-time-ai-inference)
 - [CEO API Methods](#ceo-api-methods)
 - [WebSocket Subscriptions](#websocket-subscriptions)
 - [Complete Working Examples](#complete-working-examples)
@@ -222,6 +223,88 @@ curl:
 ```bash
 curl -s -X POST "$RPC" -H 'content-type: application/json' \
   -d '{"jsonrpc":"2.0","id":1,"method":"health","params":[]}'
+```
+
+## Real-Time AI Inference
+
+### chatCompletion
+
+OpenAI-compatible chat completion endpoint for real-time LLM inference.
+
+**Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "chatCompletion",
+  "params": {
+    "messages": [
+      {"role": "system", "content": "You are a helpful assistant."},
+      {"role": "user", "content": "Hello!"}
+    ],
+    "model_id": "mistral-7b",
+    "stream": false,
+    "max_tokens": 1000,
+    "transaction": {
+      "sender": "0x...",
+      "receiver": "0x...",
+      "amount": 1,
+      "payload": "{\"user_address\":\"0x...\",\"model_id\":\"mistral-7b\",\"max_tokens\":1000}",
+      "signature": "0x...",
+      "timestamp": 1234567890,
+      "nonce": 1,
+      "chain_id": 1
+    }
+  },
+  "id": 1
+}
+```
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "id": "chatcmpl-123",
+    "model_id": "mistral-7b",
+    "choices": [{
+      "index": 0,
+      "message": {"role": "assistant", "content": "Hello! How can I help?"},
+      "finish_reason": "stop"
+    }],
+    "usage": {
+      "prompt_tokens": 20,
+      "completion_tokens": 10,
+      "total_tokens": 30
+    },
+    "ad_injected": false
+  },
+  "id": 1
+}
+```
+
+**Pricing:**
+- Subscription users: Deducted from monthly quota
+- Pay-per-use: 1 AIGEN per 1000 tokens
+- Free tier: 10 requests/month with ads
+
+**Streaming:**
+Use `subscribeChatCompletion` WebSocket subscription for streaming responses.
+
+**curl example:**
+```bash
+curl -s -X POST "$RPC" -H 'content-type: application/json' \
+  -d '{
+    "jsonrpc": "2.0",
+    "method": "chatCompletion",
+    "params": {
+      "messages": [
+        {"role": "user", "content": "Explain blockchain in simple terms"}
+      ],
+      "model_id": "mistral-7b",
+      "stream": false
+    },
+    "id": 1
+  }'
 ```
 
 ## CEO API Methods

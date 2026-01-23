@@ -20,7 +20,7 @@ pub use ads::{
 pub use batch::{
     calculate_volume_discount, validate_batch_payment, BatchError, BatchJob, BatchJobInfo,
     BatchJobMetrics, BatchJobStatus, BatchPaymentPayload, BatchPriority, BatchQueue, BatchRequest,
-    BatchWorker, CompletionEstimate, QueueStats, VolumeDiscountTracker,
+    BatchWorker, CompletionEstimate, QueueStats, VolumeDiscountTracker, CHAT_PRICE_PER_1K_TOKENS,
 };
 pub use inference::{
     InferenceEngine, InferenceError, InferenceMetrics, InferenceOutput, InferenceStats,

@@ -158,21 +158,7 @@ async fn run_node(
     let network_metrics = p2p_node.metrics();
     println!("p2p initialized: peer_id={}", local_peer_id);
 
-    let rpc_handle = if cfg.rpc.rpc_enabled {
-        Some(
-            crate::rpc::server::start_rpc_server(
-                blockchain.clone(),
-                block_broadcast_tx.clone(),
-                tx_broadcast_tx.clone(),
-                tx_broadcast_tx.clone(),
-                network_metrics,
-                cfg.rpc.clone(),
-            )
-            .await?,
-        )
-    } else {
-        None
-    };
+    let rpc_handle: Option<jsonrpsee::server::ServerHandle>;
 
     let mut consensus = PoIConsensus::new(chain_state.clone());
     let (consensus_network_tx, consensus_network_rx) =
@@ -216,8 +202,8 @@ async fn run_node(
     let (model_request_tx, model_request_rx) = mpsc::channel::<ModelShardRequestEnvelope>(256);
     let (model_event_tx, _model_event_rx) = mpsc::channel::<NetworkEvent>(256);
     let model_sync = Arc::new(ModelSyncManager::new(
-        model_registry,
-        model_storage,
+        model_registry.clone(),
+        model_storage.clone(),
         model_reputation,
         model_metrics,
         publish_tx.clone(),
@@ -225,6 +211,43 @@ async fn run_node(
         model_event_tx,
         cfg.node_id.clone(),
     ));
+
+    let discount_tracker = model::VolumeDiscountTracker::new(model::VolumeDiscountTracker::default_tiers());
+    let batch_queue = Arc::new(model::BatchQueue::new(
+        tier_manager.clone(),
+        inference_engine.clone(),
+        Some(ad_manager.clone()),
+        chain_state.clone(),
+        discount_tracker,
+    ));
+    let (batch_shutdown_tx, batch_shutdown_rx) = tokio::sync::watch::channel(false);
+    let batch_worker = model::BatchWorker::new(
+        batch_queue.clone(),
+        inference_engine.clone(),
+        batch_shutdown_rx,
+        None,
+    );
+    let batch_worker_handle = batch_worker.start();
+
+    rpc_handle = if cfg.rpc.rpc_enabled {
+        Some(
+            crate::rpc::server::start_rpc_server(
+                blockchain.clone(),
+                block_broadcast_tx.clone(),
+                tx_broadcast_tx.clone(),
+                tx_broadcast_tx.clone(),
+                network_metrics,
+                model_registry.clone(),
+                tier_manager.clone(),
+                batch_queue.clone(),
+                inference_engine.clone(),
+                cfg.rpc.clone(),
+            )
+            .await?,
+        )
+    } else {
+        None
+    };
 
     let (local_shutdown_tx, _) = tokio::sync::broadcast::channel::<()>(4);
     let local_shutdown_rx = local_shutdown_tx.subscribe();
@@ -414,6 +437,7 @@ async fn run_node(
     }
 
     let _ = local_shutdown_tx.send(());
+    let _ = batch_shutdown_tx.send(true);
 
     let join_timeout = std::time::Duration::from_secs(5);
     let mut network_task = network_task;
@@ -430,6 +454,11 @@ async fn run_node(
         eprintln!("p2p task did not exit in time; aborting");
         p2p_task.abort();
         let _ = p2p_task.await;
+    }
+
+    let batch_join = tokio::time::timeout(join_timeout, batch_worker_handle).await;
+    if batch_join.is_err() {
+        eprintln!("batch worker did not exit in time");
     }
 
     println!("node exiting");

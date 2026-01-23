@@ -9,6 +9,7 @@ use crate::config::RpcConfig;
 use crate::rpc::ceo::{CeoRpcMethods, CeoRpcServer};
 use crate::rpc::methods::{PublicRpcServer, RpcMethods};
 use crate::rpc::subscriptions::{RpcSubscriptions, SubscriptionsRpcServer};
+use crate::rpc::model::{ModelRpcMethods, ModelRpcServer};
 
 pub async fn start_rpc_server(
     blockchain: Arc<Mutex<Blockchain>>,
@@ -16,6 +17,10 @@ pub async fn start_rpc_server(
     tx_tx: broadcast::Sender<Transaction>,
     tx_broadcast: broadcast::Sender<Transaction>,
     network_metrics: network::metrics::SharedNetworkMetrics,
+    model_registry: Arc<model::ModelRegistry>,
+    tier_manager: Arc<model::TierManager>,
+    batch_queue: Arc<model::BatchQueue>,
+    inference_engine: Arc<model::InferenceEngine>,
     config: RpcConfig,
 ) -> Result<ServerHandle> {
     let server = ServerBuilder::default()
@@ -25,13 +30,21 @@ pub async fn start_rpc_server(
 
     let addr = server.local_addr()?;
 
-    let public = RpcMethods::new(blockchain.clone(), tx_broadcast, network_metrics);
+    let public = RpcMethods::new(blockchain.clone(), tx_broadcast, network_metrics.clone());
     let ceo = CeoRpcMethods::new(blockchain.clone());
     let subs = RpcSubscriptions::new(block_tx, tx_tx);
+    let model_rpc = ModelRpcMethods::new(
+        blockchain.clone(),
+        model_registry,
+        tier_manager,
+        batch_queue,
+        inference_engine,
+    );
 
     let mut module = public.into_rpc();
     module.merge(ceo.into_rpc())?;
     module.merge(subs.into_rpc())?;
+    module.merge(model_rpc.into_rpc())?;
 
     let handle = server.start(module);
 

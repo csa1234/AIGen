@@ -13,6 +13,22 @@ pub enum RpcError {
     Unauthorized,
     #[error("shutdown active")]
     ShutdownActive,
+    #[error("model not found")]
+    ModelNotFound,
+    #[error("shard not found")]
+    ShardNotFound,
+    #[error("insufficient tier")]
+    InsufficientTier,
+    #[error("quota exceeded")]
+    QuotaExceeded,
+    #[error("batch queue full")]
+    BatchQueueFull,
+    #[error("invalid chat format")]
+    InvalidChatFormat,
+    #[error("payment required")]
+    PaymentRequired,
+    #[error("context length exceeded")]
+    ContextLengthExceeded,
     #[error("invalid params: {0}")]
     InvalidParams(String),
     #[error("internal error: {0}")]
@@ -26,6 +42,14 @@ impl RpcError {
             RpcError::InvalidSignature => 1002,
             RpcError::Unauthorized => 1003,
             RpcError::ShutdownActive => 1004,
+            RpcError::ModelNotFound => 2001,
+            RpcError::ShardNotFound => 2002,
+            RpcError::InsufficientTier => 2003,
+            RpcError::QuotaExceeded => 2004,
+            RpcError::BatchQueueFull => 2005,
+            RpcError::InvalidChatFormat => 2006,
+            RpcError::PaymentRequired => 2007,
+            RpcError::ContextLengthExceeded => 2008,
             RpcError::InvalidParams(_) => -32602,
             RpcError::Internal(_) => -32603,
         }
@@ -287,5 +311,251 @@ impl TransactionResponse {
         let _ = self.sender_public_key;
 
         Ok(tx)
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LoadModelRequest {
+    pub model_id: String,
+    pub user_address: String,
+    pub transaction: TransactionResponse,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LoadModelResponse {
+    pub success: bool,
+    pub message: String,
+    pub model_id: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct GetModelInfoRequest {
+    pub model_id: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct GetShardRequest {
+    pub model_id: String,
+    pub shard_index: u32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SubscribeTierRequest {
+    pub tier: String,
+    pub duration_months: u32,
+    pub transaction: TransactionResponse,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CheckQuotaRequest {
+    pub user_address: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SubmitBatchRequest {
+    pub priority: String,
+    pub model_id: String,
+    pub input_data: String,
+    pub transaction: TransactionResponse,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct GetBatchStatusRequest {
+    pub job_id: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ListUserJobsRequest {
+    pub user_address: String,
+    pub status: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ModelListResponse {
+    pub models: Vec<ModelInfoResponse>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ModelInfoResponse {
+    pub model_id: String,
+    pub name: String,
+    pub version: String,
+    pub total_size: u64,
+    pub shard_count: u32,
+    pub is_core_model: bool,
+    pub minimum_tier: Option<String>,
+    pub is_experimental: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ShardLocationResponse {
+    pub node_id: String,
+    pub backend_type: String,
+    pub location_uri: String,
+    pub last_verified: i64,
+    pub is_healthy: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ShardInfoResponse {
+    pub model_id: String,
+    pub shard_index: u32,
+    pub total_shards: u32,
+    pub size: u64,
+    pub hash: String,
+    pub ipfs_cid: Option<String>,
+    pub http_urls: Vec<String>,
+    pub locations: Vec<ShardLocationResponse>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SubscriptionResponse {
+    pub success: bool,
+    pub user_address: String,
+    pub tier: String,
+    pub expiry_timestamp: i64,
+    pub requests_remaining: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct QuotaResponse {
+    pub user_address: String,
+    pub tier: String,
+    pub requests_used: u64,
+    pub requests_remaining: u64,
+    pub reset_at: i64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct BatchSubmitResponse {
+    pub success: bool,
+    pub job_id: String,
+    pub scheduled_time: i64,
+    pub estimated_completion: i64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct BatchStatusResponse {
+    pub job_id: String,
+    pub status: String,
+    pub priority: String,
+    pub submission_time: i64,
+    pub scheduled_time: i64,
+    pub completion_time: Option<i64>,
+    pub result: Option<String>,
+    pub error_message: Option<String>,
+    pub ad_injected: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct BatchJobListResponse {
+    pub jobs: Vec<BatchStatusResponse>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TierInfoResponse {
+    pub tiers: Vec<TierConfigResponse>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TierConfigResponse {
+    pub tier: String,
+    pub monthly_cost: u64,
+    pub request_limit: u64,
+    pub max_context_size: u32,
+    pub features: Vec<String>,
+}
+
+// Chat message structures
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ChatMessage {
+    pub role: String,        // "system", "user", "assistant"
+    pub content: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ChatCompletionRequest {
+    pub messages: Vec<ChatMessage>,
+    pub model_id: String,
+    pub stream: bool,
+    pub max_tokens: Option<u32>,
+    pub temperature: Option<f32>,
+    pub user_address: Option<String>,
+    pub transaction: Option<TransactionResponse>,  // For pay-per-use
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ChatCompletionResponse {
+    pub id: String,
+    pub model_id: String,
+    pub choices: Vec<ChatChoice>,
+    pub usage: ChatUsage,
+    pub ad_injected: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ChatChoice {
+    pub index: u32,
+    pub message: ChatMessage,
+    pub finish_reason: String,  // "stop", "length", "error"
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ChatUsage {
+    pub prompt_tokens: u32,
+    pub completion_tokens: u32,
+    pub total_tokens: u32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ChatCompletionChunk {
+    pub id: String,
+    pub model_id: String,
+    pub delta: ChatMessage,
+    pub finish_reason: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ChatPaymentPayload {
+    pub user_address: String,
+    pub model_id: String,
+    pub max_tokens: u32,
+}
+
+pub fn parse_tier(s: &str) -> Result<model::SubscriptionTier, RpcError> {
+    let v = s.trim().to_ascii_lowercase();
+    match v.as_str() {
+        "free" => Ok(model::SubscriptionTier::Free),
+        "basic" => Ok(model::SubscriptionTier::Basic),
+        "pro" => Ok(model::SubscriptionTier::Pro),
+        "unlimited" => Ok(model::SubscriptionTier::Unlimited),
+        _ => Err(RpcError::InvalidParams("invalid tier".to_string())),
+    }
+}
+
+pub fn tier_to_string(tier: model::SubscriptionTier) -> String {
+    match tier {
+        model::SubscriptionTier::Free => "Free".to_string(),
+        model::SubscriptionTier::Basic => "Basic".to_string(),
+        model::SubscriptionTier::Pro => "Pro".to_string(),
+        model::SubscriptionTier::Unlimited => "Unlimited".to_string(),
+    }
+}
+
+pub fn parse_batch_priority(s: &str) -> Result<model::BatchPriority, RpcError> {
+    let v = s.trim().to_ascii_lowercase();
+    match v.as_str() {
+        "standard" => Ok(model::BatchPriority::Standard),
+        "batch" => Ok(model::BatchPriority::Batch),
+        "economy" => Ok(model::BatchPriority::Economy),
+        _ => Err(RpcError::InvalidParams("invalid priority".to_string())),
+    }
+}
+
+pub fn batch_priority_to_string(priority: model::BatchPriority) -> String {
+    match priority {
+        model::BatchPriority::Standard => "Standard".to_string(),
+        model::BatchPriority::Batch => "Batch".to_string(),
+        model::BatchPriority::Economy => "Economy".to_string(),
     }
 }

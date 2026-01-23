@@ -29,6 +29,7 @@ const DEFAULT_AVG_PROCESSING_TIME_MS: u64 = 1_000;
 const RETRY_LIMIT: u32 = 3;
 const RETRY_BACKOFF_MS: u64 = 250;
 const CANCELLATION_FEE_BPS: u64 = 500;
+pub const CHAT_PRICE_PER_1K_TOKENS: u64 = 1;  // 1 AIGEN per 1000 tokens
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum BatchPriority {

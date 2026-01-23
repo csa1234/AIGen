@@ -662,6 +662,59 @@ impl TierManager {
         })
     }
 
+    pub fn check_quota_readonly(
+        &self,
+        user_address: &str,
+        now: i64,
+    ) -> Result<RateLimitDecision, TierError> {
+        self.ensure_running()?;
+        let user_address = user_address.to_string();
+        if user_address == CEO_WALLET {
+            return Ok(RateLimitDecision {
+                allowed: true,
+                remaining: u64::MAX,
+                reset_at: now,
+                retry_after_secs: None,
+            });
+        }
+
+        let mut entry = self
+            .subscriptions
+            .get_mut(&user_address)
+            .ok_or(TierError::SubscriptionNotFound)?;
+        let config = self.get_config(entry.tier)?;
+        self.refresh_subscription(&mut entry, config, now)?;
+        if entry.status != SubscriptionStatus::Active {
+            return Err(TierError::SubscriptionInactive);
+        }
+        if now.saturating_sub(entry.last_reset_timestamp) >= config.window_seconds {
+            entry.requests_used = 0;
+            entry.last_reset_timestamp = now;
+        }
+        let remaining = config.request_limit.saturating_sub(entry.requests_used);
+        if remaining == 0 {
+            let reset_at = entry
+                .last_reset_timestamp
+                .saturating_add(config.window_seconds);
+            let retry = reset_at.saturating_sub(now);
+            return Ok(RateLimitDecision {
+                allowed: false,
+                remaining: 0,
+                reset_at,
+                retry_after_secs: Some(retry),
+            });
+        }
+
+        Ok(RateLimitDecision {
+            allowed: true,
+            remaining,
+            reset_at: entry
+                .last_reset_timestamp
+                .saturating_add(config.window_seconds),
+            retry_after_secs: None,
+        })
+    }
+
     pub fn process_renewals(&self, now: i64) -> usize {
         let mut renewed = 0;
         for mut entry in self.subscriptions.iter_mut() {

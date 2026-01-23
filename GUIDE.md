@@ -318,6 +318,82 @@ docker-compose down -v
 
 ---
 
+## Using the Chat API
+
+### With Subscription
+
+```bash
+# Basic chat completion (requires active subscription)
+curl -X POST http://localhost:9944 \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "method": "chatCompletion",
+    "params": {
+      "messages": [
+        {"role": "user", "content": "Hello!"}
+      ],
+      "model_id": "mistral-7b",
+      "stream": false
+    },
+    "id": 1
+  }'
+```
+
+### Pay-Per-Use (No Subscription)
+
+For pay-per-use, you need to create and sign a payment transaction:
+
+1. **Create payment transaction** with chat payload:
+```bash
+# First, create a transaction with the chat payment payload
+# This is a simplified example - see docs/API.md for full details
+```
+
+2. **Include transaction in chatCompletion request**:
+```bash
+curl -X POST http://localhost:9944 \
+  -H "Content-Type: application/json" \
+  -d '{
+  "jsonrpc": "2.0",
+  "method": "chatCompletion",
+  "params": {
+    "messages": [
+      {"role": "system", "content": "You are a helpful assistant."},
+      {"role": "user", "content": "Explain blockchain in simple terms."}
+    ],
+    "model_id": "mistral-7b",
+    "stream": false,
+    "max_tokens": 500,
+    "transaction": {
+      "sender": "0x...",
+      "receiver": "0x...",
+      "amount": 1,
+      "payload": "{\"user_address\":\"0x...\",\"model_id\":\"mistral-7b\",\"max_tokens\":500}",
+      "signature": "0x...",
+      "timestamp": 1234567890,
+      "nonce": 1,
+      "chain_id": 1
+    }
+  },
+  "id": 1
+}'
+```
+
+**Pricing:**
+- **Subscription users**: Deducted from monthly quota
+- **Pay-per-use**: 1 AIGEN per 1000 tokens
+- **Free tier**: 10 requests/month with ads
+
+**Available Models:**
+- `mistral-7b` - General purpose language model
+- `llama2-13b` - Larger language model (requires Pro tier)
+- `codegen-16b` - Code generation model (requires Pro tier)
+
+See `docs/examples/javascript/chat-example.js` and `docs/examples/python/chat_example.py` for SDK examples.
+
+---
+
 ## What You've Accomplished
 
 ✅ **Built a blockchain from source code**  
