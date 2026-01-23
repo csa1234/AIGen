@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AIGEN Admin Dashboard</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/ethers@6.9.0/dist/ethers.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked@11.1.1/marked.min.js"></script>
+</head>
+<body>
+    <!-- Loading Overlay -->
+    <div id="loadingOverlay" class="loading-overlay">
+        <div class="spinner"></div>
+        <p>Loading...</p>
+    </div>
+
+    <!-- Header -->
+    <header class="header">
+        <div class="header-left">
+            <h1 class="logo">AIGEN</h1>
+            <span class="logo-subtitle">Admin Dashboard</span>
+        </div>
+        <div class="header-center">
+            <div class="connection-status" id="connectionStatus">
+                <span class="status-dot"></span>
+                <span class="status-text">Disconnected</span>
+            </div>
+        </div>
+        <div class="header-right">
+            <button id="walletButton" class="btn btn-primary">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M20 12V8H6a2 2 0 0 1-2-2c0-1.1.9-2 2-2h12v4"/>
+                    <path d="M4 6v12c0 1.1.9 2 2 2h14v-4"/>
+                    <path d="M18 12a2 2 0 0 0 0 4h4v-4h-4z"/>
+                </svg>
+                <span>Connect Wallet</span>
+            </button>
+            <button id="settingsButton" class="btn btn-icon" title="Settings">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="3"/>
+                    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+                </svg>
+            </button>
+        </div>
+    </header>
+
+    <!-- Tab Navigation -->
+    <nav class="tab-nav">
+        <button class="tab-btn active" data-tab="explorer">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="3" y="3" width="7" height="7"/>
+                <rect x="14" y="3" width="7" height="7"/>
+                <rect x="14" y="14" width="7" height="7"/>
+                <rect x="3" y="14" width="7" height="7"/>
+            </svg>
+            Blockchain Explorer
+        </button>
+        <button class="tab-btn" data-tab="models">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+                <polyline points="3.27 6.96 12 12.01 20.73 6.96"/>
+                <line x1="12" y1="22.08" x2="12" y2="12"/>
+            </svg>
+            AI Models
+        </button>
+        <button class="tab-btn" data-tab="health">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
+            </svg>
+            Health & Metrics
+        </button>
+        <button class="tab-btn" data-tab="governance">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+                <path d="M2 17l10 5 10-5"/>
+                <path d="M2 12l10 5 10-5"/>
+            </svg>
+            Governance
+        </button>
+    </nav>
+
+    <!-- Main Content -->
+    <main class="main-content">
+        <!-- Blockchain Explorer Tab -->
+        <section id="explorerTab" class="tab-content active">
+            <div class="search-bar">
+                <input type="text" id="searchInput" placeholder="Search by block or transaction hash...">
+                <button id="searchButton" class="btn btn-primary">Search</button>
+            </div>
+
+            <div class="section">
+                <h2>Latest Blocks</h2>
+                <div class="table-container">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Height</th>
+                                <th>Hash</th>
+                                <th>Timestamp</th>
+                                <th>Transactions</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="blocksTableBody">
+                            <tr><td colspan="5" class="loading-cell">Loading blocks...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="pagination">
+                    <button id="prevBlocksBtn" class="btn btn-secondary" disabled>Previous</button>
+                    <span id="blocksPageInfo">Page 1</span>
+                    <button id="nextBlocksBtn" class="btn btn-secondary">Next</button>
+                </div>
+            </div>
+
+            <div class="section">
+                <h2>Transactions</h2>
+                <div class="table-container">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Hash</th>
+                                <th>Sender</th>
+                                <th>Receiver</th>
+                                <th>Amount</th>
+                                <th>Timestamp</th>
+                            </tr>
+                        </thead>
+                        <tbody id="transactionsTableBody">
+                            <tr><td colspan="5" class="loading-cell">Select a block to view transactions</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
+        <!-- AI Models Tab -->
+        <section id="modelsTab" class="tab-content">
+            <div class="section-header">
+                <h2>Model Registry</h2>
+                <button id="initModelBtn" class="btn btn-primary">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="12" y1="5" x2="12" y2="19"/>
+                        <line x1="5" y1="12" x2="19" y2="12"/>
+                    </svg>
+                    Initialize New Model
+                </button>
+            </div>
+            <div class="table-container">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Model ID</th>
+                            <th>Name</th>
+                            <th>Version</th>
+                            <th>Size</th>
+                            <th>Shards</th>
+                            <th>Core</th>
+                            <th>Status</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="modelsTableBody">
+                        <tr><td colspan="8" class="loading-cell">Loading models...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="section">
+                <h2>Model Upgrade Proposals</h2>
+                <div class="table-container">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Proposal ID</th>
+                                <th>Model ID</th>
+                                <th>Versions</th>
+                                <th>Status</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="proposalsTableBody">
+                            <tr><td colspan="5" class="loading-cell">No proposals</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
+        <!-- Health & Metrics Tab -->
+        <section id="healthTab" class="tab-content">
+            <div class="refresh-controls">
+                <label>Refresh Interval:</label>
+                <select id="refreshInterval">
+                    <option value="10">10 seconds</option>
+                    <option value="30" selected>30 seconds</option>
+                    <option value="60">60 seconds</option>
+                    <option value="0">Manual</option>
+                </select>
+                <button id="refreshBtn" class="btn btn-secondary">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M23 4v6h-6"/>
+                        <path d="M1 20v-6h6"/>
+                        <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+                    </svg>
+                    Refresh
+                </button>
+            </div>
+
+            <div class="health-section">
+                <h3>Node Health</h3>
+                <div class="health-cards" id="nodeHealthCards">
+                    <div class="health-card">
+                        <div class="card-icon">🟢</div>
+                        <div class="card-content">
+                            <h4>RPC Status</h4>
+                            <p class="status-text">Checking...</p>
+                        </div>
+                    </div>
+                    <div class="health-card">
+                        <div class="card-icon">🟢</div>
+                        <div class="card-content">
+                            <h4>Peer Count</h4>
+                            <p class="status-text">-</p>
+                        </div>
+                    </div>
+                    <div class="health-card">
+                        <div class="card-icon">🟢</div>
+                        <div class="card-content">
+                            <h4>Block Sync</h4>
+                            <p class="status-text">-</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="health-section">
+                <h3>AI Health</h3>
+                <div class="health-cards" id="aiHealthCards">
+                    <div class="health-card">
+                        <div class="card-icon">🟢</div>
+                        <div class="card-content">
+                            <h4>Inference Service</h4>
+                            <p class="status-text">-</p>
+                        </div>
+                    </div>
+                    <div class="health-card">
+                        <div class="card-icon">🟢</div>
+                        <div class="card-content">
+                            <h4>Model Cache</h4>
+                            <p class="status-text">-</p>
+                        </div>
+                    </div>
+                    <div class="health-card">
+                        <div class="card-icon">🟢</div>
+                        <div class="card-content">
+                            <h4>Batch Processing</h4>
+                            <p class="status-text">-</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="health-section">
+                <h3>Blockchain Health</h3>
+                <div class="health-cards" id="blockchainHealthCards">
+                    <div class="health-card">
+                        <div class="card-icon">🟢</div>
+                        <div class="card-content">
+                            <h4>Chain Height</h4>
+                            <p class="status-text">-</p>
+                        </div>
+                    </div>
+                    <div class="health-card">
+                        <div class="card-icon">🟢</div>
+                        <div class="card-content">
+                            <h4>Finality</h4>
+                            <p class="status-text">-</p>
+                        </div>
+                    </div>
+                    <div class="health-card">
+                        <div class="card-icon">🟢</div>
+                        <div class="card-content">
+                            <h4>Consensus</h4>
+                            <p class="status-text">-</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="charts-section">
+                <div class="chart-container">
+                    <h3>AI Inference Time Trend</h3>
+                    <canvas id="inferenceTimeChart"></canvas>
+                </div>
+                <div class="chart-container">
+                    <h3>Cache Hit Rate</h3>
+                    <canvas id="cacheHitRateChart"></canvas>
+                </div>
+                <div class="chart-container">
+                    <h3>Network Bandwidth</h3>
+                    <canvas id="networkBandwidthChart"></canvas>
+                </div>
+                <div class="chart-container">
+                    <h3>Blockchain Growth</h3>
+                    <canvas id="blockchainGrowthChart"></canvas>
+                </div>
+            </div>
+        </section>
+
+        <!-- Governance Tab -->
+        <section id="governanceTab" class="tab-content">
+            <div class="section">
+                <h2>Governance Proposals</h2>
+                <div class="table-container">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Proposal ID</th>
+                                <th>Type</th>
+                                <th>Description</th>
+                                <th>Status</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="governanceTableBody">
+                            <tr><td colspan="5" class="loading-cell">Loading proposals...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div class="section">
+                <h2>Submit Vote</h2>
+                <form id="voteForm" class="form">
+                    <div class="form-group">
+                        <label for="voteProposalId">Proposal ID</label>
+                        <input type="text" id="voteProposalId" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="voteType">Vote</label>
+                        <select id="voteType" required>
+                            <option value="approve">Approve</option>
+                            <option value="reject">Reject</option>
+                            <option value="abstain">Abstain</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="voteComment">Comment</label>
+                        <textarea id="voteComment" rows="3"></textarea>
+                    </div>
+                    <button type="submit" class="btn btn-primary">Submit Vote</button>
+                </form>
+            </div>
+
+            <div class="section">
+                <h2>SIP Management</h2>
+                <div class="form">
+                    <div class="form-group">
+                        <label for="sipProposalId">SIP Proposal ID</label>
+                        <input type="text" id="sipProposalId">
+                    </div>
+                    <div class="form-actions">
+                        <button id="approveSipBtn" class="btn btn-success">Approve SIP</button>
+                        <button id="vetoSipBtn" class="btn btn-danger">Veto SIP</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="section">
+                <h2>Emergency Shutdown</h2>
+                <form id="shutdownForm" class="form">
+                    <div class="form-group">
+                        <label for="shutdownReason">Reason</label>
+                        <textarea id="shutdownReason" rows="3" required></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label for="shutdownNonce">Nonce</label>
+                        <input type="number" id="shutdownNonce" required>
+                    </div>
+                    <button type="submit" class="btn btn-danger">Submit Shutdown</button>
+                </form>
+            </div>
+        </section>
+    </main>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <p>AIGEN Admin Dashboard v1.0.0</p>
+        <a href="https://github.com/aigen-blockchain" target="_blank">GitHub</a>
+        <a href="README.md">Documentation</a>
+    </footer>
+
+    <!-- Settings Modal -->
+    <div id="settingsModal" class="modal">
+        <div class="modal-overlay"></div>
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Settings</h2>
+                <button class="modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="settingsForm">
+                    <div class="form-group">
+                        <label for="rpcUrl">RPC URL</label>
+                        <input type="text" id="rpcUrl" value="http://localhost:9944">
+                    </div>
+                    <div class="form-group">
+                        <label for="wsUrl">WebSocket URL</label>
+                        <input type="text" id="wsUrl" value="ws://localhost:9944">
+                    </div>
+                    <div class="form-group">
+                        <label for="ceoAddress">CEO Wallet Address</label>
+                        <input type="text" id="ceoAddress" placeholder="0x...">
+                    </div>
+                    <div class="form-group">
+                        <label>Theme</label>
+                        <select id="themeSelect">
+                            <option value="dark">Dark</option>
+                            <option value="light">Light</option>
+                        </select>
+                    </div>
+                    <button type="submit" class="btn btn-primary">Save Settings</button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Initialize Model Modal -->
+    <div id="initModelModal" class="modal">
+        <div class="modal-overlay"></div>
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Initialize New Model</h2>
+                <button class="modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="initModelForm">
+                    <div class="form-group">
+                        <label for="modelId">Model ID</label>
+                        <input type="text" id="modelId" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="modelName">Model Name</label>
+                        <input type="text" id="modelName" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="modelVersion">Version</label>
+                        <input type="text" id="modelVersion" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="totalSize">Total Size (bytes)</label>
+                        <input type="number" id="totalSize" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="shardCount">Shard Count</label>
+                        <input type="number" id="shardCount" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="verificationHashes">Verification Hashes (comma-separated)</label>
+                        <textarea id="verificationHashes" rows="3" required></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" id="isCoreModel"> Core Model
+                        </label>
+                    </div>
+                    <div class="form-group">
+                        <label for="minimumTier">Minimum Tier</label>
+                        <select id="minimumTier">
+                            <option value="1">Tier 1</option>
+                            <option value="2">Tier 2</option>
+                            <option value="3">Tier 3</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" id="isExperimental"> Experimental
+                        </label>
+                    </div>
+                    <button type="submit" class="btn btn-primary">Initialize Model</button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Notification Container -->
+    <div id="notificationContainer" class="notification-container"></div>
+
+    <!-- Scripts -->
+    <script src="wallet.js"></script>
+    <script src="admin-client.js"></script>
+    <script src="charts.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>

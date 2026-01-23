@@ -3,6 +3,9 @@ mod config;
 mod keypair;
 mod rpc;
 
+#[cfg(test)]
+mod chat_completion_test;
+
 use std::path::PathBuf;
 use std::sync::Arc;
 

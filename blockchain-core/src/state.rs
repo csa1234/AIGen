@@ -51,11 +51,37 @@ pub struct BatchJobState {
     pub result_hash: Option<[u8; 32]>,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ModelUpgradeProposalState {
+    pub proposal_id: String,
+    pub model_id: String,
+    pub current_version: String,
+    pub new_version: String,
+    pub description: String,
+    pub submitted_by: String,
+    pub submitted_at: i64,
+    pub status: u8,
+    pub approved_at: Option<i64>,
+    pub rejected_at: Option<i64>,
+    pub rejection_reason: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GovernanceVote {
+    pub proposal_id: String,
+    pub voter_address: String,
+    pub vote: u8,
+    pub comment: Option<String>,
+    pub timestamp: i64,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ChainStateSnapshot {
     pub accounts: BTreeMap<Address, AccountState>,
     pub subscriptions: BTreeMap<Address, SubscriptionState>,
     pub batch_jobs: BTreeMap<String, BatchJobState>,
+    pub model_proposals: BTreeMap<String, ModelUpgradeProposalState>,
+    pub governance_votes: Vec<GovernanceVote>,
 }
 
 #[derive(Debug, Default)]
@@ -63,6 +89,8 @@ pub struct ChainState {
     accounts: RwLock<BTreeMap<Address, AccountState>>,
     subscriptions: RwLock<BTreeMap<Address, SubscriptionState>>,
     batch_jobs: RwLock<BTreeMap<String, BatchJobState>>,
+    model_proposals: RwLock<BTreeMap<String, ModelUpgradeProposalState>>,
+    governance_votes: RwLock<Vec<GovernanceVote>>,
     validator_reward_address: RwLock<Address>,
 }
 
@@ -71,11 +99,15 @@ impl Clone for ChainState {
         let accounts = self.accounts.read().clone();
         let subscriptions = self.subscriptions.read().clone();
         let batch_jobs = self.batch_jobs.read().clone();
+        let model_proposals = self.model_proposals.read().clone();
+        let governance_votes = self.governance_votes.read().clone();
         let validator_reward_address = self.validator_reward_address.read().clone();
         ChainState {
             accounts: RwLock::new(accounts),
             subscriptions: RwLock::new(subscriptions),
             batch_jobs: RwLock::new(batch_jobs),
+            model_proposals: RwLock::new(model_proposals),
+            governance_votes: RwLock::new(governance_votes),
             validator_reward_address: RwLock::new(validator_reward_address),
         }
     }
@@ -87,6 +119,8 @@ impl ChainState {
             accounts: RwLock::new(BTreeMap::new()),
             subscriptions: RwLock::new(BTreeMap::new()),
             batch_jobs: RwLock::new(BTreeMap::new()),
+            model_proposals: RwLock::new(BTreeMap::new()),
+            governance_votes: RwLock::new(Vec::new()),
             validator_reward_address: RwLock::new(CEO_WALLET.to_string()),
         }
     }
@@ -96,6 +130,8 @@ impl ChainState {
             accounts: self.accounts.read().clone(),
             subscriptions: self.subscriptions.read().clone(),
             batch_jobs: self.batch_jobs.read().clone(),
+            model_proposals: self.model_proposals.read().clone(),
+            governance_votes: self.governance_votes.read().clone(),
         }
     }
 
@@ -103,6 +139,8 @@ impl ChainState {
         *self.accounts.write() = snapshot.accounts;
         *self.subscriptions.write() = snapshot.subscriptions;
         *self.batch_jobs.write() = snapshot.batch_jobs;
+        *self.model_proposals.write() = snapshot.model_proposals;
+        *self.governance_votes.write() = snapshot.governance_votes;
     }
 
     pub fn set_validator_reward_address(&self, address: Address) {
@@ -407,5 +445,31 @@ impl ChainState {
         }
 
         leaves[0]
+    }
+
+    pub fn set_model_proposal(&self, proposal_id: String, proposal: ModelUpgradeProposalState) {
+        self.model_proposals.write().insert(proposal_id, proposal);
+    }
+
+    pub fn get_model_proposal(&self, proposal_id: &str) -> Option<ModelUpgradeProposalState> {
+        self.model_proposals.read().get(proposal_id).cloned()
+    }
+
+    pub fn list_pending_model_proposals(&self) -> Vec<ModelUpgradeProposalState> {
+        self.model_proposals.read().values()
+            .filter(|p| p.status == 0)
+            .cloned()
+            .collect()
+    }
+
+    pub fn record_governance_vote(&self, vote: GovernanceVote) {
+        self.governance_votes.write().push(vote);
+    }
+
+    pub fn get_votes_for_proposal(&self, proposal_id: &str) -> Vec<GovernanceVote> {
+        self.governance_votes.read().iter()
+            .filter(|v| v.proposal_id == proposal_id)
+            .cloned()
+            .collect()
     }
 }

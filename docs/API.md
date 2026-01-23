@@ -389,6 +389,205 @@ curl -s -X POST "$RPC" -H 'content-type: application/json' \
   -d '{"jsonrpc":"2.0","id":1,"method":"getSIPStatus","params":["123"]}'
 ```
 
+## Admin Endpoints (CEO-Only)
+
+All admin endpoints require CEO wallet signature verification.
+
+### `getHealth`
+
+Get comprehensive health status of node, AI system, and blockchain.
+
+**Request:**
+```json
+{
+  "signature": "0x...",
+  "timestamp": 1234567890
+}
+```
+
+**Response:**
+```json
+{
+  "node_health": {
+    "status": "healthy",
+    "uptime_seconds": 3600,
+    "peer_count": 10,
+    "memory_usage_mb": 2048,
+    "cpu_usage_percent": 45.2
+  },
+  "ai_health": {
+    "models_loaded": 3,
+    "core_model_loaded": true,
+    "core_model_id": "mistral-7b",
+    "memory_usage_mb": 8192,
+    "cache_hit_rate": 0.85,
+    "average_inference_time_ms": 150
+  },
+  "blockchain_health": {
+    "chain_height": 1000,
+    "latest_block_time": 1234567890,
+    "pending_transactions": 5,
+    "total_supply": 1000000000,
+    "shutdown_active": false
+  }
+}
+```
+
+### `getMetrics`
+
+Get detailed metrics for AI, network, and blockchain components.
+
+**Request:**
+```json
+{
+  "signature": "0x...",
+  "timestamp": 1234567890,
+  "include_ai": true,
+  "include_network": true,
+  "include_blockchain": true
+}
+```
+
+**Response:**
+```json
+{
+  "ai_metrics": {
+    "total_inference_runs": 1000,
+    "total_inference_failures": 5,
+    "cache_hits": 800,
+    "cache_misses": 200,
+    "cache_evictions": 50,
+    "total_models_loaded": 10,
+    "total_model_load_failures": 2,
+    "current_models_loaded": 3,
+    "current_memory_bytes": 8589934592,
+    "total_inference_time_ms": 150000,
+    "average_inference_time_ms": 150
+  },
+  "network_metrics": {
+    "peers_connected": 10,
+    "messages_sent": 5000,
+    "messages_received": 4800,
+    "bytes_sent": 104857600,
+    "bytes_received": 99614720,
+    "model_shards_transferred": 25
+  },
+  "blockchain_metrics": {
+    "total_blocks": 1000,
+    "total_transactions": 5000,
+    "pending_transactions": 5,
+    "total_subscriptions": 100,
+    "total_batch_jobs": 50,
+    "pending_batch_jobs": 3
+  }
+}
+```
+
+### `initNewModel`
+
+Initialize a new AI model in the registry.
+
+**Signature format:**
+```
+init_model:{network_magic}:{timestamp}:{model_id}:{version}:{total_size}:{shard_count}:{verification_hashes_count}:{is_core_model}:{minimum_tier}:{is_experimental}:{name}:{verification_hashes_joined}
+```
+where `verification_hashes_joined` is the concatenation of all hex-encoded 32-byte hashes separated by colons.
+
+**Request:**
+```json
+{
+  "model_id": "gpt-4-turbo",
+  "name": "GPT-4 Turbo",
+  "version": "1.0.0",
+  "total_size": 10737418240,
+  "shard_count": 10,
+  "verification_hashes": ["0x...", "0x..."],
+  "is_core_model": false,
+  "minimum_tier": "pro",
+  "is_experimental": false,
+  "signature": "0x...",
+  "timestamp": 1234567890
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "model_id": "gpt-4-turbo",
+  "message": "model initialized successfully"
+}
+```
+
+### `approveModelUpgrade`
+
+Approve a pending model upgrade proposal.
+
+**Request:**
+```json
+{
+  "proposal_id": "proposal-123",
+  "signature": "0x...",
+  "timestamp": 1234567890
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "proposal_id": "proposal-123",
+  "status": "approved"
+}
+```
+
+### `rejectUpgrade`
+
+Reject a pending model upgrade proposal.
+
+**Request:**
+```json
+{
+  "proposal_id": "proposal-123",
+  "reason": "Security concerns",
+  "signature": "0x...",
+  "timestamp": 1234567890
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "proposal_id": "proposal-123",
+  "status": "rejected"
+}
+```
+
+### `submitGovVote`
+
+Submit a governance vote on a proposal.
+
+**Request:**
+```json
+{
+  "proposal_id": "proposal-123",
+  "vote": "approve",
+  "comment": "This upgrade is necessary",
+  "signature": "0x...",
+  "timestamp": 1234567890
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "proposal_id": "proposal-123",
+  "vote": "approve"
+}
+```
+
 ## WebSocket Subscriptions
 
 WebSocket subscriptions allow real-time updates.

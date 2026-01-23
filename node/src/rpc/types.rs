@@ -169,6 +169,180 @@ pub struct SipStatusResponse {
     pub status: String,
 }
 
+// Admin health and metrics types
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AdminHealthRequest {
+    pub signature: String,
+    pub timestamp: i64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AdminHealthResponse {
+    pub node_health: NodeHealthStats,
+    pub ai_health: AiHealthStats,
+    pub blockchain_health: BlockchainHealthStats,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct NodeHealthStats {
+    pub status: String,
+    pub uptime_seconds: u64,
+    pub peer_count: u64,
+    pub memory_usage_mb: u64,
+    pub cpu_usage_percent: f32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AiHealthStats {
+    pub models_loaded: u64,
+    pub core_model_loaded: bool,
+    pub core_model_id: Option<String>,
+    pub memory_usage_mb: u64,
+    pub cache_hit_rate: f32,
+    pub average_inference_time_ms: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct BlockchainHealthStats {
+    pub chain_height: u64,
+    pub latest_block_time: i64,
+    pub pending_transactions: u64,
+    pub total_supply: u64,
+    pub shutdown_active: bool,
+}
+
+// Metrics types
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct GetMetricsRequest {
+    pub signature: String,
+    pub timestamp: i64,
+    pub include_ai: bool,
+    pub include_network: bool,
+    pub include_blockchain: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct GetMetricsResponse {
+    pub ai_metrics: Option<AiMetricsStats>,
+    pub network_metrics: Option<NetworkMetricsStats>,
+    pub blockchain_metrics: Option<BlockchainMetricsStats>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AiMetricsStats {
+    pub total_inference_runs: u64,
+    pub total_inference_failures: u64,
+    pub cache_hits: u64,
+    pub cache_misses: u64,
+    pub cache_evictions: u64,
+    pub total_models_loaded: u64,
+    pub total_model_load_failures: u64,
+    pub current_models_loaded: u64,
+    pub current_memory_bytes: u64,
+    pub total_inference_time_ms: u64,
+    pub average_inference_time_ms: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct NetworkMetricsStats {
+    pub peers_connected: u64,
+    pub messages_sent: u64,
+    pub messages_received: u64,
+    pub bytes_sent: u64,
+    pub bytes_received: u64,
+    pub model_shards_transferred: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct BlockchainMetricsStats {
+    pub total_blocks: u64,
+    pub total_transactions: u64,
+    pub pending_transactions: u64,
+    pub total_subscriptions: u64,
+    pub total_batch_jobs: u64,
+    pub pending_batch_jobs: u64,
+}
+
+// Model initialization types
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct InitNewModelRequest {
+    pub model_id: String,
+    pub name: String,
+    pub version: String,
+    pub total_size: u64,
+    pub shard_count: u32,
+    pub verification_hashes: Vec<String>,
+    pub is_core_model: bool,
+    pub minimum_tier: Option<String>,
+    pub is_experimental: bool,
+    pub signature: String,
+    pub timestamp: i64,
+}
+
+// The CEO signature for initNewModel must cover all security-critical fields including the exact verification hash contents.
+// Signature format: "init_model:{network_magic}:{timestamp}:{model_id}:{version}:{total_size}:{shard_count}:{verification_hashes_count}:{is_core_model}:{minimum_tier}:{is_experimental}:{name}:{verification_hashes_joined}"
+// where verification_hashes_joined is the concatenation of all hex-encoded 32-byte hashes separated by colons.
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct InitNewModelResponse {
+    pub success: bool,
+    pub model_id: String,
+    pub message: String,
+}
+
+// Model upgrade governance types
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[allow(dead_code)]
+pub struct ModelUpgradeProposal {
+    pub proposal_id: String,
+    pub model_id: String,
+    pub current_version: String,
+    pub new_version: String,
+    pub description: String,
+    pub submitted_by: String,
+    pub submitted_at: i64,
+    pub status: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ApproveModelUpgradeRequest {
+    pub proposal_id: String,
+    pub signature: String,
+    pub timestamp: i64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RejectUpgradeRequest {
+    pub proposal_id: String,
+    pub reason: String,
+    pub signature: String,
+    pub timestamp: i64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ModelUpgradeResponse {
+    pub success: bool,
+    pub proposal_id: String,
+    pub status: String,
+}
+
+// Governance vote types
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SubmitGovVoteRequest {
+    pub proposal_id: String,
+    pub vote: String,
+    pub comment: Option<String>,
+    pub signature: String,
+    pub timestamp: i64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct GovVoteResponse {
+    pub success: bool,
+    pub proposal_id: String,
+    pub vote: String,
+}
+
 pub fn to_hex_block_hash(h: &BlockHash) -> String {
     format!("0x{}", hex::encode(h.0))
 }

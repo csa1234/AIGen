@@ -31,7 +31,14 @@ pub async fn start_rpc_server(
     let addr = server.local_addr()?;
 
     let public = RpcMethods::new(blockchain.clone(), tx_broadcast, network_metrics.clone());
-    let ceo = CeoRpcMethods::new(blockchain.clone());
+    let ceo = CeoRpcMethods::new(
+        blockchain.clone(),
+        model_registry.clone(),
+        inference_engine.clone(),
+        tier_manager.clone(),
+        batch_queue.clone(),
+        network_metrics.clone(),
+    );
     let subs = RpcSubscriptions::new(block_tx, tx_tx);
     let model_rpc = ModelRpcMethods::new(
         blockchain.clone(),

@@ -7,6 +7,7 @@ This guide will help you get started with the AIGEN blockchain AI platform, incl
 - [Prerequisites](#prerequisites)
 - [Quick Start](#quick-start)
 - [Interactive Playground](#interactive-playground)
+- [Admin Dashboard](#admin-dashboard)
 - [Using the JavaScript SDK](#using-the-javascript-sdk)
 - [Using the Python SDK](#using-the-python-sdk)
 - [API Reference](#api-reference)
@@ -93,6 +94,88 @@ python -m http.server 8080
 - **Max Tokens**: Adjust response length (default: 2048)
 - **Temperature**: Control randomness (default: 0.7)
 - **Theme**: Toggle between dark and light modes
+
+## Admin Dashboard
+
+The AIGEN Admin Dashboard provides a comprehensive interface for managing the blockchain network, AI models, health monitoring, and governance operations.
+
+### Accessing the Admin Dashboard
+
+```bash
+# Serve with Python
+cd docs/admin
+python -m http.server 8081
+# Open http://localhost:8081 in browser
+
+# Or use Docker (recommended)
+docker-compose up -d
+# Access admin: http://localhost:8080/admin
+```
+
+### CEO Wallet Setup
+
+1. Install MetaMask browser extension
+2. Import CEO private key (from genesis keypair generation)
+3. Connect wallet to dashboard
+4. Verify CEO address in dashboard settings
+
+### Dashboard Features
+
+#### Blockchain Explorer
+- View latest blocks with pagination
+- Search blocks and transactions by hash
+- Real-time block updates
+
+#### AI Models
+- Initialize new AI models
+- Approve/reject model upgrades
+- View model registry and status
+- Load models on nodes
+
+#### Health & Metrics
+- Real-time node health monitoring
+- AI service health tracking
+- Blockchain health indicators
+- Interactive charts for metrics visualization
+
+#### Governance
+- View governance proposals
+- Submit votes on proposals
+- Approve/veto SIPs
+- Emergency shutdown control
+
+### Common Admin Tasks
+
+#### Initialize a New AI Model
+
+1. Navigate to **AI Models** tab
+2. Click **Initialize New Model**
+3. Fill in model details and sign with CEO wallet
+4. Model appears in registry after approval
+
+#### Monitor Node Health
+
+1. Navigate to **Health & Metrics** tab
+2. View health cards for node, AI, and blockchain status
+3. Monitor charts for trends
+4. Adjust refresh interval as needed
+
+#### Submit a Governance Vote
+
+1. Navigate to **Governance** tab
+2. Enter proposal ID, vote type, and comment
+3. Submit and sign with CEO wallet
+
+### Security Notes
+
+- **CEO Signature Verification**: All admin operations require CEO signature
+- **Wallet Protection**: Never share CEO private key
+- **Secure Connection**: Use HTTPS when accessing dashboard remotely
+- **Verification**: Always verify CEO address before signing requests
+
+### Full Documentation
+
+For detailed documentation, see [docs/admin/README.md](admin/README.md)
 
 ## Using the JavaScript SDK
 
