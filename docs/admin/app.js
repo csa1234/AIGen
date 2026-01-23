@@ -76,6 +76,7 @@ class AdminDashboard {
                 rpcUrl: document.getElementById('rpcUrl').value,
                 wsUrl: document.getElementById('wsUrl').value,
                 ceoAddress: document.getElementById('ceoAddress').value,
+                ceoPrivateKey: document.getElementById('ceoPrivateKey').value,
                 theme: document.getElementById('themeSelect').value
             });
             this.closeModals();
@@ -260,12 +261,12 @@ class AdminDashboard {
         
         tbody.innerHTML = blocks.map(block => `
             <tr>
-                <td>${block.header.number}</td>
-                <td><code class="hash">${this.formatHash(block.header.hash)}</code></td>
+                <td>${block.header.block_height}</td>
+                <td><code class="hash">${this.formatHash(block.block_hash)}</code></td>
                 <td>${this.formatTimestamp(block.header.timestamp)}</td>
                 <td>${block.transactions.length}</td>
                 <td>
-                    <button class="btn btn-sm btn-secondary" onclick="dashboard.loadTransactions('${block.header.hash}')">
+                    <button class="btn btn-sm btn-secondary" onclick="dashboard.loadTransactions('${block.block_hash}')">
                         View
                     </button>
                 </td>
@@ -283,7 +284,7 @@ class AdminDashboard {
         
         tbody.innerHTML = transactions.map(tx => `
             <tr>
-                <td><code class="hash">${this.formatHash(tx.hash)}</code></td>
+                <td><code class="hash">${this.formatHash(tx.tx_hash)}</code></td>
                 <td><code class="hash">${this.formatHash(tx.sender)}</code></td>
                 <td><code class="hash">${this.formatHash(tx.receiver)}</code></td>
                 <td>${this.formatAmount(tx.amount)}</td>
@@ -311,15 +312,15 @@ class AdminDashboard {
         
         tbody.innerHTML = models.map(model => `
             <tr>
-                <td><code class="hash">${this.formatHash(model.id)}</code></td>
+                <td><code class="hash">${this.formatHash(model.model_id)}</code></td>
                 <td>${model.name}</td>
                 <td>${model.version}</td>
-                <td>${this.formatBytes(model.totalSize)}</td>
-                <td>${model.shardCount}</td>
-                <td>${model.isCoreModel ? '✓' : '-'}</td>
+                <td>${this.formatBytes(model.total_size)}</td>
+                <td>${model.shard_count}</td>
+                <td>${model.is_core_model ? '✓' : '-'}</td>
                 <td><span class="status-badge status-${this.getModelStatus(model)}">${this.getModelStatus(model)}</span></td>
                 <td>
-                    <button class="btn btn-sm btn-primary" onclick="dashboard.loadModelOnNode('${model.id}')">
+                    <button class="btn btn-sm btn-primary" onclick="dashboard.loadModelOnNode('${model.model_id}')" title="Load model requires signed transaction. Use CLI for complex transaction signing." disabled>
                         Load
                     </button>
                 </td>
@@ -374,11 +375,29 @@ class AdminDashboard {
     }
 
     async loadModelOnNode(modelId) {
+        const ceoPrivateKey = localStorage.getItem('ceoPrivateKey');
+        if (!ceoPrivateKey) {
+            this.showNotification('Load model requires CEO private key. Please configure it in settings.', 'error');
+            return;
+        }
+
         try {
-            await this.rpcClient.loadModel(modelId);
-            this.showNotification('Model loading initiated', 'success');
+            this.showLoading(true);
+
+            // Get user address from wallet or prompt
+            const userAddress = await this.walletManager.getAddress();
+            if (!userAddress) {
+                throw new Error('No wallet connected');
+            }
+
+            // For now, loadModel requires a signed transaction
+            // This is complex to implement in browser without full transaction signing
+            // Show message that this feature needs additional implementation
+            this.showNotification('Load model requires signed transaction. This feature is under development.', 'warning');
         } catch (error) {
             this.showNotification(`Failed to load model: ${error.message}`, 'error');
+        } finally {
+            this.showLoading(false);
         }
     }
 
@@ -498,22 +517,22 @@ class AdminDashboard {
             }
         };
         
-        if (health.node) {
-            updateCard('nodeHealthCards', 0, 'RPC Status', health.node.rpcStatus || '-', health.node.rpcStatus === 'connected' ? 'healthy' : 'error');
-            updateCard('nodeHealthCards', 1, 'Peer Count', health.node.peerCount || '-', 'healthy');
-            updateCard('nodeHealthCards', 2, 'Block Sync', health.node.syncStatus || '-', 'healthy');
+        if (health.node_health) {
+            updateCard('nodeHealthCards', 0, 'RPC Status', health.node_health.status, 'healthy');
+            updateCard('nodeHealthCards', 1, 'Peer Count', health.node_health.peer_count, 'healthy');
+            updateCard('nodeHealthCards', 2, 'Memory Usage', `${health.node_health.memory_usage_mb} MB`, 'healthy');
         }
         
-        if (health.ai) {
-            updateCard('aiHealthCards', 0, 'Inference Service', health.ai.inferenceStatus || '-', health.ai.inferenceStatus === 'active' ? 'healthy' : 'warning');
-            updateCard('aiHealthCards', 1, 'Model Cache', health.ai.cacheStatus || '-', 'healthy');
-            updateCard('aiHealthCards', 2, 'Batch Processing', health.ai.batchStatus || '-', 'healthy');
+        if (health.ai_health) {
+            updateCard('aiHealthCards', 0, 'Inference Service', health.ai_health.core_model_loaded ? 'Active' : 'Inactive', health.ai_health.core_model_loaded ? 'healthy' : 'warning');
+            updateCard('aiHealthCards', 1, 'Cache Hit Rate', `${(health.ai_health.cache_hit_rate * 100).toFixed(1)}%`, 'healthy');
+            updateCard('aiHealthCards', 2, 'Memory Usage', `${health.ai_health.memory_usage_mb} MB`, 'healthy');
         }
         
-        if (health.blockchain) {
-            updateCard('blockchainHealthCards', 0, 'Chain Height', health.blockchain.height || '-', 'healthy');
-            updateCard('blockchainHealthCards', 1, 'Finality', health.blockchain.finality || '-', 'healthy');
-            updateCard('blockchainHealthCards', 2, 'Consensus', health.blockchain.consensus || '-', 'healthy');
+        if (health.blockchain_health) {
+            updateCard('blockchainHealthCards', 0, 'Chain Height', health.blockchain_health.chain_height, 'healthy');
+            updateCard('blockchainHealthCards', 1, 'Pending Transactions', health.blockchain_health.pending_transactions, 'healthy');
+            updateCard('blockchainHealthCards', 2, 'Shutdown Active', health.blockchain_health.shutdown_active ? 'Yes' : 'No', health.blockchain_health.shutdown_active ? 'error' : 'healthy');
         }
     }
 
@@ -537,8 +556,9 @@ class AdminDashboard {
 
     async loadGovernanceProposals() {
         try {
-            const proposals = await this.rpcClient.call('governance_listProposals', []);
-            this.renderGovernanceTable(proposals);
+            // Governance listing RPC not implemented on server
+            // Show message in table
+            this.renderGovernanceTable(null);
         } catch (error) {
             this.showNotification(`Failed to load proposals: ${error.message}`, 'error');
         }
@@ -548,7 +568,7 @@ class AdminDashboard {
         const tbody = document.getElementById('governanceTableBody');
         
         if (!proposals || proposals.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="5" class="loading-cell">No governance proposals</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="5" class="loading-cell">Governance listing RPC not available. Use CLI for governance operations.</td></tr>';
             return;
         }
         
@@ -657,7 +677,11 @@ class AdminDashboard {
             const nonce = parseInt(document.getElementById('shutdownNonce').value);
             const timestamp = Math.floor(Date.now() / 1000);
             
-            const message = `admin_shutdown:${timestamp}:${reason}:${nonce}`;
+            const { message } = this.rpcClient.formatAdminMessage('shutdown', {
+                nonce,
+                reason
+            });
+            
             const signature = await this.rpcClient.signMessage(message);
             
             await this.rpcClient.submitShutdown(timestamp, reason, nonce, signature);
@@ -675,6 +699,7 @@ class AdminDashboard {
         document.getElementById('rpcUrl').value = this.settings.rpcUrl;
         document.getElementById('wsUrl').value = this.settings.wsUrl;
         document.getElementById('ceoAddress').value = this.settings.ceoAddress || '';
+        document.getElementById('ceoPrivateKey').value = this.settings.ceoPrivateKey || '';
         document.getElementById('themeSelect').value = this.settings.theme;
         document.getElementById('settingsModal').classList.add('active');
     }

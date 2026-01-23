@@ -126,19 +126,50 @@ class AdminRPCClient {
     }
 
     async signMessage(message) {
-        if (!window.ethereum) {
-            throw new Error('No Web3 wallet detected');
+        // Use ed25519 signing with CEO private key from localStorage
+        const ceoPrivateKey = localStorage.getItem('ceoPrivateKey');
+        if (!ceoPrivateKey) {
+            throw new Error('CEO private key not configured. Please add it in settings.');
         }
-        
-        try {
-            const signature = await window.ethereum.request({
-                method: 'personal_sign',
-                params: [message, await this.getWalletAddress()]
-            });
-            return signature;
-        } catch (error) {
-            throw new Error(`Signing failed: ${error.message}`);
+
+        // Check if tweetnacl is available
+        if (typeof nacl === 'undefined') {
+            throw new Error('tweetnacl library not loaded. Please include tweetnacl-js for ed25519 signing.');
         }
+
+        // Convert message to UTF-8 bytes
+        const encoder = new TextEncoder();
+        const messageBytes = encoder.encode(message);
+
+        // Decode hex private key to bytes
+        const privateKeyBytes = this.hexToBytes(ceoPrivateKey);
+        if (privateKeyBytes.length !== 64) {
+            throw new Error('CEO private key must be 64 bytes (seed + public key)');
+        }
+
+        // Create key pair from private key seed (first 32 bytes)
+        const keyPair = nacl.sign.keyPair.fromSeed(privateKeyBytes.slice(0, 32));
+
+        // Sign the message
+        const signature = nacl.sign.detached(messageBytes, keyPair.secretKey);
+
+        // Return 64-byte signature as hex string
+        return this.bytesToHex(signature);
+    }
+
+    hexToBytes(hex) {
+        hex = hex.replace(/^0x/, '');
+        const bytes = new Uint8Array(hex.length / 2);
+        for (let i = 0; i < bytes.length; i++) {
+            bytes[i] = parseInt(hex.substr(i * 2, 2), 16);
+        }
+        return bytes;
+    }
+
+    bytesToHex(bytes) {
+        return Array.from(bytes)
+            .map(b => b.toString(16).padStart(2, '0'))
+            .join('');
     }
 
     async getWalletAddress() {
@@ -164,24 +195,36 @@ class AdminRPCClient {
         return address.toLowerCase() === storedCeoAddress.toLowerCase();
     }
 
-    async getBlock(blockHash) {
-        return this.callHttp('chain_getBlock', [blockHash]);
+    async getBlock(blockHeight = null, blockHash = null) {
+        if (blockHeight === null && blockHash === null) {
+            throw new Error('Must provide either blockHeight or blockHash');
+        }
+        return this.callHttp('getBlock', [{ block_height: blockHeight, block_hash: blockHash }]);
     }
 
     async getTransaction(txHash) {
-        return this.callHttp('chain_getTransaction', [txHash]);
+        // Note: There's no direct getTransaction RPC, need to get block and search
+        // For now, return error - this needs to be implemented differently
+        throw new Error('getTransaction not available via RPC. Use getBlock and search transactions.');
     }
 
     async getChainInfo() {
-        return this.callHttp('chain_getInfo', []);
+        return this.callHttp('getChainInfo', []);
     }
 
     async getLatestBlocks(count = 10) {
-        return this.callHttp('chain_getLatestBlocks', [count]);
+        // Use getChainInfo to get latest height, then fetch blocks
+        const chainInfo = await this.getChainInfo();
+        const blocks = [];
+        for (let i = 0; i < count && chainInfo.height >= i; i++) {
+            const block = await this.getBlock(chainInfo.height - i);
+            if (block) blocks.push(block);
+        }
+        return blocks;
     }
 
-    async getPendingTransactions() {
-        return this.callHttp('chain_getPendingTransactions', []);
+    async getPendingTransactions(limit = 50) {
+        return this.callHttp('getPendingTransactions', [limit]);
     }
 
     async getHealth(signature, timestamp) {
@@ -198,46 +241,65 @@ class AdminRPCClient {
         }]);
     }
 
-    async listModels() {
-        return this.callHttp('model_listModels', []);
+    async listModels(userAddress = null) {
+        return this.callHttp('listModels', [userAddress]);
     }
 
     async getModelInfo(modelId) {
-        return this.callHttp('model_getInfo', [modelId]);
+        return this.callHttp('getModelInfo', [{ model_id: modelId }]);
     }
 
     async initNewModel(request, signature) {
         return this.callHttp('initNewModel', [{ ...request, signature }]);
     }
 
-    async loadModel(modelId) {
-        return this.callHttp('model_load', [modelId]);
+    async loadModel(modelId, userAddress, transaction) {
+        return this.callHttp('loadModel', [{
+            model_id: modelId,
+            user_address: userAddress,
+            transaction: transaction
+        }]);
     }
 
     async approveModelUpgrade(proposalId, signature, timestamp) {
-        return this.callHttp('approveModelUpgrade', [{ proposalId, signature, timestamp }]);
+        return this.callHttp('approveModelUpgrade', [{
+            proposal_id: proposalId,
+            signature: signature,
+            timestamp: timestamp
+        }]);
     }
 
     async rejectUpgrade(proposalId, reason, signature, timestamp) {
-        return this.callHttp('rejectUpgrade', [{ proposalId, reason, signature, timestamp }]);
+        return this.callHttp('rejectUpgrade', [{
+            proposal_id: proposalId,
+            reason: reason,
+            signature: signature,
+            timestamp: timestamp
+        }]);
     }
 
     async submitGovVote(proposalId, vote, comment, signature, timestamp) {
         return this.callHttp('submitGovVote', [{
-            proposalId,
-            vote,
-            comment,
-            signature,
-            timestamp
+            proposal_id: proposalId,
+            vote: vote,
+            comment: comment,
+            signature: signature,
+            timestamp: timestamp
         }]);
     }
 
     async approveSIP(proposalId, signature) {
-        return this.callHttp('approveSIP', [{ proposalId, signature }]);
+        return this.callHttp('approveSIP', [{
+            proposal_id: proposalId,
+            signature: signature
+        }]);
     }
 
     async vetoSIP(proposalId, signature) {
-        return this.callHttp('vetoSIP', [{ proposalId, signature }]);
+        return this.callHttp('vetoSIP', [{
+            proposal_id: proposalId,
+            signature: signature
+        }]);
     }
 
     async getSIPStatus(proposalId) {
@@ -246,24 +308,68 @@ class AdminRPCClient {
 
     async submitShutdown(timestamp, reason, nonce, signature) {
         return this.callHttp('submitShutdown', [{
-            timestamp,
-            reason,
-            nonce,
-            signature
+            timestamp: timestamp,
+            reason: reason,
+            nonce: nonce,
+            signature: signature
         }]);
     }
 
     formatAdminMessage(action, params = {}) {
         const networkMagic = 0x41494745;
         const timestamp = Math.floor(Date.now() / 1000);
-        
-        let message = `admin_${action}:${networkMagic}:${timestamp}`;
-        
-        Object.entries(params).forEach(([key, value]) => {
-            message += `:${key}=${value}`;
-        });
-        
-        return { message, timestamp };
+
+        // Exact message formats as defined in node/src/rpc/ceo.rs
+        switch (action) {
+            case 'shutdown':
+                return {
+                    message: `shutdown:${networkMagic}:${timestamp}:${params.nonce}:${params.reason}`,
+                    timestamp
+                };
+            case 'health':
+                return {
+                    message: `admin_health:${networkMagic}:${timestamp}`,
+                    timestamp
+                };
+            case 'metrics':
+                return {
+                    message: `get_metrics:${networkMagic}:${timestamp}`,
+                    timestamp
+                };
+            case 'initNewModel':
+                const hashesStr = params.verification_hashes.join(':');
+                return {
+                    message: `init_model:${networkMagic}:${timestamp}:${params.model_id}:${params.version}:${params.totalSize}:${params.shardCount}:${params.verification_hashes.length}:${params.isCoreModel}:${params.minimumTier || ''}:${params.isExperimental}:${params.name}:${hashesStr}`,
+                    timestamp
+                };
+            case 'approveModelUpgrade':
+                return {
+                    message: `approve_upgrade:${networkMagic}:${timestamp}:${params.proposalId}`,
+                    timestamp
+                };
+            case 'rejectUpgrade':
+                return {
+                    message: `reject_upgrade:${networkMagic}:${timestamp}:${params.proposalId}:${params.reason}`,
+                    timestamp
+                };
+            case 'submitGovVote':
+                return {
+                    message: `gov_vote:${networkMagic}:${timestamp}:${params.proposalId}:${params.vote}`,
+                    timestamp
+                };
+            case 'approveSIP':
+                return {
+                    message: `approve_sip:${networkMagic}:${params.proposalId}`,
+                    timestamp
+                };
+            case 'vetoSIP':
+                return {
+                    message: `veto_sip:${networkMagic}:${params.proposalId}`,
+                    timestamp
+                };
+            default:
+                throw new Error(`Unknown admin action: ${action}`);
+        }
     }
 
     parseRpcError(error) {

@@ -354,30 +354,30 @@ class ChartManager {
     }
 
     updateCharts(metricsData) {
-        if (metricsData.ai) {
-            if (metricsData.ai.inferenceTime !== undefined) {
-                this.updateInferenceTimeChart(metricsData.ai.inferenceTime);
+        if (metricsData.ai_metrics) {
+            if (metricsData.ai_metrics.avg_inference_time_ms !== undefined) {
+                this.updateInferenceTimeChart(metricsData.ai_metrics.avg_inference_time_ms);
             }
             
-            if (metricsData.ai.cacheHits !== undefined && metricsData.ai.cacheMisses !== undefined) {
-                this.updateCacheHitRateChart(metricsData.ai.cacheHits, metricsData.ai.cacheMisses);
+            if (metricsData.ai_metrics.cache_hits !== undefined && metricsData.ai_metrics.cache_misses !== undefined) {
+                this.updateCacheHitRateChart(metricsData.ai_metrics.cache_hits, metricsData.ai_metrics.cache_misses);
             }
         }
 
-        if (metricsData.network) {
-            if (metricsData.network.bytesSent !== undefined && metricsData.network.bytesReceived !== undefined) {
+        if (metricsData.network_metrics) {
+            if (metricsData.network_metrics.bytes_sent !== undefined && metricsData.network_metrics.bytes_received !== undefined) {
                 this.updateNetworkBandwidthChart(
-                    metricsData.network.bytesSent / 1024 / 1024,
-                    metricsData.network.bytesReceived / 1024 / 1024
+                    metricsData.network_metrics.bytes_sent / 1024 / 1024,
+                    metricsData.network_metrics.bytes_received / 1024 / 1024
                 );
             }
         }
 
-        if (metricsData.blockchain) {
-            if (metricsData.blockchain.totalBlocks !== undefined && metricsData.blockchain.totalTransactions !== undefined) {
+        if (metricsData.blockchain_metrics) {
+            if (metricsData.blockchain_metrics.total_blocks !== undefined && metricsData.blockchain_metrics.total_transactions !== undefined) {
                 this.updateBlockchainGrowthChart(
-                    metricsData.blockchain.totalBlocks,
-                    metricsData.blockchain.totalTransactions
+                    metricsData.blockchain_metrics.total_blocks,
+                    metricsData.blockchain_metrics.total_transactions
                 );
             }
         }

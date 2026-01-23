@@ -108,10 +108,14 @@ class WalletManager {
         }
 
         try {
-            const signature = await window.ethereum.request({
-                method: 'personal_sign',
-                params: [message, this.address]
-            });
+            // Convert message to UTF-8 bytes
+            const encoder = new TextEncoder();
+            const messageBytes = encoder.encode(message);
+
+            // Sign using ed25519 (requires CEO private key)
+            // Note: This requires the CEO private key to be available
+            // In a real implementation, this would be done server-side or using a hardware wallet
+            const signature = await this.signEd25519(messageBytes);
 
             return signature;
         } catch (error) {
@@ -120,6 +124,49 @@ class WalletManager {
             }
             throw new Error(`Signing failed: ${error.message}`);
         }
+    }
+
+    async signEd25519(messageBytes) {
+        // Check if tweetnacl is available
+        if (typeof nacl === 'undefined') {
+            throw new Error('tweetnacl library not loaded. Please include tweetnacl-js for ed25519 signing.');
+        }
+
+        // Get CEO private key from localStorage or prompt user
+        const ceoPrivateKey = localStorage.getItem('ceoPrivateKey');
+        if (!ceoPrivateKey) {
+            throw new Error('CEO private key not available. Please configure CEO private key in settings.');
+        }
+
+        // Decode hex private key to bytes
+        const privateKeyBytes = this.hexToBytes(ceoPrivateKey);
+        if (privateKeyBytes.length !== 64) {
+            throw new Error('CEO private key must be 64 bytes (seed + public key)');
+        }
+
+        // Create key pair from private key seed (first 32 bytes)
+        const keyPair = nacl.sign.keyPair.fromSeed(privateKeyBytes.slice(0, 32));
+
+        // Sign the message
+        const signature = nacl.sign.detached(messageBytes, keyPair.secretKey);
+
+        // Return 64-byte signature as hex string
+        return this.bytesToHex(signature);
+    }
+
+    hexToBytes(hex) {
+        hex = hex.replace(/^0x/, '');
+        const bytes = new Uint8Array(hex.length / 2);
+        for (let i = 0; i < bytes.length; i++) {
+            bytes[i] = parseInt(hex.substr(i * 2, 2), 16);
+        }
+        return bytes;
+    }
+
+    bytesToHex(bytes) {
+        return Array.from(bytes)
+            .map(b => b.toString(16).padStart(2, '0'))
+            .join('');
     }
 
     async signTypedData(domain, types, value) {
