@@ -422,3 +422,70 @@ async fn shutdown_prevents_operations() {
 
     reset_shutdown_for_tests();
 }
+
+#[tokio::test]
+async fn shard_discovery_roundtrip_query_and_announce() {
+    let (manager, mut publish_rx, _request_rx, _event_rx, registry, _storage, _rep, _m) =
+        setup_manager();
+    let data = vec![1u8, 1];
+    let hashes = register_model(&registry, "model-i", &[data.clone()], false);
+    let shard = build_shard("model-i", 0, 1, hashes[0], data.len() as u64);
+    registry.register_shard(shard).expect("register");
+    manager.query_model_shards("model-i").await.expect("query");
+    let qmsg = publish_rx.recv().await.expect("query msg");
+    assert!(matches!(qmsg, network::NetworkMessage::ModelQuery { .. }));
+    manager.handle_model_query("model-i").await.expect("handle");
+    let amsg = publish_rx.recv().await.expect("announce msg");
+    assert!(matches!(
+        amsg,
+        network::NetworkMessage::ModelAnnouncement { .. }
+    ));
+}
+
+#[tokio::test]
+async fn redundancy_target_met() {
+    let (manager, _pub_rx, _req_rx, _ev_rx, registry, _storage, _rep, _m) = setup_manager();
+    let data = vec![2u8, 2, 2];
+    let hashes = register_model(&registry, "model-j", &[data.clone()], false);
+    let shard = build_shard("model-j", 0, 1, hashes[0], data.len() as u64);
+    registry.register_shard(shard).expect("register");
+    for n in 0..3 {
+        registry
+            .register_shard_location(
+                "model-j",
+                0,
+                model::ShardLocation {
+                    node_id: format!("node-{}", n),
+                    backend_type: "local".to_string(),
+                    location_uri: format!("local://node-{}", n),
+                    last_verified: 0,
+                    is_healthy: true,
+                },
+            )
+            .expect("loc");
+    }
+    let under = manager.check_redundancy_levels().await.expect("levels");
+    assert!(under.is_empty());
+}
+
+#[tokio::test]
+async fn verify_downloaded_shard_integrity_and_persist() {
+    let (manager, _pub_rx, _req_rx, _ev_rx, registry, storage, _rep, _m) = setup_manager();
+    let data = vec![3u8, 3, 3, 3];
+    let hashes = register_model(&registry, "model-k", &[data.clone()], false);
+    let response = ModelShardResponse {
+        model_id: "model-k".to_string(),
+        shard_index: 0,
+        total_shards: 1,
+        data: data.clone(),
+        hash: hashes[0],
+        size: data.len() as u64,
+    };
+    manager
+        .verify_downloaded_shard(&response)
+        .await
+        .expect("verify");
+    let shard = registry.get_shard("model-k", 0).expect("shard");
+    let path = storage.shard_path(&shard);
+    assert!(tokio::fs::metadata(&path).await.is_ok());
+}

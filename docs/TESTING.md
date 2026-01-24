@@ -294,7 +294,6 @@ Suggested testing scenarios:
 ## Testing Workflow Diagram
 
 ```mermaid
-sequenceDiagram
     participant Dev as Developer
     participant Build as Cargo Build
     participant Test as Cargo Test
@@ -313,3 +312,45 @@ sequenceDiagram
     Dev->>RPC: curl getChainInfo
     RPC-->>Dev: Chain status
 ```
+
+## Test Categories
+
+- Unit tests: crate-level modules
+- Integration tests: cross-crate interactions (tests/ directory)
+- End-to-end tests: complete flows (node init, model loading, inference)
+- Network tests: P2P model distribution and events
+
+## Running Tests
+
+```bash
+cargo test --workspace
+cargo test -p model
+cargo test -p network
+cargo test -p consensus
+cargo test --test ai_node_integration_test
+```
+
+## Test Environment Setup
+
+- ONNX Runtime: set ORT_DYLIB_PATH to onnxruntime DLL path
+- Large shard tests: set AIGEN_RUN_LARGE_SHARD_TEST=1 to enable full shard flows
+- Temporary directories: tests use std::env::temp_dir(), cleaned automatically
+
+## Test Patterns
+
+- Async tests: #[tokio::test]
+- Shutdown tests: reset_shutdown_for_tests() and emergency_shutdown()
+- Test harnesses: reusable setup for registry/storage/engine
+- Temporary files: helper functions generating identity ONNX models
+
+## Troubleshooting Tests
+
+- ONNX Runtime not found: download manually and set environment variable
+- Disk space errors: skip large file operations or increase free space
+- Timeout errors: increase test timeout or use multi_thread flavor
+
+## CI/CD Integration
+
+- Run cargo test --workspace in CI
+- Cache ORT runtime downloads to speed up execution
+- Collect test artifacts and logs for debugging

@@ -314,6 +314,108 @@ curl -s -X POST "$RPC" -H 'content-type: application/json' \
   }'
 ```
 
+## Model Management API
+
+### listModels
+
+- Returns array of registered models
+
+```bash
+curl -s -X POST "$RPC" -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"listModels","params":[]}'
+```
+
+### getModelInfo(model_id)
+
+```bash
+curl -s -X POST "$RPC" -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":2,"method":"getModelInfo","params":[{"model_id":"mistral-7b"}]}'
+```
+
+### loadModel(model_id)
+
+```bash
+curl -s -X POST "$RPC" -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":3,"method":"loadModel","params":[{"model_id":"llama2-13b"}]}'
+```
+
+### getShard(model_id, shard_index)
+
+```bash
+curl -s -X POST "$RPC" -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":4,"method":"getShard","params":[{"model_id":"mistral-7b","shard_index":0}]}'
+```
+
+## Tier Management API
+
+### subscribeTier(transaction)
+
+```bash
+curl -s -X POST "$RPC" -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"subscribeTier","params":[{"sender":"0x...","receiver":"0x...","amount":400,"timestamp":1730000000,"nonce":1,"priority":false,"chain_id":1,"payload":"{\"tier\":\"pro\",\"duration_months\":1,\"user_address\":\"0x...\"}"}]}'
+```
+
+### checkQuota()
+
+```bash
+curl -s -X POST "$RPC" -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":2,"method":"checkQuota","params":[]}'
+```
+
+### getTierInfo()
+
+```bash
+curl -s -X POST "$RPC" -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":3,"method":"getTierInfo","params":[]}'
+```
+
+## Batch Processing API
+
+### submitBatchRequest(transaction)
+
+```bash
+curl -s -X POST "$RPC" -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"submitBatchRequest","params":[{"sender":"0x...","receiver":"0x...","amount":10,"timestamp":1730000000,"nonce":1,"chain_id":1,"payload":"{\"user_address\":\"0x...\",\"model_id\":\"mistral-7b\",\"input_data\":[{\"input\":\"Hello\"}],\"priority\":\"standard\"}"}]}'
+```
+
+### getBatchStatus(jobId)
+
+```bash
+curl -s -X POST "$RPC" -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":2,"method":"getBatchStatus","params":[{"job_id":"batch-123"}]}'
+```
+
+## Tier-Based Inference Examples
+
+### Free Tier with Ads
+
+```bash
+curl -s -X POST "$RPC" -H 'content-type: application/json' \
+  -d '{
+    "jsonrpc":"2.0","id":1,"method":"chatCompletion",
+    "params":{"messages":[{"role":"user","content":"Hello"}],"model_id":"mistral-7b","stream":false}
+  }'
+```
+
+### Subscription Quota Error
+
+```json
+{"error":{"code":2004,"message":"Monthly quota exceeded"}}
+```
+
+### Pay-per-Use Transaction
+
+```bash
+curl -s -X POST "$RPC" -H 'content-type: application/json' \
+  -d '{
+    "jsonrpc":"2.0","id":2,"method":"chatCompletion",
+    "params":{
+      "messages":[{"role":"user","content":"Translate: Hello"}],
+      "model_id":"mistral-7b",
+      "transaction":{"sender":"0x...","receiver":"0x...","amount":1,"timestamp":1730000000,"nonce":1,"chain_id":1}
+    }
+  }'
+```
 ## CEO API Methods
 
 ⚠️ **Security warning**: CEO methods must require **CEO signature verification** (Ed25519). Never expose these endpoints publicly without strict network controls.

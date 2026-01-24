@@ -11,6 +11,7 @@ use model::{
     set_global_inference_engine, InferenceEngine, InferenceTensor, LocalStorage, ModelMetadata,
     ModelRegistry, StorageBackend,
 };
+use ed25519_dalek::Signer;
 use prost::Message;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -85,6 +86,226 @@ async fn test_inference_verification_failure() {
     assert!(!ok);
 }
 
+#[tokio::test]
+async fn verification_with_multiple_models_and_determinism() {
+    let engine = setup_engine().await;
+    let input = InferenceTensor {
+        name: "input".to_string(),
+        shape: vec![1],
+        data: vec![0.5],
+    };
+    let out1 = engine
+        .run_inference(MODEL_ID, vec![input.clone()], CEO_WALLET)
+        .await
+        .expect("infer1");
+    let out2 = engine
+        .run_inference(MODEL_ID, vec![input.clone()], CEO_WALLET)
+        .await
+        .expect("infer2");
+    assert_eq!(out1.len(), out2.len());
+    assert_eq!(out1[0].data, out2[0].data);
+    let ib = bincode::serialize(&vec![input]).unwrap();
+    let ob = bincode::serialize(&out1).unwrap();
+    let meta = ComputationMetadata {
+        rows: 0,
+        cols: 0,
+        inner: 0,
+        iterations: 0,
+        model_id: MODEL_ID.to_string(),
+        compression_method: CompressionMethod::None,
+        original_size: 0,
+    };
+    let ok = verify_inference(&ib, &ob, &meta).unwrap();
+    assert!(ok);
+}
+
+#[tokio::test]
+async fn verification_cache_reuse_on_same_input() {
+    let _ = setup_engine().await;
+    let input = InferenceTensor {
+        name: "input".to_string(),
+        shape: vec![1],
+        data: vec![0.75],
+    };
+    let ib = bincode::serialize(&vec![input.clone()]).unwrap();
+    let engine = setup_engine().await;
+    let out = engine
+        .run_inference(MODEL_ID, vec![input.clone()], CEO_WALLET)
+        .await
+        .unwrap();
+    let ob = bincode::serialize(&out).unwrap();
+    let meta = ComputationMetadata {
+        rows: 0,
+        cols: 0,
+        inner: 0,
+        iterations: 0,
+        model_id: MODEL_ID.to_string(),
+        compression_method: CompressionMethod::None,
+        original_size: 0,
+    };
+    let ok1 = verify_inference(&ib, &ob, &meta).unwrap();
+    let ok2 = verify_inference(&ib, &ob, &meta).unwrap();
+    assert!(ok1 && ok2);
+}
+
+#[tokio::test]
+async fn verification_timeout_handling() {
+    let _ = setup_engine().await;
+    let _ = set_inference_verification_config(InferenceVerificationConfig {
+        cache_capacity: 16,
+        epsilon: 1e-6,
+        timeout_ms: 1,
+    });
+    let input = InferenceTensor {
+        name: "input".to_string(),
+        shape: vec![1],
+        data: vec![0.1],
+    };
+    let ib = bincode::serialize(&vec![input.clone()]).unwrap();
+    let engine = setup_engine().await;
+    let out = engine
+        .run_inference(MODEL_ID, vec![input.clone()], CEO_WALLET)
+        .await
+        .unwrap();
+    let ob = bincode::serialize(&out).unwrap();
+    let meta = ComputationMetadata {
+        rows: 0,
+        cols: 0,
+        inner: 0,
+        iterations: 0,
+        model_id: MODEL_ID.to_string(),
+        compression_method: CompressionMethod::None,
+        original_size: 0,
+    };
+    let res = consensus::poi::verify_inference(&ib, &ob, &meta);
+    match res {
+        Err(consensus::poi::ConsensusError::Timeout) | Ok(_) => {}
+        other => panic!("unexpected result: {:?}", other),
+    }
+}
+
+#[tokio::test]
+async fn verification_during_shutdown() {
+    let _ = setup_engine().await;
+    let cmd = build_shutdown_command("consensus verification");
+    genesis::emergency_shutdown(cmd).expect("shutdown");
+    let input = InferenceTensor {
+        name: "input".to_string(),
+        shape: vec![1],
+        data: vec![0.2],
+    };
+    let ib = bincode::serialize(&vec![input.clone()]).unwrap();
+    let ob = bincode::serialize(&vec![model::InferenceOutput {
+        name: "output".to_string(),
+        shape: vec![1],
+        data: vec![0.2],
+    }])
+    .unwrap();
+    let meta = ComputationMetadata {
+        rows: 0,
+        cols: 0,
+        inner: 0,
+        iterations: 0,
+        model_id: MODEL_ID.to_string(),
+        compression_method: CompressionMethod::None,
+        original_size: 0,
+    };
+    let res = consensus::poi::verify_inference(&ib, &ob, &meta);
+    assert!(matches!(
+        res,
+        Err(consensus::poi::ConsensusError::ShutdownActive)
+    ));
+    reset_shutdown_for_tests();
+}
+
+fn build_shutdown_command(reason: &str) -> genesis::types::ShutdownCommand {
+    let timestamp = 42;
+    let nonce = 7;
+    let network_magic = genesis::GenesisConfig::default().network_magic;
+    let message = format!(
+        "shutdown:{}:{}:{}:{}",
+        network_magic, timestamp, nonce, reason
+    );
+    let signing_key = ed25519_dalek::SigningKey::from_bytes(&[
+        0x9d, 0x61, 0xb1, 0x9d, 0xef, 0xfd, 0x5a, 0x60, 0xba, 0x84, 0x4a, 0xf4, 0x92, 0xec, 0x2c,
+        0xc4, 0x44, 0x49, 0xc5, 0x69, 0x7b, 0x32, 0x69, 0x19, 0x70, 0x3b, 0xac, 0x03, 0x1c, 0xae,
+        0x7f, 0x60,
+    ]);
+    let signature = signing_key.sign(message.as_bytes());
+    genesis::types::ShutdownCommand {
+        timestamp,
+        reason: reason.to_string(),
+        ceo_signature: genesis::types::CeoSignature(signature),
+        nonce,
+        network_magic,
+    }
+}
+#[test]
+fn matrix_multiplication_verification() {
+    reset_shutdown_for_tests();
+    let rows = 2;
+    let cols = 2;
+    let inner = 2;
+    let a = vec![1.0f32, 2.0, 3.0, 4.0];
+    let b = vec![5.0f32, 6.0, 7.0, 8.0];
+    let out = vec![19.0f32, 22.0, 43.0, 50.0];
+    let input_bytes = bincode::serialize(&(a.clone(), b.clone())).unwrap();
+    let output_bytes = bincode::serialize(&out).unwrap();
+    let meta = ComputationMetadata {
+        rows,
+        cols,
+        inner,
+        iterations: 0,
+        model_id: "mm".to_string(),
+        compression_method: CompressionMethod::None,
+        original_size: output_bytes.len(),
+    };
+    let work_hash = blockchain_core::hash_data(b"work");
+    let ok = consensus::poi::verify_matrix_multiplication(
+        &input_bytes,
+        &output_bytes,
+        &meta,
+        &work_hash,
+    )
+    .unwrap();
+    assert!(ok);
+}
+
+#[test]
+fn gradient_descent_verification_with_compression() {
+    reset_shutdown_for_tests();
+    let loss_before = 10.0f32;
+    let loss_after = 5.0f32;
+    let grad_len = 8u32;
+    let input = bincode::serialize(&(loss_before, loss_after, grad_len)).unwrap();
+    let gradients = vec![0.1f32; grad_len as usize];
+    let comp8 = consensus::poi::compress_gradients(&gradients);
+    let meta8 = ComputationMetadata {
+        rows: 0,
+        cols: 0,
+        inner: 0,
+        iterations: 0,
+        model_id: "gd".to_string(),
+        compression_method: CompressionMethod::Quantize8Bit,
+        original_size: 1024,
+    };
+    let ok8 =
+        consensus::poi::verify_gradient_descent(&input, &comp8, &meta8).expect("verify 8-bit");
+    assert!(ok8);
+    let comp4 = consensus::poi::compress_gradients_4bit(&gradients);
+    let meta4 = ComputationMetadata {
+        rows: 0,
+        cols: 0,
+        inner: 0,
+        iterations: 0,
+        model_id: "gd".to_string(),
+        compression_method: CompressionMethod::Quantize4Bit,
+        original_size: 1024,
+    };
+    let ok4 =
+        consensus::poi::verify_gradient_descent(&input, &comp4, &meta4).expect("verify 4-bit");
+    assert!(ok4);
+}
 async fn setup_engine() -> Arc<InferenceEngine> {
     ENGINE_INIT
         .get_or_init(|| async {

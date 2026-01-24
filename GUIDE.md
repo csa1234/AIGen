@@ -187,6 +187,144 @@ warning: core model redundancy below target (2 < 5)
 ```
 Solution: Start more nodes with the same model to increase redundancy
 
+## AI Model Management
+
+### Model Registry Operations
+
+```powershell
+# List models
+$body = @{jsonrpc="2.0";id=1;method="listModels";params=@()} | ConvertTo-Json
+Invoke-RestMethod -Uri "http://localhost:9944" -Method POST -ContentType "application/json" -Body $body
+
+# Get model info
+$body = @{jsonrpc="2.0";id=2;method="getModelInfo";params=@(@{model_id="mistral-7b"})} | ConvertTo-Json
+Invoke-RestMethod -Uri "http://localhost:9944" -Method POST -ContentType "application/json" -Body $body
+
+# Load model
+$body = @{jsonrpc="2.0";id=3;method="loadModel";params=@(@{model_id="llama2-13b"})} | ConvertTo-Json
+Invoke-RestMethod -Uri "http://localhost:9944" -Method POST -ContentType "application/json" -Body $body
+```
+
+```bash
+# curl examples
+curl -s -X POST http://localhost:9944 -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"listModels","params":[]}'
+
+curl -s -X POST http://localhost:9944 -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":2,"method":"getModelInfo","params":[{"model_id":"mistral-7b"}]}'
+
+curl -s -X POST http://localhost:9944 -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":3,"method":"loadModel","params":[{"model_id":"llama2-13b"}]}'
+```
+
+### Shard Management
+
+- Check shard availability by listing shard locations for a model
+- Verify redundancy target by ensuring each shard has at least 3 locations
+
+### Model Switching
+
+- Unload old model if necessary and load new core model
+- Restart worker nodes when changing core models to ensure preload
+
+## Subscription Tier Management
+
+### Purchase Subscription
+
+```powershell
+$payload = @{ tier="pro"; duration_months=1; user_address="0x..." } | ConvertTo-Json
+$tx = @{
+  sender="0x..."; receiver="0x..."; amount=400;
+  timestamp=1730000000; nonce=1; priority=$false; chain_id=1;
+  payload= $payload
+} | ConvertTo-Json -Depth 10
+$body = @{jsonrpc="2.0";id=1;method="subscribeTier";params=@($tx)} | ConvertTo-Json -Depth 12
+Invoke-RestMethod -Uri "http://localhost:9944" -Method POST -ContentType "application/json" -Body $body
+```
+
+```bash
+curl -s -X POST http://localhost:9944 -H 'content-type: application/json' \
+  -d '{
+    "jsonrpc":"2.0","id":1,"method":"subscribeTier","params":[
+      {"sender":"0x...","receiver":"0x...","amount":400,"timestamp":1730000000,"nonce":1,"priority":false,"chain_id":1,
+       "payload":"{\"tier\":\"pro\",\"duration_months\":1,\"user_address\":\"0x...\"}"}
+    ]}'
+```
+
+### Check Quota
+
+```powershell
+$body = @{jsonrpc="2.0";id=2;method="checkQuota";params=@()} | ConvertTo-Json
+Invoke-RestMethod -Uri "http://localhost:9944" -Method POST -ContentType "application/json" -Body $body
+```
+
+### Tier Comparison
+
+- Free: 10 requests/month, ads, basic models, 1K context
+- Basic: 100/month, 50 AIGEN, no ads, basic models, 4K context
+- Pro: 1000/month, 400 AIGEN, no ads, all models, 16K context
+- Unlimited: pay-per-use (1 AIGEN/1K tokens), volume discounts, all models, 32K context
+
+## Batch Processing
+
+### Submit Batch Job
+
+```powershell
+$payload = @{ user_address="0x..."; model_id="mistral-7b"; input_data=@( @{input="Hello"} ); priority="standard" } | ConvertTo-Json -Depth 10
+$tx = @{ sender="0x..."; receiver="0x..."; amount=10; timestamp=1730000000; nonce=1; chain_id=1; payload=$payload } | ConvertTo-Json -Depth 12
+$body = @{jsonrpc="2.0";id=1;method="submitBatchRequest";params=@($tx)} | ConvertTo-Json -Depth 12
+Invoke-RestMethod -Uri "http://localhost:9944" -Method POST -ContentType "application/json" -Body $body
+```
+
+```bash
+curl -s -X POST http://localhost:9944 -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"submitBatchRequest","params":[{"sender":"0x...","receiver":"0x...","amount":10,"timestamp":1730000000,"nonce":1,"chain_id":1,"payload":"{\"user_address\":\"0x...\",\"model_id\":\"mistral-7b\",\"input_data\":[{\"input\":\"Hello\"}],\"priority\":\"standard\"}"}]}'
+```
+
+### Get Batch Status
+
+```powershell
+$body = @{jsonrpc="2.0";id=2;method="getBatchStatus";params=@(@{job_id="batch-123"})} | ConvertTo-Json
+Invoke-RestMethod -Uri "http://localhost:9944" -Method POST -ContentType "application/json" -Body $body
+```
+
+### Pricing
+
+- Standard: 10 AIGEN (immediate)
+- Batch: 5 AIGEN (24-hour delay)
+- Economy: 3 AIGEN (72-hour delay)
+
+## Troubleshooting AI Operations
+
+- Model loading failures: increase timeout, register metadata, ensure peers
+- Inference errors: check quota, ensure model loaded, verify shutdown not active
+- Batch job failures: validate payment, check scheduling windows
+
+## Running Tests
+
+```powershell
+# Unit tests
+cargo test -p model
+
+# Integration tests
+cargo test --test ai_node_integration_test
+
+# All tests
+cargo test --workspace
+```
+
+### Test Environment Variables
+
+- AIGEN_RUN_LARGE_SHARD_TEST
+- ORT_DYLIB_PATH
+
+## Testing AI Features
+
+- Model loading: verify core model loads on startup
+- Inference: submit chat request and validate response
+- Tier transitions: purchase subscription and verify quota
+- Batch processing: submit batch job and check status
+
 ## Step 5: Multi-Node Testnet (Full Experience)
 
 ## Step 5: Multi-Node Testnet (Full Experience)
