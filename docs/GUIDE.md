@@ -5,6 +5,7 @@ This guide will help you get started with the AIGEN blockchain AI platform, incl
 ## Table of Contents
 
 - [Prerequisites](#prerequisites)
+- [Windows 11 Specific Setup](#windows-11-specific-setup)
 - [Quick Start](#quick-start)
 - [Interactive Playground](#interactive-playground)
 - [Admin Dashboard](#admin-dashboard)
@@ -22,6 +23,129 @@ Before you begin, ensure you have the following installed:
 - **Node.js** (16 or later) for JavaScript examples
 - **Python** (3.8 or later) for Python examples
 - **Git** for cloning the repository
+
+## Windows 11 Specific Setup
+
+For Windows 11 users with JAN AI AI model deployment, follow these enhanced requirements:
+
+### Enhanced System Requirements for Windows 11
+- **RAM:** 16GB minimum (32GB recommended for AI model loading)
+- **Storage:** 50GB free disk space (20GB for project + 30GB for AI models)
+- **GPU:** NVIDIA GPU with CUDA support (recommended but not required)
+- **OS:** Windows 11 with latest updates
+
+### Additional Windows 11 Prerequisites
+1. **Visual Studio Build Tools** - Required for some Rust crates
+2. **WSL2** - For better Linux compatibility (recommended)
+3. **Docker Desktop** with WSL2 integration
+
+### Windows 11 Installation Steps
+
+```powershell
+# Install Visual Studio Build Tools (run as Administrator)
+# Download from: https://visualstudio.microsoft.com/visual-cpp-build-tools/
+# Select "C++ build tools" during installation
+
+# Install WSL2 (recommended)
+wsl --install
+# This will install WSL2 and Ubuntu by default
+
+# Enable Windows features for Docker
+dism.exe /online /enable-feature /featurename:Microsoft-Windows-Subsystem-Linux /all /norestart
+dism.exe /online /enable-feature /featurename:VirtualMachinePlatform /all /norestart
+
+# Restart your computer after these changes
+
+# Install development tools using winget
+winget install Rustlang.Rust.MSVC
+winget install Git.Git
+winget install Docker.DockerDesktop
+winget install Microsoft.VisualStudioCode
+
+# Configure Docker Desktop for WSL2
+# Open Docker Desktop → Settings → Resources → WSL Integration
+# Enable "Use WSL 2 based engine"
+# Enable integration with your WSL distributions
+```
+
+### JAN AI Model Integration for Windows 11
+
+```powershell
+# Clone the repository
+git clone <repository-url>
+cd AIGEN
+
+# Create models directory for your JAN AI model
+mkdir -p models
+
+# Place your JAN AI model files in the models directory
+# Ensure your model is in a compatible format (ONNX, Safetensors, etc.)
+
+# Build the project with Windows optimizations
+cargo build --release
+
+# Initialize node with JAN AI model as worker
+cargo run -p node --bin node -- init --node-id jan-worker-1 --model jan-model --role worker
+
+# Start the node
+cargo run -p node --bin node -- start
+```
+
+### Windows 11 Performance Optimization
+
+1. **Docker Settings:**
+   - Allocate 8GB+ RAM to Docker
+   - Increase CPU allocation
+   - Use WSL2 backend for better performance
+
+2. **Windows Defender Exclusions:**
+   - Add AIGEN project folder to exclusions
+   - Exclude Docker containers from real-time scanning
+
+3. **GPU Acceleration (if available):**
+   - Install NVIDIA CUDA Toolkit
+   - Configure Docker Desktop to access GPU
+   - Ensure model loading uses GPU
+
+### Test JAN AI Model on Windows 11
+
+```powershell
+# Test the RPC API
+$body = @{
+    jsonrpc = "2.0"
+    id = 1
+    method = "getChainInfo"
+    params = @()
+} | ConvertTo-Json -Depth 10
+
+Invoke-RestMethod -Uri "http://localhost:9944" -Method POST -ContentType "application/json" -Body $body
+
+# Test JAN AI model availability
+$body = @{
+    jsonrpc = "2.0"
+    id = 2
+    method = "getModelInfo"
+    params = @(@{model_id = "jan-model"})
+} | ConvertTo-Json -Depth 10
+
+Invoke-RestMethod -Uri "http://localhost:9944" -Method POST -ContentType "application/json" -Body $body
+
+# Test chat completion with JAN AI model
+$body = @{
+    jsonrpc = "2.0"
+    id = 3
+    method = "chatCompletion"
+    params = @{
+        messages = @(
+            @{role = "user"; content = "Hello JAN AI model!"}
+        )
+        model_id = "jan-model"
+        stream = $false
+    }
+} | ConvertTo-Json -Depth 10
+
+Invoke-RestMethod -Uri "http://localhost:9944" -Method POST -ContentType "application/json" -Body $body
+```
 
 ## Quick Start
 

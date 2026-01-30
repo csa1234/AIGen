@@ -258,4 +258,4 @@ This repository is the canonical reference implementation of the AIGEN Genesis c
   - logs (redact secrets)
   - config snippets (redact secrets)
 - Contributing guidelines: not yet formalized.
-- License: see repository license files.
+- License: Cesar Saguier Antebi

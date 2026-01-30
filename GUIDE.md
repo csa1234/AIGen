@@ -35,6 +35,175 @@ docker info
 
 ---
 
+## Windows 11 Specific Deployment Guide
+
+### Enhanced System Requirements for Windows 11
+- **RAM:** 16GB minimum (32GB recommended for AI model loading)
+- **Storage:** 50GB free disk space (20GB for project + 30GB for AI models)
+- **GPU:** NVIDIA GPU with CUDA support (recommended but not required)
+- **OS:** Windows 11 with latest updates
+
+### Windows 11 Prerequisites
+1. **Visual Studio Build Tools** - Required for some Rust crates
+2. **WSL2** - For better Linux compatibility (recommended)
+
+### Step 1.1: Install Windows-Specific Prerequisites
+
+```powershell
+# Install Visual Studio Build Tools (run as Administrator)
+# Download from: https://visualstudio.microsoft.com/visual-cpp-build-tools/
+# Select "C++ build tools" during installation
+
+# Install WSL2 (recommended)
+wsl --install
+# This will install WSL2 and Ubuntu by default
+
+# Enable Windows features for Docker
+dism.exe /online /enable-feature /featurename:Microsoft-Windows-Subsystem-Linux /all /norestart
+dism.exe /online /enable-feature /featurename:VirtualMachinePlatform /all /norestart
+
+# Restart your computer after these changes
+```
+
+### Step 1.2: Install Development Tools via Winget
+
+```powershell
+# Install Rust, Git, and Docker using winget (run PowerShell as Administrator)
+winget install Rustlang.Rust.MSVC
+winget install Git.Git
+winget install Docker.DockerDesktop
+
+# Verify installations
+rustc --version
+cargo --version
+git --version
+docker --version
+```
+
+### Step 1.3: Configure Docker for Windows
+
+1. **Start Docker Desktop** after installation
+2. **Enable WSL2 integration:**
+   - Open Docker Desktop settings
+   - Go to Resources → WSL Integration
+   - Enable "Use WSL 2 based engine"
+   - Enable integration with your WSL distributions
+
+### JAN AI Model Integration
+
+Since you have a JAN AI AI model, follow these additional steps:
+
+```powershell
+# Create models directory if it doesn't exist
+mkdir -p models
+
+# Place your JAN AI model files in the models directory
+# Ensure your model is in a compatible format (ONNX, Safetensors, etc.)
+
+# Register the JAN AI model in the system
+# This requires modifying the genesis configuration or using admin RPC
+```
+
+### Initialize Node with JAN AI Model
+
+```powershell
+# Initialize node with JAN AI model as worker
+cargo run -p node --bin node -- init --node-id jan-worker-1 --model jan-model --role worker
+
+# Start the node
+cargo run -p node --bin node -- start
+```
+
+### Windows-Specific Troubleshooting
+
+#### Common Issues and Solutions
+
+1. **Build Errors with Visual Studio:**
+```powershell
+# Clean and rebuild
+cargo clean
+cargo build --release
+
+# If still failing, check for missing C++ tools
+# Install Visual Studio 2022 Community with C++ development tools
+```
+
+2. **Docker Issues on Windows:**
+```powershell
+# Reset Docker to factory defaults
+# Open Docker Desktop → Settings → Reset → Reset to factory defaults
+
+# Check Docker is running
+docker info
+docker version
+```
+
+3. **Memory Issues with Large Models:**
+```powershell
+# Increase virtual memory if needed
+# Go to System Properties → Advanced → Performance Settings → Advanced → Virtual Memory → Change
+
+# Set custom page file size (recommend 1.5x your RAM)
+```
+
+#### Performance Optimization for Windows
+
+1. **Enable GPU Acceleration (if available):**
+   - Install NVIDIA CUDA Toolkit
+   - Ensure Docker Desktop can access GPU
+   - Configure model loading to use GPU
+
+2. **Optimize Docker Settings:**
+   - Allocate more RAM to Docker (recommended 8GB+)
+   - Increase CPU allocation
+   - Use WSL2 backend for better performance
+
+3. **Windows Defender Exclusions:**
+   - Add your AIGEN project folder to Windows Defender exclusions
+   - Exclude Docker containers from real-time scanning
+
+### Test JAN AI Model Deployment
+
+```powershell
+# Test the RPC API
+$body = @{
+    jsonrpc = "2.0"
+    id = 1
+    method = "getChainInfo"
+    params = @()
+} | ConvertTo-Json -Depth 10
+
+Invoke-RestMethod -Uri "http://localhost:9944" -Method POST -ContentType "application/json" -Body $body
+
+# Test JAN AI model availability
+$body = @{
+    jsonrpc = "2.0"
+    id = 2
+    method = "getModelInfo"
+    params = @(@{model_id = "jan-model"})
+} | ConvertTo-Json -Depth 10
+
+Invoke-RestMethod -Uri "http://localhost:9944" -Method POST -ContentType "application/json" -Body $body
+
+# Test chat completion with JAN AI model
+$body = @{
+    jsonrpc = "2.0"
+    id = 3
+    method = "chatCompletion"
+    params = @{
+        messages = @(
+            @{role = "user"; content = "Hello JAN AI model!"}
+        )
+        model_id = "jan-model"
+        stream = $false
+    }
+} | ConvertTo-Json -Depth 10
+
+Invoke-RestMethod -Uri "http://localhost:9944" -Method POST -ContentType "application/json" -Body $body
+```
+
+---
+
 ## Step 2: Get the Code
 
 ```powershell
