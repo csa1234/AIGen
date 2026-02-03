@@ -1,0 +1,62 @@
+AIGEN Blockchain
+Copyright (c) 2025-present Cesar Saguier Antebi
+Licensed under the Business Source License 1.1
+
+Third-Party Dependencies
+========================
+
+Rust Dependencies (from workspace Cargo.toml)
+---------------------------------------------
+- serde (MIT OR Apache-2.0)
+- serde_json (MIT OR Apache-2.0)
+- sha2 (MIT OR Apache-2.0)
+- hex (MIT OR Apache-2.0)
+- thiserror (MIT OR Apache-2.0)
+- tokio (MIT)
+- rand (MIT OR Apache-2.0)
+- bincode (MIT)
+- chrono (MIT OR Apache-2.0)
+- ed25519-dalek (BSD-3-Clause)
+- once_cell (MIT OR Apache-2.0)
+- reqwest (MIT OR Apache-2.0)
+- libp2p (MIT)
+- sha3 (MIT OR Apache-2.0)
+- blake3 (CC0-1.0 OR Apache-2.0)
+- parking_lot (MIT OR Apache-2.0)
+- dashmap (MIT)
+- base64 (MIT OR Apache-2.0)
+- clap (MIT OR Apache-2.0)
+- toml (MIT OR Apache-2.0)
+- config (MIT OR Apache-2.0)
+- dirs (MIT OR Apache-2.0)
+- tracing (MIT)
+- tracing-core (MIT)
+- tracing-attributes (MIT)
+- tracing-subscriber (MIT)
+
+JavaScript Dependencies (from package.json)
+-------------------------------------------
+- axios (MIT)
+- ws (MIT)
+- uuid (MIT)
+- tweetnacl (Unlicense)
+
+Python Dependencies (from requirements.txt)
+-------------------------------------------
+- requests (Apache-2.0)
+- websockets (BSD-3-Clause)
+- ed25519 (MIT)
+- aiohttp (Apache-2.0)
+- tenacity (Apache-2.0)
+- typing-extensions (PSF-2.0)
+
+Attribution Statement
+=====================
+All third-party dependencies listed above retain their original licenses. The Business Source License 1.1 (BSL 1.1) used for the AIGEN Blockchain project applies only to the original work created by Cesar Saguier Antebi.
+
+This software is provided "as is" and without any warranty, express or implied. To the extent permitted by applicable law, Cesar Saguier Antebi and the copyright holders of the third-party dependencies disclaim all warranties, including but not limited to any implied warranties of merchantability, fitness for a particular purpose, and non-infringement.
+
+Additional Notices
+==================
+- "Business Source License" is a trademark of MariaDB Corporation Ab.
+- ed25519-dalek and websockets are licensed under the BSD-3-Clause license. Redistributions of source code must retain the above copyright notice, this list of conditions and the following disclaimer.

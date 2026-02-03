@@ -1,3 +1,12 @@
+<!--
+Copyright (c) 2025-present Cesar Saguier Antebi
+
+This file is part of AIGEN Blockchain.
+
+This source code is licensed under the Business Source License 1.1
+found in the LICENSE file in the root directory of this source tree.
+-->
+
 # AIGEN Blockchain
 
 AIGEN is an L1/L2 AI-native blockchain designed around a **Genesis CEO Key** that exercises immutable control over network safety. The CEO wallet and public key are hardcoded into the consensus layer and cannot be bypassed without recompiling the entire node binary.

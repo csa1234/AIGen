@@ -13,9 +13,9 @@ resolver = "2"
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-authors = ["AIGEN Labs <ceo@aigen.local>"]
+authors = ["Cesar Saguier Antebi"]
 description = "AIGEN L1 blockchain with immutable Genesis CEO control layer"
-license = "GPL-3.0-or-later"
+license = "BUSL-1.1"
 
 [workspace.dependencies]
 serde = { version = "1.0", features = ["derive"] }

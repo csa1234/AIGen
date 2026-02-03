@@ -3,6 +3,7 @@ name = "aigen-scripts"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
+license.workspace = true
 
 [[bin]]
 name = "generate-ceo-keypair"
