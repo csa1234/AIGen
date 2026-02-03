@@ -815,7 +815,7 @@ We invite developers, researchers, and enthusiasts to join us in building this f
 - **Documentation**: [https://docs.aigen.ai](https://docs.aigen.ai)
 - **Community**: [Discord Server Link]
 
-**License**: MIT License - See LICENSE file for details
+**License**: Business Source License 1.1 - See LICENSE file for details
 
 **Version**: 1.0.0
 

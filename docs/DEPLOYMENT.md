@@ -214,11 +214,30 @@ Track:
 - Test restores regularly.
 
 ### Cost optimization
-
-- Use reserved instances/commitments for steady workloads.
-- Prefer fewer, larger nodes over many underutilized nodes.
-
-## Deployment Architecture Diagram
+ 
+ - Use reserved instances/commitments for steady workloads.
+ - Prefer fewer, larger nodes over many underutilized nodes.
+ 
+ ## License Compliance for Production Deployment
+ 
+ > **⚠️ IMPORTANT**: AIGEN Blockchain is licensed under the **Business Source License 1.1**.
+ 
+ ### Production Use Definition
+ In the context of cloud deployment, "Production Use" includes:
+ - Running nodes that process real value or live traffic
+ - Offering AIGEN Blockchain as a service (SaaS/BaaS)
+ - Using the software to support any commercial business operation
+ 
+ ### Commercial License Requirement
+ **You must obtain a commercial license from Cesar Saguier Antebi before deploying to a production environment.**
+ 
+ - See the [COPYRIGHT](../COPYRIGHT) file for commercial terms.
+ - Contact the licensor to negotiate a commercial agreement.
+ - Deployments for development, testing, and research (non-production) are permitted without a commercial license.
+ 
+ **Automatic Termination**: Your license to use this software terminates automatically if you violate the production use restrictions.
+ 
+ ## Deployment Architecture Diagram
 
 ```mermaid
 graph TB

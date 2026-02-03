@@ -15,8 +15,12 @@ found in the LICENSE file in the root directory of this source tree.
 - Docker Compose 2.0+
 - 4GB RAM minimum
 - 10GB disk space
-
-## Quick Start
+ 
+ ## License Notice
+ 
+ This Docker testnet deployment is for **non-production use only** (development, testing, research). Production deployment requires a commercial license. See the LICENSE and COPYRIGHT files for details.
+ 
+ ## Quick Start
 
 ```bash
 cd docker

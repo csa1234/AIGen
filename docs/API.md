@@ -5,9 +5,11 @@ This file is part of AIGEN Blockchain.
 
 This source code is licensed under the Business Source License 1.1
 found in the LICENSE file in the root directory of this source tree.
--->
-
-# RPC API Usage Guide
+ -->
+ 
+ > **License Notice**: AIGEN Blockchain is licensed under the Business Source License 1.1 (BSL 1.1). Non-production use (development, testing, research) is permitted. Production use requires a commercial license. See [LICENSE](../LICENSE) and [COPYRIGHT](../COPYRIGHT) for details.
+ 
+ # RPC API Usage Guide
 
 ## Table of Contents
 

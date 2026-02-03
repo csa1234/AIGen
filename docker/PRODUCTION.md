@@ -5,9 +5,11 @@ This file is part of AIGEN Blockchain.
 
 This source code is licensed under the Business Source License 1.1
 found in the LICENSE file in the root directory of this source tree.
--->
-
-# Production Deployment Guide
+ -->
+ 
+ > **⚠️ LICENSE NOTICE**: Production deployment of AIGEN Blockchain requires a commercial license from Cesar Saguier Antebi. This software is licensed under the Business Source License 1.1 (BSL 1.1), which restricts commercial/production use without authorization. Contact the licensor for commercial licensing terms. See LICENSE and COPYRIGHT files for complete details.
+ 
+ # Production Deployment Guide
 
 ## Cloud Deployment Considerations
 

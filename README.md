@@ -267,4 +267,48 @@ This repository is the canonical reference implementation of the AIGEN Genesis c
   - logs (redact secrets)
   - config snippets (redact secrets)
 - Contributing guidelines: not yet formalized.
-- License: Cesar Saguier Antebi
+## License
+ 
+ [![License](https://img.shields.io/badge/License-BUSL--1.1-blue.svg)](LICENSE)
+ 
+ ### Business Source License 1.1
+ 
+ - **Licensor**: Cesar Saguier Antebi
+ - **Licensed Work**: AIGEN Blockchain
+ - **Change Date**: February 3, 2030
+ - **Change License**: GPL-3.0-or-later
+ 
+ This software is licensed under the Business Source License 1.1 (BSL 1.1).
+ 
+ #### Permissions
+ You may use this work for **non-production** purposes, including:
+ - Development and testing
+ - Personal use and research
+ - Non-commercial experimentation
+ 
+ #### Restrictions
+ **Production use is strictly prohibited** without a commercial license. "Production use" includes:
+ - Running the software in a production environment
+ - Using the software to provide commercial services (SaaS, MSP)
+ - Distributing the software as part of a commercial product
+ 
+ ### Commercial Use
+ 
+ Commercial use of the Licensed Work requires an express written license from the Licensor. This includes any use in a production environment or for any commercial purpose.
+ 
+ - **Consent Required**: You must obtain written permission from Cesar Saguier Antebi.
+ - **Royalty Agreements**: Commercial licenses may require royalty payments or other terms as negotiated.
+ 
+ ### How to Obtain a Commercial License
+ 
+ To request a commercial license or for any licensing inquiries, please contact:
+ 
+ **Cesar Saguier Antebi**
+ 
+ Please refer to the [COPYRIGHT](COPYRIGHT) file for detailed commercial terms and the [LICENSE](LICENSE) file for the full text of the Business Source License 1.1.
+ 
+ ### Additional Resources
+ 
+ - [LICENSE](LICENSE) - Full text of the Business Source License 1.1
+ - [COPYRIGHT](COPYRIGHT) - Commercial licensing terms and change date details
+ - [NOTICE](NOTICE) - Third-party dependency attributions

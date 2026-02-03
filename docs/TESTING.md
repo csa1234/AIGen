@@ -16,8 +16,12 @@ found in the LICENSE file in the root directory of this source tree.
 - [Multi-Node Local Testing](#multi-node-local-testing)
 - [Docker-Based Testing](#docker-based-testing)
 - [Testing Workflow Diagram](#testing-workflow-diagram)
-
-## Prerequisites
+ 
+ ## License Notice
+ 
+ Testing and development use of AIGEN Blockchain is permitted under the **Business Source License 1.1**. Production use requires a commercial license.
+ 
+ ## Prerequisites
 
 ### Required software
 
