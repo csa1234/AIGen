@@ -60,6 +60,7 @@ pub struct RpcMethods {
     pub blockchain: Arc<Mutex<Blockchain>>,
     pub tx_broadcast: tokio::sync::broadcast::Sender<blockchain_core::Transaction>,
     pub network_metrics: network::metrics::SharedNetworkMetrics,
+    pub start_time: std::sync::Arc<std::time::Instant>,
 }
 
 impl RpcMethods {
@@ -72,6 +73,7 @@ impl RpcMethods {
             blockchain,
             tx_broadcast,
             network_metrics,
+            start_time: std::sync::Arc::new(std::time::Instant::now()),
         }
     }
 }
@@ -197,11 +199,7 @@ impl PublicRpcServer for RpcMethods {
     }
 
     async fn health(&self) -> Result<HealthResponse, RpcError> {
-        let uptime_seconds =
-            match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
-                Ok(d) => d.as_secs(),
-                Err(_) => 0,
-            };
+        let uptime_seconds = self.start_time.elapsed().as_secs();
 
         let bc = self.blockchain.lock().await;
 

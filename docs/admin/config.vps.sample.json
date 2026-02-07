@@ -1,0 +1,12 @@
+{
+  "rpc": {
+    "http": "https://rpc.aigen.example.com",
+    "ws": "wss://rpc.aigen.example.com"
+  },
+  "web3": {
+    "enableEvm": false,
+    "requiredChainId": null,
+    "walletConnectRpc": { }
+  },
+  "chains": { }
+}

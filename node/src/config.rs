@@ -337,7 +337,7 @@ impl NodeConfiguration {
         self
     }
 
-    pub fn validate(&self) -> Result<()> {
+    pub fn validate(&mut self) -> Result<()> {
         if self.node_id.trim().is_empty() {
             return Err(anyhow!("node_id: must not be empty"));
         }
@@ -359,9 +359,39 @@ impl NodeConfiguration {
         })?;
 
         let test_path = self.data_dir.join(".write_test");
-        std::fs::write(&test_path, b"")
-            .with_context(|| format!("data_dir: not writable: {}", self.data_dir.display()))?;
-        let _ = std::fs::remove_file(&test_path);
+        let write_res = std::fs::write(&test_path, b"");
+        if let Err(e) = write_res {
+            use std::io::ErrorKind;
+            if matches!(e.kind(), ErrorKind::NotFound | ErrorKind::PermissionDenied) {
+                let fallback = std::env::current_dir()
+                    .unwrap_or_else(|_| PathBuf::from("."))
+                    .join("aigen-data");
+                std::fs::create_dir_all(&fallback).with_context(|| {
+                    format!(
+                        "data_dir: failed to create fallback directory: {}",
+                        fallback.display()
+                    )
+                })?;
+                let fallback_test = fallback.join(".write_test");
+                std::fs::write(&fallback_test, b"").with_context(|| {
+                    format!("data_dir: fallback not writable: {}", fallback.display())
+                })?;
+                let _ = std::fs::remove_file(&fallback_test);
+                self.data_dir = fallback.clone();
+                self.derive_model_paths();
+                self.keypair_path = crate::keypair::default_keypair_path(&self.data_dir);
+                eprintln!(
+                    "data_dir not writable; using fallback: {}",
+                    self.data_dir.display()
+                );
+            } else {
+                return Err(e).with_context(|| {
+                    format!("data_dir: not writable: {}", self.data_dir.display())
+                });
+            }
+        } else {
+            let _ = std::fs::remove_file(&test_path);
+        }
 
         validate_multiaddr_with_field("network.listen_addr", &self.network.listen_addr)?;
         for (idx, a) in self.network.bootstrap_peers.iter().enumerate() {

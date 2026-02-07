@@ -1,0 +1,12 @@
+{
+  "rpc": {
+    "http": "http://127.0.0.1:9944",
+    "ws": "ws://127.0.0.1:9944"
+  },
+  "web3": {
+    "enableEvm": false,
+    "requiredChainId": null,
+    "walletConnectRpc": { }
+  },
+  "chains": { }
+}

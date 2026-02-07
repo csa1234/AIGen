@@ -14,6 +14,10 @@ use anyhow::Result;
 use blockchain_core::{Block, Blockchain, Transaction};
 use jsonrpsee::server::{ServerBuilder, ServerHandle};
 use tokio::sync::{broadcast, Mutex};
+use tower::{Layer, Service};
+use hyper::{Request, Response, Body, Method};
+use http::header::CONTENT_TYPE;
+use std::task::{Context, Poll};
 
 use crate::config::RpcConfig;
 use crate::rpc::ceo::{CeoRpcMethods, CeoRpcServer};
@@ -35,6 +39,7 @@ pub async fn start_rpc_server(
 ) -> Result<ServerHandle> {
     let server = ServerBuilder::default()
         .max_connections(config.rpc_max_connections.try_into().unwrap_or(u32::MAX))
+        .set_http_middleware(tower::ServiceBuilder::new().layer(HealthProxyLayer))
         .build(config.rpc_addr)
         .await?;
 
@@ -68,4 +73,46 @@ pub async fn start_rpc_server(
     println!("rpc server started on {}", addr);
 
     Ok(handle)
+}
+
+#[derive(Clone)]
+struct HealthProxyLayer;
+
+impl<S> Layer<S> for HealthProxyLayer {
+    type Service = HealthProxyService<S>;
+
+    fn layer(&self, inner: S) -> Self::Service {
+        HealthProxyService { inner }
+    }
+}
+
+#[derive(Clone)]
+struct HealthProxyService<S> {
+    inner: S,
+}
+
+impl<S> Service<Request<Body>> for HealthProxyService<S>
+where
+    S: Service<Request<Body>, Response = Response<Body>> + Clone + Send + 'static,
+    S::Future: Send + 'static,
+    S::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+{
+    type Response = S::Response;
+    type Error = S::Error;
+    type Future = S::Future;
+
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.inner.poll_ready(cx)
+    }
+
+    fn call(&mut self, mut req: Request<Body>) -> Self::Future {
+        if req.method() == Method::GET && req.uri().path() == "/health" {
+            *req.method_mut() = Method::POST;
+            *req.uri_mut() = "/".parse().unwrap();
+            req.headers_mut().insert(CONTENT_TYPE, "application/json".parse().unwrap());
+            let body = r#"{"jsonrpc":"2.0","method":"health","params":[],"id":1}"#;
+            *req.body_mut() = Body::from(body);
+        }
+        self.inner.call(req)
+    }
 }

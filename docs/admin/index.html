@@ -21,7 +21,7 @@
     <title>AIGEN Admin Dashboard</title>
     <link rel="stylesheet" href="style.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/ethers@6.9.0/dist/ethers.umd.min.js"></script>
+    <!-- Removed ethers.js for non-EVM architecture -->
     <script src="https://cdn.jsdelivr.net/npm/marked@11.1.1/marked.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/tweetnacl@1.0.3/nacl-fast.min.js"></script>
 </head>
@@ -511,6 +511,17 @@
     <div id="notificationContainer" class="notification-container"></div>
 
     <!-- Scripts -->
+    <script src="config.js"></script>
+    <script src="web3/base-provider.js"></script>
+    <script src="web3/providers/metamask.js"></script>
+    <script src="web3/providers/coinbase.js"></script>
+    <script src="web3/providers/trust.js"></script>
+    <script src="web3/providers/brave.js"></script>
+    <script src="web3/providers/phantom.js"></script>
+    <script src="web3/providers/walletconnect.js"></script>
+    <script src="web3/web3-context.js"></script>
+    <script src="web3/web3-manager.js"></script>
+    <script src="ui/wallet-ui.js"></script>
     <script src="wallet.js"></script>
     <script src="admin-client.js"></script>
     <script src="charts.js"></script>

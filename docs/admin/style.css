@@ -1,18 +1,16 @@
-<!--
+/*
   Copyright (c) 2025-present Cesar Saguier Antebi
-  
+
   This file is part of AIGEN Blockchain.
-  
-  Licensed under the Business Source License 1.1 (the "License");
-  you may not use this file except in compliance with the License.
-  You may obtain a copy of the License at the root of this repository.
-  
-  Unless required by applicable law or agreed to in writing, software
-  distributed under the License is distributed on an "AS IS" BASIS,
-  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-  See the License for the specific language governing permissions and
-  limitations under the License.
--->
+
+  License: Business Source License 1.1 (BSL-1.1). See LICENSE at the repository root.
+  Change Date: February 3, 2030
+
+  Purpose: Admin dashboard styles. Defines CSS variables in :root and
+  light theme overrides via [data-theme="light"], plus component styles
+  for header, tabs, tables, forms, health cards, charts, modals,
+  notifications, wallet grid, pagination, and footer.
+*/
 :root {
     --bg-primary: #0d1117;
     --bg-secondary: #161b22;
@@ -685,6 +683,46 @@ body {
 .notification-info {
     background: var(--info-color);
     color: white;
+}
+
+.wallet-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 0.75rem;
+}
+
+.wallet-item {
+    padding: 0.75rem 1rem;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    cursor: pointer;
+    transition: var(--transition);
+}
+
+.wallet-item:hover {
+    border-color: var(--accent-color);
+}
+
+.wallet-help {
+    margin-top: 1rem;
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+}
+
+.btn.loading {
+    position: relative;
+}
+.btn.loading::after {
+    content: '';
+    width: 14px;
+    height: 14px;
+    border: 2px solid rgba(255,255,255,0.5);
+    border-top-color: white;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+    margin-left: 8px;
 }
 
 .footer {

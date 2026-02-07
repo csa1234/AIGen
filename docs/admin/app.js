@@ -148,13 +148,13 @@ class AdminDashboard {
         try {
             await this.rpcClient.connect();
             this.updateConnectionStatus('connected');
-            
-            const walletAddress = await this.walletManager.getAddress();
-            if (walletAddress) {
-                this.verifyCeoAccess(walletAddress);
-            }
+            const walletAddress = await this.walletManager.getAddress().catch(() => null);
+            if (walletAddress) this.verifyCeoAccess(walletAddress);
             
             this.loadBlocks(1);
+            if (document.querySelector('#healthTab').classList.contains('active')) {
+                this.initializeMetricsFlow();
+            }
         } catch (error) {
             this.updateConnectionStatus('disconnected');
             throw error;
@@ -207,8 +207,7 @@ class AdminDashboard {
             this.loadModels();
             this.loadModelProposals();
         } else if (tabName === 'health') {
-            this.loadHealthData();
-            this.loadMetricsData();
+            this.initializeMetricsFlow();
             this.startAutoRefresh(parseInt(document.getElementById('refreshInterval').value));
         } else if (tabName === 'governance') {
             this.loadGovernanceProposals();
@@ -499,27 +498,23 @@ class AdminDashboard {
     }
 
     async loadHealthData() {
-        try {
+        const exec = async () => {
             const { message, timestamp } = this.rpcClient.formatAdminMessage('health');
             const signature = await this.rpcClient.signMessage(message);
-            
             const health = await this.rpcClient.getHealth(signature, timestamp);
             this.renderHealthCards(health);
-        } catch (error) {
-            this.showNotification(`Failed to load health data: ${error.message}`, 'error');
-        }
+        };
+        await this.withRetries(exec, 3);
     }
 
     async loadMetricsData() {
-        try {
+        const exec = async () => {
             const { message, timestamp } = this.rpcClient.formatAdminMessage('metrics');
             const signature = await this.rpcClient.signMessage(message);
-            
             const metrics = await this.rpcClient.getMetrics(signature, timestamp, true, true, true);
             this.chartManager.updateCharts(metrics);
-        } catch (error) {
-            this.showNotification(`Failed to load metrics: ${error.message}`, 'error');
-        }
+        };
+        await this.withRetries(exec, 3);
     }
 
     renderHealthCards(health) {
@@ -786,6 +781,39 @@ class AdminDashboard {
     formatAmount(amount) {
         if (!amount) return '0';
         return (amount / 1e18).toFixed(6);
+    }
+
+    async initializeMetricsFlow() {
+        // Require CEO private key for signed admin calls
+        const ceoPrivateKey = localStorage.getItem('ceoPrivateKey');
+        if (!ceoPrivateKey) {
+            this.renderHealthCards({}); // keep placeholders
+            this.showNotification('Configure CEO private key in Settings to fetch Health & Metrics', 'warning');
+            return;
+        }
+        // Ensure charts are initialized
+        this.chartManager.initInferenceTimeChart('inferenceTimeChart');
+        this.chartManager.initCacheHitRateChart('cacheHitRateChart');
+        this.chartManager.initNetworkBandwidthChart('networkBandwidthChart');
+        this.chartManager.initBlockchainGrowthChart('blockchainGrowthChart');
+        // Perform initial fetch
+        await this.loadHealthData();
+        await this.loadMetricsData();
+    }
+
+    async withRetries(fn, attempts = 3) {
+        let delay = 1000;
+        for (let i = 0; i < attempts; i++) {
+            try { return await fn(); }
+            catch (err) {
+                if (i === attempts - 1) {
+                    this.showNotification(err.message || 'Operation failed', 'error');
+                    throw err;
+                }
+                await new Promise(r => setTimeout(r, delay));
+                delay *= 2;
+            }
+        }
     }
 }
 

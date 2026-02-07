@@ -9,6 +9,8 @@ found in the LICENSE file in the root directory of this source tree.
 
 # AIGEN Blockchain Noob Startup Guide
 
+> Production Deployment Guide available here: [PRODUCTION_GUIDE.md](file:///d:/Code/AIGEN/docs/PRODUCTION_GUIDE.md). Use it to configure the Admin Dashboard and nodes for a production environment with proper security, configuration loading, and validation.
+
 ## What You Need Before Starting
 
 ### System Requirements

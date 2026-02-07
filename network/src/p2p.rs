@@ -117,6 +117,8 @@ pub struct P2PNode {
     pub local_peer_id: PeerId,
     pub swarm: Swarm<P2PBehaviour>,
     pub reputation_manager: Arc<PeerReputationManager>,
+    #[allow(dead_code)]
+    shutdown_tx: broadcast::Sender<()>,
     pub shutdown_rx: broadcast::Receiver<()>,
     pub event_tx: mpsc::Sender<NetworkEvent>,
     pub shutdown_active: bool,
@@ -300,7 +302,6 @@ impl P2PNode {
         ));
         let metrics = Arc::new(NetworkMetrics::default());
         let (shutdown_tx, shutdown_rx) = broadcast::channel(16);
-        let _ = shutdown_tx;
 
         let (event_tx, event_rx) = mpsc::channel(1024);
 
@@ -309,6 +310,7 @@ impl P2PNode {
                 local_peer_id,
                 swarm,
                 reputation_manager,
+                shutdown_tx,
                 shutdown_rx,
                 event_tx,
                 shutdown_active: false,
@@ -430,6 +432,7 @@ impl P2PNode {
         loop {
             if self.shutdown_active || is_shutdown() {
                 self.shutdown_active = true;
+                let _ = self.event_tx.send(NetworkEvent::ShutdownSignal).await;
             }
 
             if self.shutdown_active {

@@ -578,6 +578,14 @@ async fn run_node(
         }
     }
 
+    println!(
+        "startup summary: node_id={}, peer_id={}, rpc={}, listen_addr={}, data_dir={}",
+        cfg.node_id,
+        local_peer_id,
+        if cfg.rpc.rpc_enabled { format!("{}", cfg.rpc.rpc_addr) } else { "disabled".to_string() },
+        cfg.network.listen_addr,
+        cfg.data_dir.display()
+    );
     println!("node started; waiting for shutdown");
 
     tokio::select! {
