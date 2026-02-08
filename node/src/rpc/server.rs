@@ -17,7 +17,9 @@ use tokio::sync::{broadcast, Mutex};
 use tower::{Layer, Service};
 use hyper::{Request, Response, Body, Method};
 use http::header::CONTENT_TYPE;
+use http::HeaderValue;
 use std::task::{Context, Poll};
+use tower_http::cors::{Any, AllowOrigin, CorsLayer};
 
 use crate::config::RpcConfig;
 use crate::rpc::ceo::{CeoRpcMethods, CeoRpcServer};
@@ -37,9 +39,15 @@ pub async fn start_rpc_server(
     inference_engine: Arc<model::InferenceEngine>,
     config: RpcConfig,
 ) -> Result<ServerHandle> {
+    let cors = build_cors_layer(&config);
+
     let server = ServerBuilder::default()
         .max_connections(config.rpc_max_connections.try_into().unwrap_or(u32::MAX))
-        .set_http_middleware(tower::ServiceBuilder::new().layer(HealthProxyLayer))
+        .set_http_middleware(
+            tower::ServiceBuilder::new()
+                .layer(HealthProxyLayer)
+                .layer(cors),
+        )
         .build(config.rpc_addr)
         .await?;
 
@@ -81,6 +89,33 @@ pub async fn start_rpc_server(
     let handle = server.start(module);
 
     Ok(handle)
+}
+
+fn build_cors_layer(config: &RpcConfig) -> CorsLayer {
+    let mut cors = CorsLayer::new()
+        .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
+        .allow_headers([
+            http::header::CONTENT_TYPE,
+            http::header::ACCEPT,
+            http::header::AUTHORIZATION,
+        ]);
+
+    if config.rpc_cors.iter().any(|s| s.trim() == "*") {
+        cors = cors.allow_origin(Any);
+        return cors;
+    }
+
+    let origins = config
+        .rpc_cors
+        .iter()
+        .filter_map(|s| HeaderValue::from_str(s.trim()).ok())
+        .collect::<Vec<_>>();
+
+    if origins.is_empty() {
+        return cors.allow_origin(Any);
+    }
+
+    cors.allow_origin(AllowOrigin::list(origins))
 }
 
 #[derive(Clone)]

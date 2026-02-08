@@ -154,7 +154,7 @@ cargo build --release
 Run node (workspace):
 
 ```bash
-cargo run -p node --bin aigen-node -- start
+cargo run --release --bin node start
 ```
 
 Format:

@@ -18,7 +18,7 @@ class AdminDashboard {
     constructor() {
         this.rpcClient = null;
         this.chartManager = null;
-        this.settings = this.loadSettings();
+        this.settings = null;
         this.currentBlockPage = 1;
         this.blocksPerPage = 10;
         this.autoRefreshInterval = null;
@@ -31,6 +31,7 @@ class AdminDashboard {
         this.showLoading(true);
         
         try {
+            this.settings = await this.loadSettingsAsync();
             this.rpcClient = new AdminRPCClient(this.settings.rpcUrl, this.settings.wsUrl);
             this.chartManager = new ChartManager();
             
@@ -48,14 +49,50 @@ class AdminDashboard {
         }
     }
 
-    loadSettings() {
+    async loadSettingsAsync() {
         const defaultSettings = {
-            rpcUrl: 'http://localhost:9944',
-            wsUrl: 'ws://localhost:9944',
+            rpcUrl: 'http://127.0.0.1:9944',
+            wsUrl: 'ws://127.0.0.1:9944',
             theme: 'dark',
             refreshInterval: 30
         };
         
+        // Try to load from config.json via config.js global helper
+        if (window.loadAigenConfig) {
+            try {
+                const extConfig = await window.loadAigenConfig();
+                if (extConfig && extConfig.rpc) {
+                    if (extConfig.rpc.http) defaultSettings.rpcUrl = extConfig.rpc.http;
+                    if (extConfig.rpc.ws) defaultSettings.wsUrl = extConfig.rpc.ws;
+                }
+            } catch (e) {
+                console.warn('Failed to load external config:', e);
+            }
+        }
+        
+        const saved = localStorage.getItem('adminSettings');
+        let settings = saved ? { ...defaultSettings, ...JSON.parse(saved) } : defaultSettings;
+
+        // Migration: Fix localhost -> 127.0.0.1 issue on Windows
+        if (settings.rpcUrl === 'http://localhost:9944') {
+            settings.rpcUrl = 'http://127.0.0.1:9944';
+            settings.wsUrl = 'ws://127.0.0.1:9944';
+            // Update storage with fixed value
+            this.saveSettings(settings); 
+        }
+
+        return settings;
+    }
+
+    loadSettings() {
+        // Fallback for synchronous access if needed, but init is now async
+        // This is mainly kept if other methods call it, but they should use this.settings
+        const defaultSettings = {
+            rpcUrl: 'http://127.0.0.1:9944',
+            wsUrl: 'ws://127.0.0.1:9944',
+            theme: 'dark',
+            refreshInterval: 30
+        };
         const saved = localStorage.getItem('adminSettings');
         return saved ? { ...defaultSettings, ...JSON.parse(saved) } : defaultSettings;
     }

@@ -104,13 +104,13 @@ cargo test
 What this does: creates a node identity/keypair and an initial config/data directory.
 
 ```bash
-aigen-node init
+cargo run --release --bin node -- init
 ```
 
 If you want an explicit node ID (recommended for multi-node work):
 
 ```bash
-aigen-node init --node-id my-node
+cargo run --release --bin node -- init --node-id my-node
 ```
 
 ### 4) Start the node
@@ -118,7 +118,7 @@ aigen-node init --node-id my-node
 What this does: starts networking (P2P) and the JSON-RPC server.
 
 ```bash
-aigen-node start
+cargo run --release --bin node -- start
 ```
 
 ### 5) Test RPC endpoints (curl)
@@ -173,9 +173,9 @@ Example layout:
 ### 1) Initialize 3 nodes
 
 ```bash
-aigen-node init --node-id node-a
-aigen-node init --node-id node-b
-aigen-node init --node-id node-c
+cargo run --release --bin node -- init --node-id node-a
+cargo run --release --bin node -- init --node-id node-b
+cargo run --release --bin node -- init --node-id node-c
 ```
 
 ### 2) Create config files
@@ -232,15 +232,15 @@ listen_addr = "127.0.0.1:9946"
 In three terminals:
 
 ```bash
-aigen-node start --config ./node-a.toml
+cargo run --release --bin node -- start --config ./node-a.toml
 ```
 
 ```bash
-aigen-node start --config ./node-b.toml
+cargo run --release --bin node -- start --config ./node-b.toml
 ```
 
 ```bash
-aigen-node start --config ./node-c.toml
+cargo run --release --bin node -- start --config ./node-c.toml
 ```
 
 ### 4) Test peer discovery and connectivity

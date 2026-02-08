@@ -23,7 +23,7 @@ Optional:
 ### Start the node
 
 ```
-aigen-node start
+cargo run --release --bin node start
 ```
 
 Optional overrides:

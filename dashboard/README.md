@@ -75,8 +75,8 @@ docker-compose up -d
 1. Open the dashboard in your browser
 2. Click the settings icon (gear) in the header
 3. Configure:
-   - **RPC URL**: AIGEN node RPC endpoint (default: `http://localhost:9944`)
-   - **WebSocket URL**: AIGEN node WebSocket endpoint (default: `ws://localhost:9944`)
+   - **RPC URL**: AIGEN node RPC endpoint (default: `http://127.0.0.1:9944`)
+   - **WebSocket URL**: AIGEN node WebSocket endpoint (default: `ws://127.0.0.1:9944`)
    - **CEO Private Key (Ed25519)**: 64-byte hex private key for signing admin operations
    - **Theme**: Dark mode (default) or light mode
 
@@ -251,7 +251,7 @@ ps aux | grep aigen-node
 tail -f ./data/node.log
 
 # Start the node if not running
-cargo run --release --bin aigen-node start
+cargo run --release --bin node -- start
 ```
 
 **2. Serve Dashboard via HTTP (NOT file://)**:
@@ -276,7 +276,7 @@ docker-compose up -d
 
 **3. Verify RPC Endpoint**:
 - Open Settings in dashboard
-- Confirm RPC URL matches node configuration (default: `http://localhost:9944`)
+- Confirm RPC URL matches node configuration (default: `http://127.0.0.1:9944`)
 - Check `node/config.toml` for actual RPC address:
   ```toml
   [rpc]

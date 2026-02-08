@@ -79,6 +79,6 @@ stake_amount = null
 
 [rpc]
 rpc_enabled = true
-rpc_addr = "127.0.0.1:9944"
+rpc_addr = "0.0.0.0:9944"
 rpc_cors = ["*"]
 rpc_max_connections = 100
