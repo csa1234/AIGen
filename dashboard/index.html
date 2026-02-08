@@ -44,20 +44,16 @@
                 <span class="status-text">Disconnected</span>
             </div>
         </div>
+        <div class="header-info" id="headerKeyStatus">
+            <span class="info-icon">🔑</span>
+            <span class="info-text" id="keyStatusMessage">No CEO key configured</span>
+        </div>
         <div class="header-right">
-            <button id="walletButton" class="btn btn-primary">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M20 12V8H6a2 2 0 0 1-2-2c0-1.1.9-2 2-2h12v4"/>
-                    <path d="M4 6v12c0 1.1.9 2 2 2h14v-4"/>
-                    <path d="M18 12a2 2 0 0 0 0 4h4v-4h-4z"/>
-                </svg>
-                <span>Connect Wallet</span>
-            </button>
-            <button id="settingsButton" class="btn btn-icon" title="Settings">
+            <button id="configureKeysButton" class="btn btn-primary" title="Configure CEO Keys">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <circle cx="12" cy="12" r="3"/>
-                    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+                    <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/>
                 </svg>
+                <span id="keyStatusText">Configure Keys</span>
             </button>
         </div>
     </header>
@@ -405,6 +401,8 @@
     <!-- Footer -->
     <footer class="footer">
         <p>AIGEN Admin Dashboard v1.0.0</p>
+        <p>Serve this dashboard over HTTP (do not open via file://). Example: <code>cd docs/admin &amp;&amp; python -m http.server 8081</code> then open <code>http://localhost:8081</code>.</p>
+        <p>If you see 'Failed to fetch', ensure the AIGEN node is running (<code>cargo run --release</code>) and RPC is enabled on the correct port (default: 9944).</p>
         <a href="https://github.com/aigen-blockchain" target="_blank">GitHub</a>
         <a href="README.md">Documentation</a>
     </footer>
@@ -428,13 +426,48 @@
                         <input type="text" id="wsUrl" value="ws://localhost:9944">
                     </div>
                     <div class="form-group">
-                        <label for="ceoAddress">CEO Wallet Address</label>
-                        <input type="text" id="ceoAddress" placeholder="0x...">
+                        <label for="ceoPrivateKey">CEO Private Key (Ed25519)</label>
+                        <div class="key-input-group">
+                            <input type="password" id="ceoPrivateKey" placeholder="64-byte hex private key (seed + public key)">
+                            <button type="button" id="toggleKeyVisibility" class="btn btn-icon" title="Toggle visibility">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                                    <circle cx="12" cy="12" r="3"/>
+                                </svg>
+                            </button>
+                        </div>
+                        <small class="text-secondary">
+                            <strong>Required for CEO operations.</strong> AIGEN uses Ed25519 signatures, NOT EVM.
+                            <br>⚠️ Stored in browser localStorage. Use HSM for production.
+                        </small>
                     </div>
+
                     <div class="form-group">
-                        <label for="ceoPrivateKey">CEO Private Key (for ed25519 signing)</label>
-                        <input type="password" id="ceoPrivateKey" placeholder="64-byte hex private key (seed + public key)">
-                        <small class="text-secondary">Required for CEO signature verification. Keep this secure.</small>
+                        <button type="button" id="generateKeypairBtn" class="btn btn-secondary" style="width: 100%;">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
+                            </svg>
+                            Generate New Keypair
+                        </button>
+                        <small class="text-secondary">
+                            Generates a new Ed25519 keypair using tweetnacl. Save the private key securely!
+                        </small>
+                    </div>
+
+                    <div class="form-group" id="derivedKeyInfo" style="display: none;">
+                        <label>Derived Public Key / Address</label>
+                        <div class="key-display">
+                            <code id="derivedPublicKey" class="hash">-</code>
+                            <button type="button" id="copyPublicKeyBtn" class="btn btn-icon" title="Copy to clipboard">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                                </svg>
+                            </button>
+                        </div>
+                        <small class="text-secondary">
+                            This is your AIGEN address derived from the private key above.
+                        </small>
                     </div>
                     <div class="form-group">
                         <label>Theme</label>
@@ -512,16 +545,6 @@
 
     <!-- Scripts -->
     <script src="config.js"></script>
-    <script src="web3/base-provider.js"></script>
-    <script src="web3/providers/metamask.js"></script>
-    <script src="web3/providers/coinbase.js"></script>
-    <script src="web3/providers/trust.js"></script>
-    <script src="web3/providers/brave.js"></script>
-    <script src="web3/providers/phantom.js"></script>
-    <script src="web3/providers/walletconnect.js"></script>
-    <script src="web3/web3-context.js"></script>
-    <script src="web3/web3-manager.js"></script>
-    <script src="ui/wallet-ui.js"></script>
     <script src="wallet.js"></script>
     <script src="admin-client.js"></script>
     <script src="charts.js"></script>

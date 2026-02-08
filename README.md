@@ -47,14 +47,23 @@ curl -s -X POST http://localhost:9944 \
 
 ## Documentation
 
-- `docs/TESTING.md` - Local testing guide
-- `docs/DEPLOYMENT.md` - Cloud deployment guide
-- `docs/API.md` - RPC API reference
-- `docs/CEO_OPERATIONS.md` - CEO key management
-- `docs/TROUBLESHOOTING.md` - Common issues and solutions
-- `docs/GENESIS_KEY_SECURITY.md` - Security model
-- `docker/README.md` - Docker testnet guide
-- `docker/PRODUCTION.md` - Production deployment
+### Quick Start
+- **[Complete Guide](GUIDE.md)** - Comprehensive setup, deployment, and usage guide
+- **[Admin Dashboard](dashboard/README.md)** - Web-based management interface
+
+### API & Development
+- **[API Reference](docs/API.md)** - Complete RPC API documentation
+- **[JavaScript SDK](docs/examples/javascript/README.md)** - JavaScript examples
+- **[Python SDK](docs/examples/python/README.md)** - Python examples
+
+### Operations & Deployment
+- **[Production Guide](docs/PRODUCTION_GUIDE.md)** - Production deployment
+- **[Testing Guide](docs/TESTING.md)** - Testing and validation
+- **[Genesis Key Security](docs/GENESIS_KEY_SECURITY.md)** - Security model
+
+### Specialized Topics
+- **[Economic Tiers](docs/ECONOMIC_TIERS.md)** - Subscription tiers
+- **[AI Models](docs/AI_MODELS.md)** - AI model management
 
 ## Critical Prime Directive
 
@@ -185,7 +194,7 @@ See `docker/README.md` for detailed documentation.
 Production deployment guides:
 - Docker: See `docker/PRODUCTION.md`
 - Kubernetes: See `k8s/README.md` (future)
-- Cloud providers: See `docs/DEPLOYMENT.md` (future)
+- Cloud providers: See `docs/PRODUCTION_GUIDE.md`
 
 ## Configuration Files Summary
 
@@ -208,7 +217,7 @@ Production deployment guides:
 
 ## Deployment Workflow
 
-For operational guides beyond Docker, see `docs/DEPLOYMENT.md` and `docs/TESTING.md`.
+For operational guides beyond Docker, see `docs/PRODUCTION_GUIDE.md` and `docs/TESTING.md`.
 
 ```mermaid
 sequenceDiagram

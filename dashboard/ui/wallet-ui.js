@@ -30,13 +30,21 @@
           </div>
           <div class="wallet-help">
             <p>If your wallet is not detected, try WalletConnect.</p>
+            <p id="walletDetectionInfo" class="wallet-detection-info"></p>
           </div>
         </div>
       </div>`;
     document.body.appendChild(container);
     container.querySelector('.modal-close').addEventListener('click', () => hideModal());
     container.querySelector('.modal-overlay').addEventListener('click', () => hideModal());
+    const available = mgr.detectAvailable().map(p => p.name);
     container.querySelectorAll('.wallet-item').forEach(b => {
+      const name = b.dataset.wallet;
+      if (!available.includes(name) && name !== 'WalletConnect') {
+        b.disabled = true;
+        b.classList.add('disabled');
+        b.title = `${name} not detected`;
+      }
       b.addEventListener('click', async () => {
         const name = b.dataset.wallet;
         try {
@@ -45,6 +53,7 @@
           // auto network alignment for local dev (Sepolia by default)
           await mgr.ensureNetwork(mgr.requiredChainId);
           hideModal();
+          try { localStorage.setItem('preferredWallet', name); } catch {}
         } catch (e) {
           const msg = e && e.message ? e.message : 'Connection failed';
           showToast(msg, 'error');
@@ -53,6 +62,12 @@
         }
       });
     });
+    const info = document.getElementById('walletDetectionInfo');
+    if (available.length === 0) {
+      info.textContent = 'No injected wallets detected. Use WalletConnect or enable EVM support in Settings.';
+    } else {
+      info.textContent = `Detected: ${available.join(', ')}`;
+    }
   }
 
   function showModal() {

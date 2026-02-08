@@ -439,6 +439,13 @@ impl NodeConfiguration {
             return Err(anyhow!("rpc.rpc_addr: port must not be 0"));
         }
 
+        if self.rpc.rpc_addr.ip().is_loopback() {
+            eprintln!("⚠️  RPC server binding to localhost only ({})", self.rpc.rpc_addr);
+            eprintln!("    This will NOT be accessible from other machines.");
+            eprintln!("    To allow external access, bind to 0.0.0.0:{} instead.", self.rpc.rpc_addr.port());
+            eprintln!("    Update rpc_addr in your config file or use AIGEN_RPC_ADDR environment variable.");
+        }
+
         if self.model.max_memory_mb == 0 {
             return Err(anyhow!("model.max_memory_mb: must be > 0"));
         }

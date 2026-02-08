@@ -1,0 +1,6 @@
+embedding: false
+model_path: model/Mistral/model.gguf
+name: Mistral-7B-v0.1
+size_bytes: 2497281632
+description: Mistral 7B quantized model for AIGEN blockchain AI inference
+version: 1.0.0

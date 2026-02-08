@@ -45,6 +45,16 @@ pub async fn start_rpc_server(
 
     let addr = server.local_addr()?;
 
+    println!("RPC server started successfully");
+    println!("  Address: http://{}", addr);
+    println!("  CORS: Allowed origins: {:?}", config.rpc_cors);
+    println!("  Max connections: {}", config.rpc_max_connections);
+    println!("  Health endpoint: GET /health or POST / {{\"method\":\"health\"}}");
+
+    if addr.ip().is_loopback() {
+        println!("  ⚠️  Binding to localhost only - not accessible from other machines");
+    }
+
     let public = RpcMethods::new(blockchain.clone(), tx_broadcast, network_metrics.clone());
     let ceo = CeoRpcMethods::new(
         blockchain.clone(),
@@ -69,8 +79,6 @@ pub async fn start_rpc_server(
     module.merge(model_rpc.into_rpc())?;
 
     let handle = server.start(module);
-
-    println!("rpc server started on {}", addr);
 
     Ok(handle)
 }

@@ -23,7 +23,26 @@
       this.options = options;
       this.provider = null;
       const cfg = window.__aigenConfig || {};
-      const enableEvm = !!(cfg.web3?.enableEvm);
+      const enableEvm = cfg.web3?.enableEvm !== false;
+      this.requiredChainId = detectEnvRequiredChain();
+      // Build dynamic addChainConfigs: merge defaults with env-provided chains and optional AIGEN EVM chain
+      this.options.addChainConfigs = {
+        ...(this.options.addChainConfigs || {}),
+        ...(cfg.web3?.addChains || {}),
+      };
+      if (cfg.web3?.aigenEvmChain && cfg.web3.aigenEvmChain.chainId) {
+        const a = cfg.web3.aigenEvmChain;
+        const key = typeof a.chainId === 'number' ? a.chainId : parseInt(a.chainId, 16);
+        this.options.addChainConfigs[key] = {
+          chainId: typeof a.chainId === 'string' ? a.chainId : ('0x' + key.toString(16)),
+          chainName: a.chainName || 'AIGEN',
+          rpcUrls: a.rpcUrls || (cfg.rpc?.http ? [cfg.rpc.http] : []),
+          nativeCurrency: a.nativeCurrency || { name: 'AIGEN', symbol: 'AGN', decimals: 18 },
+          blockExplorerUrls: a.blockExplorerUrls || []
+        };
+        // If no explicit requiredChainId set elsewhere, prefer the AIGEN EVM chain id
+        if (this.requiredChainId === null) this.requiredChainId = key;
+      }
       this.providers = enableEvm ? [
         new (window.AigenMetaMaskProvider || class {} )(),
         new (window.AigenCoinbaseProvider || class {} )(),
@@ -32,7 +51,9 @@
         new (window.AigenPhantomProvider || class {} )(),
         new (window.AigenWalletConnectProvider || class {} )(options.walletConnect || {})
       ] : [];
-      this.requiredChainId = detectEnvRequiredChain();
+      // Establish connection preference priority
+      const pref = localStorage.getItem('preferredWallet');
+      this._preferredWallet = pref && typeof pref === 'string' ? pref : null;
       ctx.set({ initialized: true, chainId: null });
     }
 
@@ -47,9 +68,8 @@
     async connect(preferred = null) {
       const list = this.detectAvailable();
       let target = null;
-      if (preferred) {
-        target = list.find(p => p.name === preferred);
-      }
+      const preference = preferred || this._preferredWallet;
+      if (preference) target = list.find(p => p.name === preference);
       if (!target) target = list[0];
       if (!target) throw new Error('No wallet providers available (EVM disabled)');
       const { accounts, chainId } = await target.connect();

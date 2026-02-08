@@ -4,15 +4,10 @@
     "http": "https://rpc.aigen.yourdomain.com",
     "ws": "wss://rpc.aigen.yourdomain.com"
   },
+  "_web3_comment": "AIGEN is NOT EVM-compatible. It uses Ed25519 signatures (like Solana), not SECP256k1 (like Ethereum). Standard Web3 wallets (MetaMask, etc.) cannot be used. Set enableEvm to false unless you have a custom EVM bridge.",
   "web3": {
     "enableEvm": false,
     "requiredChainId": null,
     "walletConnectRpc": { }
-  },
-  "chains": {
-    "polygonRpc": "https://polygon-rpc.com",
-    "bscRpc": "https://bsc-dataseed.binance.org",
-    "sepoliaRpc": "https://rpc.sepolia.org",
-    "hardhatRpc": "http://localhost:8545"
   }
 }

@@ -22,36 +22,42 @@ The admin dashboard provides a centralized interface for:
 ## Access Requirements
 
 ### Prerequisites
-- **CEO Wallet Required**: All admin operations require CEO signature verification
-- **Web3 Wallet**: MetaMask (recommended), WalletConnect, or compatible wallet
+- **CEO Key Required**: All admin operations require CEO Ed25519 signature verification
 - **AIGEN Node**: Running node with RPC enabled on port 9944 (default)
 - **Modern Browser**: Chrome, Firefox, Safari, or Edge with JavaScript enabled
 
 ### CEO Wallet Setup
 
-1. Install MetaMask browser extension
-2. Import CEO private key (generated during genesis keypair creation):
+1. Generate the CEO keypair (during genesis setup):
    ```bash
-   # CEO keypair is generated in scripts/generate_ceo_keypair.rs
-   # Keep this private key secure and never share it
+   cargo run --bin generate_ceo_keypair
    ```
-3. Connect wallet to dashboard
-4. Verify CEO address in dashboard settings
+2. Open the dashboard and click Settings (gear icon)
+3. Enter your CEO private key (64-byte hex string, seed + public key)
+4. The key is stored in browser localStorage (client-side only)
 
 ## Setup Instructions
 
 ### Local Development
 
-#### Using Python HTTP Server
+#### Using Python HTTP Server (Recommended)
 ```bash
-cd docs/admin
-python -m http.server 8081
+# IMPORTANT: Dashboard must be served via HTTP, not opened as file://
+# This is required for RPC connectivity and CORS
+
+cd dashboard
+py -m http.server 8081
 # Open http://localhost:8081 in browser
 ```
 
+**Why HTTP is required:**
+- Browser security prevents `file://` from making HTTP requests (CORS)
+- WebSocket connections require HTTP/HTTPS origin
+- LocalStorage works differently on `file://` protocol
+
 #### Using Node.js HTTP Server
 ```bash
-cd docs/admin
+cd dashboard
 npx http-server -p 8081
 # Open http://localhost:8081 in browser
 ```
@@ -71,7 +77,7 @@ docker-compose up -d
 3. Configure:
    - **RPC URL**: AIGEN node RPC endpoint (default: `http://localhost:9944`)
    - **WebSocket URL**: AIGEN node WebSocket endpoint (default: `ws://localhost:9944`)
-   - **CEO Wallet Address**: Your CEO wallet address for signature verification
+   - **CEO Private Key (Ed25519)**: 64-byte hex private key for signing admin operations
    - **Theme**: Dark mode (default) or light mode
 
 ## Features
@@ -153,11 +159,11 @@ admin_health:1094795573:1706054400
 ### Wallet Security Best Practices
 
 1. **Never share CEO private key**
-2. **Use hardware wallet** for production environments
-3. **Verify CEO address** before signing any request
+2. **Use HSM or secure key management** for production environments
+3. **Verify you are using the correct CEO key** before signing any request
 4. **Use secure connection** (HTTPS) when accessing dashboard remotely
-5. **Enable 2FA** on MetaMask if available
-6. **Regular backups** of wallet seed phrase
+5. **Restrict dashboard access** (VPN, IP allowlist, or auth gateway)
+6. **Rotate keys and audit access** per your security policy
 
 ## Common Admin Tasks
 
@@ -176,7 +182,7 @@ admin_health:1094795573:1706054400
    - Minimum Tier: Required node tier (1-3)
    - Experimental: Mark as experimental
 4. Click **Initialize Model**
-5. Sign the request with CEO wallet
+5. Sign the request with CEO Ed25519 key
 6. Model appears in registry after approval
 
 ### Approve a Model Upgrade
@@ -185,7 +191,7 @@ admin_health:1094795573:1706054400
 2. Scroll to **Model Upgrade Proposals** section
 3. Find the proposal to approve
 4. Click **Approve** button
-5. Sign the request with CEO wallet
+5. Sign the request with CEO Ed25519 key
 6. Proposal status updates to "approved"
 
 ### Monitor Node Health
@@ -207,7 +213,7 @@ admin_health:1094795573:1706054400
    - Vote type (approve/reject/abstain)
    - Comment (optional)
 4. Click **Submit Vote**
-5. Sign the request with CEO wallet
+5. Sign the request with CEO Ed25519 key
 
 ### Trigger Emergency Shutdown
 
@@ -220,15 +226,103 @@ admin_health:1094795573:1706054400
    - Nonce (unique identifier)
 4. Click **Submit Shutdown**
 5. Confirm the action
-6. Sign the request with CEO wallet
+6. Sign the request with CEO Ed25519 key
 
 ## Troubleshooting
+
+### RPC Connection Errors
+
+**Problem**: "Failed to load blocks: RPC call failed: Failed to fetch"
+
+**Root Causes**:
+1. AIGEN node is not running
+2. Dashboard served via `file://` protocol (CORS restriction)
+3. RPC endpoint URL mismatch
+4. Firewall blocking port 9944
+
+**Solutions**:
+
+**1. Verify Node is Running**:
+```bash
+# Check if node process is running
+ps aux | grep aigen-node
+
+# Check node logs
+tail -f ./data/node.log
+
+# Start the node if not running
+cargo run --release --bin aigen-node start
+```
+
+**2. Serve Dashboard via HTTP (NOT file://)**:
+```bash
+# The dashboard MUST be served over HTTP, not opened as file://
+# Use one of these methods:
+
+# Python (recommended):
+cd dashboard
+py -m http.server 8081
+# Open http://localhost:8081
+
+# Node.js:
+cd dashboard
+npx http-server -p 8081
+# Open http://localhost:8081
+
+# Docker:
+docker-compose up -d
+# Open http://localhost:8080/admin
+```
+
+**3. Verify RPC Endpoint**:
+- Open Settings in dashboard
+- Confirm RPC URL matches node configuration (default: `http://localhost:9944`)
+- Check `node/config.toml` for actual RPC address:
+  ```toml
+  [rpc]
+  rpc_addr = "127.0.0.1:9944"
+  ```
+
+**4. Test RPC Connectivity**:
+```bash
+# Test if RPC server responds
+curl -X POST http://localhost:9944 \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"health","params":[],"id":1}'
+
+# Expected response:
+# {"jsonrpc":"2.0","result":{"status":"healthy"},"id":1}
+```
+
+**5. Check Firewall**:
+```bash
+# Windows: Allow port 9944
+netsh advfirewall firewall add rule name="AIGEN RPC" dir=in action=allow protocol=TCP localport=9944
+
+# Linux: Allow port 9944
+sudo ufw allow 9944/tcp
+```
+
+**6. CORS Issues**:
+- AIGEN node has CORS enabled by default (`rpc_cors = ["*"]` in config.toml)
+- If you modified CORS settings, ensure your dashboard origin is allowed
+- Check browser console for CORS errors (F12 → Console tab)
+
+**7. Network Configuration**:
+- If accessing remotely, ensure RPC is bound to `0.0.0.0:9944` instead of `127.0.0.1:9944`
+- Update `node/config.toml`:
+  ```toml
+  [rpc]
+  rpc_addr = "0.0.0.0:9944"  # Allow remote connections
+  ```
+- **Security Warning**: Only bind to 0.0.0.0 on trusted networks or with proper authentication
 
 ### Connection Issues
 
 **Problem**: Dashboard cannot connect to AIGEN node
 
 **Solutions**:
+- See **RPC Connection Errors** for detailed troubleshooting steps
 - Verify node is running: `docker ps` or check node logs
 - Check RPC URL in settings matches node endpoint
 - Ensure port 9944 is accessible (check firewall)
@@ -242,31 +336,21 @@ admin_health:1094795573:1706054400
 - Increase reconnection delay in browser console
 - Check if node is under heavy load
 
-### Wallet Not Detected
+### CEO Key Not Configured
 
-**Problem**: "No Web3 wallet detected" error
-
-**Solutions**:
-- Install MetaMask browser extension
-- Refresh page after installation
-- Check browser compatibility
-- Try different wallet (WalletConnect, Coinbase Wallet)
-
-**Problem**: Wallet connected but CEO verification fails
+**Problem**: CEO operations fail with "CEO private key not configured"
 
 **Solutions**:
-- Verify CEO address in settings matches connected wallet
-- Ensure correct CEO wallet is imported in MetaMask
-- Check wallet is on correct network (if applicable)
-- Re-connect wallet and try again
+- Open Settings (gear icon) and enter the **CEO Private Key (Ed25519)**
+- Ensure the key is a 64-byte hex string (seed + public key)
+- Serve the dashboard over HTTP (not `file://`) so localStorage and RPC work correctly
 
 ### Signature Verification Failures
 
 **Problem**: "CEO signature verification failed" error
 
 **Solutions**:
-- Ensure CEO wallet is connected
-- Verify CEO address in settings
+- Ensure the CEO private key is correct and matches the genesis CEO public key
 - Check timestamp is current (not expired)
 - Verify message format matches expected pattern
 - Try signing request again
@@ -285,8 +369,7 @@ admin_health:1094795573:1706054400
 **Problem**: "Unauthorized" errors
 
 **Solutions**:
-- Verify CEO wallet is connected
-- Check CEO address matches genesis configuration
+- Verify the CEO private key matches the genesis configuration
 - Ensure signature is valid and not expired
 - Verify network magic is correct
 
@@ -364,11 +447,11 @@ await rpcClient.submitShutdown(timestamp, reason, nonce, signature);
 ### File Structure
 
 ```
-docs/admin/
+dashboard/
 ├── index.html              # Main dashboard HTML
 ├── app.js                  # Dashboard application logic
 ├── admin-client.js         # Admin RPC client
-├── wallet.js               # Web3 wallet integration
+├── wallet.js               # Ed25519 signing helpers (tweetnacl)
 ├── charts.js               # Chart.js visualizations
 ├── style.css               # Dashboard styles
 ├── README.md               # This file
@@ -380,14 +463,14 @@ docs/admin/
 
 - Chrome/Edge: Full support
 - Firefox: Full support
-- Safari: Full support (may require Web3 wallet compatibility)
+- Safari: Full support
 - Mobile browsers: Limited support (use desktop for best experience)
 
 ### Dependencies
 
 - Chart.js 4.4.0 (CDN)
-- Ethers.js 6.9.0 (CDN)
 - Marked.js 11.1.1 (CDN)
+- tweetnacl 1.0.3 (CDN)
 
 No build step required - all dependencies loaded via CDN.
 

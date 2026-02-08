@@ -17,7 +17,6 @@
 class AdminDashboard {
     constructor() {
         this.rpcClient = null;
-        this.walletManager = null;
         this.chartManager = null;
         this.settings = this.loadSettings();
         this.currentBlockPage = 1;
@@ -33,11 +32,11 @@ class AdminDashboard {
         
         try {
             this.rpcClient = new AdminRPCClient(this.settings.rpcUrl, this.settings.wsUrl);
-            this.walletManager = new WalletManager();
             this.chartManager = new ChartManager();
             
             this.setupEventListeners();
             this.applyTheme(this.settings.theme);
+            this.checkCeoKeyStatus();
             
             await this.connect();
             this.showLoading(false);
@@ -53,7 +52,6 @@ class AdminDashboard {
         const defaultSettings = {
             rpcUrl: 'http://localhost:9944',
             wsUrl: 'ws://localhost:9944',
-            ceoAddress: '',
             theme: 'dark',
             refreshInterval: 30
         };
@@ -67,6 +65,68 @@ class AdminDashboard {
         localStorage.setItem('adminSettings', JSON.stringify(this.settings));
     }
 
+    checkCeoKeyStatus() {
+        const ceoPrivateKey = localStorage.getItem('ceoPrivateKey');
+        const statusEl = document.querySelector('#headerKeyStatus');
+        const keyButton = document.getElementById('configureKeysButton');
+        const keyStatusText = document.getElementById('keyStatusText');
+        const keyStatusMessage = document.getElementById('keyStatusMessage');
+        
+        if (!ceoPrivateKey) {
+            statusEl.classList.add('warning');
+            statusEl.classList.remove('success');
+            keyStatusMessage.textContent = '⚠️ CEO key not configured. Click Configure Keys to set up.';
+            keyButton.classList.remove('btn-success');
+            keyButton.classList.add('btn-warning');
+            keyStatusText.textContent = 'Configure Keys';
+        } else {
+            statusEl.classList.remove('warning');
+            statusEl.classList.add('success');
+            
+            // Derive and display public key
+            try {
+                const publicKey = this.derivePublicKey(ceoPrivateKey);
+                const shortKey = this.formatHash(publicKey);
+                keyStatusMessage.textContent = `✓ CEO key configured: ${shortKey}`;
+                keyButton.classList.remove('btn-warning');
+                keyButton.classList.add('btn-success');
+                keyStatusText.textContent = 'Keys Configured';
+            } catch (error) {
+                keyStatusMessage.textContent = '⚠️ Invalid CEO key format';
+                statusEl.classList.add('warning');
+            }
+        }
+    }
+
+    derivePublicKey(privateKeyHex) {
+        if (typeof nacl === 'undefined') {
+            throw new Error('tweetnacl not loaded');
+        }
+        
+        const privateKeyBytes = this.hexToBytes(privateKeyHex);
+        if (privateKeyBytes.length !== 64) {
+            throw new Error('Invalid private key length');
+        }
+        
+        const keyPair = nacl.sign.keyPair.fromSeed(privateKeyBytes.slice(0, 32));
+        return this.bytesToHex(keyPair.publicKey);
+    }
+
+    hexToBytes(hex) {
+        hex = hex.replace(/^0x/, '');
+        const bytes = new Uint8Array(hex.length / 2);
+        for (let i = 0; i < bytes.length; i++) {
+            bytes[i] = parseInt(hex.substr(i * 2, 2), 16);
+        }
+        return bytes;
+    }
+
+    bytesToHex(bytes) {
+        return Array.from(bytes)
+            .map(b => b.toString(16).padStart(2, '0'))
+            .join('');
+    }
+
     setupEventListeners() {
         document.querySelectorAll('.tab-btn').forEach(btn => {
             btn.addEventListener('click', (e) => {
@@ -75,8 +135,7 @@ class AdminDashboard {
             });
         });
 
-        document.getElementById('walletButton').addEventListener('click', () => this.connectWallet());
-        document.getElementById('settingsButton').addEventListener('click', () => this.openSettings());
+        document.getElementById('configureKeysButton').addEventListener('click', () => this.openSettings());
         
         document.querySelectorAll('.modal-close').forEach(btn => {
             btn.addEventListener('click', () => this.closeModals());
@@ -88,16 +147,27 @@ class AdminDashboard {
 
         document.getElementById('settingsForm').addEventListener('submit', (e) => {
             e.preventDefault();
+            const ceoPrivateKey = document.getElementById('ceoPrivateKey').value.trim();
+            if (ceoPrivateKey) {
+                localStorage.setItem('ceoPrivateKey', ceoPrivateKey);
+            } else {
+                localStorage.removeItem('ceoPrivateKey');
+                this.updateDerivedKey('');
+            }
             this.saveSettings({
                 rpcUrl: document.getElementById('rpcUrl').value,
                 wsUrl: document.getElementById('wsUrl').value,
-                ceoAddress: document.getElementById('ceoAddress').value,
-                ceoPrivateKey: document.getElementById('ceoPrivateKey').value,
                 theme: document.getElementById('themeSelect').value
             });
             this.closeModals();
             this.showNotification('Settings saved', 'success');
+            this.checkCeoKeyStatus();
         });
+
+        document.getElementById('generateKeypairBtn').addEventListener('click', () => this.generateNewKeypair());
+        document.getElementById('toggleKeyVisibility').addEventListener('click', () => this.toggleKeyVisibility());
+        document.getElementById('copyPublicKeyBtn').addEventListener('click', () => this.copyPublicKey());
+        document.getElementById('ceoPrivateKey').addEventListener('input', (e) => this.updateDerivedKey(e.target.value));
 
         document.getElementById('initModelBtn').addEventListener('click', () => this.showInitModelForm());
         document.getElementById('initModelForm').addEventListener('submit', (e) => this.submitInitModel(e));
@@ -129,67 +199,32 @@ class AdminDashboard {
             if (e.key === 'Escape') this.closeModals();
         });
 
-        if (window.ethereum) {
-            window.ethereum.on('accountsChanged', (accounts) => {
-                if (accounts.length === 0) {
-                    this.showNotification('Wallet disconnected', 'warning');
-                } else {
-                    this.verifyCeoAccess(accounts[0]);
-                }
-            });
-            
-            window.ethereum.on('chainChanged', () => {
-                window.location.reload();
-            });
-        }
     }
 
     async connect() {
         try {
-            await this.rpcClient.connect();
+            this.updateConnectionStatus('connecting');
+            // Pass maxRetries and status callback
+            await this.rpcClient.connect(3, (status, msg) => {
+                // Determine state based on status string or explicit status
+                if (status === 'connecting' || status.includes('Connecting') || status.includes('Checking')) {
+                    this.updateConnectionStatus('connecting', msg || status);
+                } else if (status === 'disconnected') {
+                    this.updateConnectionStatus('disconnected', msg);
+                } else if (status === 'error') {
+                     this.updateConnectionStatus('error', msg);
+                }
+            });
             this.updateConnectionStatus('connected');
-            const walletAddress = await this.walletManager.getAddress().catch(() => null);
-            if (walletAddress) this.verifyCeoAccess(walletAddress);
             
             this.loadBlocks(1);
             if (document.querySelector('#healthTab').classList.contains('active')) {
                 this.initializeMetricsFlow();
             }
         } catch (error) {
-            this.updateConnectionStatus('disconnected');
+            this.updateConnectionStatus('error', error.message);
             throw error;
         }
-    }
-
-    async connectWallet() {
-        try {
-            const address = await this.walletManager.connect();
-            this.verifyCeoAccess(address);
-            this.updateWalletButton(address);
-            this.showNotification('Wallet connected successfully', 'success');
-        } catch (error) {
-            this.showNotification(`Wallet connection failed: ${error.message}`, 'error');
-        }
-    }
-
-    verifyCeoAccess(address) {
-        if (!this.rpcClient.verifyCeoWallet(address)) {
-            this.showNotification('Warning: Connected wallet is not the CEO address', 'warning');
-        } else {
-            this.showNotification('CEO wallet verified', 'success');
-        }
-    }
-
-    updateWalletButton(address) {
-        const btn = document.getElementById('walletButton');
-        btn.innerHTML = `
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M20 12V8H6a2 2 0 0 1-2-2c0-1.1.9-2 2-2h12v4"/>
-                <path d="M4 6v12c0 1.1.9 2 2 2h14v-4"/>
-                <path d="M18 12a2 2 0 0 0 0 4h4v-4h-4z"/>
-            </svg>
-            <span>${this.formatHash(address)}</span>
-        `;
     }
 
     switchTab(tabName) {
@@ -398,16 +433,6 @@ class AdminDashboard {
 
         try {
             this.showLoading(true);
-
-            // Get user address from wallet or prompt
-            const userAddress = await this.walletManager.getAddress();
-            if (!userAddress) {
-                throw new Error('No wallet connected');
-            }
-
-            // For now, loadModel requires a signed transaction
-            // This is complex to implement in browser without full transaction signing
-            // Show message that this feature needs additional implementation
             this.showNotification('Load model requires signed transaction. This feature is under development.', 'warning');
         } catch (error) {
             this.showNotification(`Failed to load model: ${error.message}`, 'error');
@@ -709,8 +734,8 @@ class AdminDashboard {
     openSettings() {
         document.getElementById('rpcUrl').value = this.settings.rpcUrl;
         document.getElementById('wsUrl').value = this.settings.wsUrl;
-        document.getElementById('ceoAddress').value = this.settings.ceoAddress || '';
-        document.getElementById('ceoPrivateKey').value = this.settings.ceoPrivateKey || '';
+        document.getElementById('ceoPrivateKey').value = localStorage.getItem('ceoPrivateKey') || '';
+        this.updateDerivedKey(document.getElementById('ceoPrivateKey').value);
         document.getElementById('themeSelect').value = this.settings.theme;
         document.getElementById('settingsModal').classList.add('active');
     }
@@ -748,13 +773,34 @@ class AdminDashboard {
         overlay.style.display = show ? 'flex' : 'none';
     }
 
-    updateConnectionStatus(status) {
+    updateConnectionStatus(status, message = null) {
         const statusEl = document.getElementById('connectionStatus');
         const dot = statusEl.querySelector('.status-dot');
         const text = statusEl.querySelector('.status-text');
         
         statusEl.className = `connection-status status-${status}`;
-        text.textContent = status === 'connected' ? 'Connected' : 'Disconnected';
+        
+        if (message) {
+            text.textContent = message;
+            return;
+        }
+
+        switch (status) {
+            case 'connected':
+                text.textContent = 'Connected';
+                break;
+            case 'connecting':
+                text.textContent = 'Connecting to node...';
+                break;
+            case 'disconnected':
+                text.textContent = 'Disconnected - Check if node is running';
+                break;
+            case 'error':
+                text.textContent = message || 'Connection Error';
+                break;
+            default:
+                text.textContent = status;
+        }
     }
 
     formatHash(hash) {
@@ -814,6 +860,107 @@ class AdminDashboard {
                 delay *= 2;
             }
         }
+    }
+
+    generateNewKeypair() {
+        if (typeof nacl === 'undefined') {
+            this.showNotification('tweetnacl library not loaded', 'error');
+            return;
+        }
+        
+        if (!confirm('Generate a new keypair? This will replace any existing key in the form (not saved until you click Save Settings).')) {
+            return;
+        }
+        
+        try {
+            // Generate new Ed25519 keypair
+            const keyPair = nacl.sign.keyPair();
+            
+            // Combine seed (32 bytes) + public key (32 bytes) = 64 bytes
+            const privateKey = new Uint8Array(64);
+            privateKey.set(keyPair.secretKey.slice(0, 32), 0); // seed
+            privateKey.set(keyPair.publicKey, 32); // public key
+            
+            const privateKeyHex = this.bytesToHex(privateKey);
+            const publicKeyHex = this.bytesToHex(keyPair.publicKey);
+            
+            // Update form
+            document.getElementById('ceoPrivateKey').value = privateKeyHex;
+            this.updateDerivedKey(privateKeyHex);
+            
+            this.showNotification('New keypair generated! Save settings to persist.', 'success');
+            
+            // Show download prompt
+            this.promptKeypairDownload(privateKeyHex, publicKeyHex);
+        } catch (error) {
+            this.showNotification(`Key generation failed: ${error.message}`, 'error');
+        }
+    }
+
+    promptKeypairDownload(privateKeyHex, publicKeyHex) {
+        const data = {
+            privateKey: privateKeyHex,
+            publicKey: publicKeyHex,
+            address: publicKeyHex,
+            warning: 'KEEP THIS PRIVATE KEY SECURE! Anyone with this key has full CEO authority.',
+            generated: new Date().toISOString()
+        };
+        
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `aigen-ceo-keypair-${Date.now()}.json`;
+        a.click();
+        URL.revokeObjectURL(url);
+        
+        this.showNotification('Keypair downloaded. Store it securely!', 'warning');
+    }
+
+    updateDerivedKey(privateKeyHex) {
+        const derivedKeyInfo = document.getElementById('derivedKeyInfo');
+        const derivedPublicKey = document.getElementById('derivedPublicKey');
+        
+        if (!privateKeyHex || privateKeyHex.trim() === '') {
+            derivedKeyInfo.style.display = 'none';
+            return;
+        }
+        
+        try {
+            const publicKey = this.derivePublicKey(privateKeyHex);
+            derivedPublicKey.textContent = publicKey;
+            derivedKeyInfo.style.display = 'block';
+        } catch (error) {
+            derivedKeyInfo.style.display = 'none';
+        }
+    }
+
+    toggleKeyVisibility() {
+        const input = document.getElementById('ceoPrivateKey');
+        const button = document.getElementById('toggleKeyVisibility');
+        
+        if (input.type === 'password') {
+            input.type = 'text';
+            button.title = 'Hide key';
+        } else {
+            input.type = 'password';
+            button.title = 'Show key';
+        }
+    }
+
+    copyPublicKey() {
+        const publicKey = document.getElementById('derivedPublicKey').textContent;
+        
+        if (publicKey === '-') {
+            this.showNotification('No public key to copy', 'error');
+            return;
+        }
+        
+        navigator.clipboard.writeText(publicKey).then(() => {
+            this.showNotification('Public key copied to clipboard', 'success');
+        }).catch(() => {
+            this.showNotification('Failed to copy to clipboard', 'error');
+        });
     }
 }
 

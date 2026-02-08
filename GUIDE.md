@@ -1,488 +1,217 @@
-<!--
-Copyright (c) 2025-present Cesar Saguier Antebi
+# AIGEN Blockchain Complete Guide
 
-This file is part of AIGEN Blockchain.
+## Table of Contents
+1. [Prerequisites & System Requirements](#prerequisites--system-requirements)
+2. [Quick Start (5 Minutes)](#quick-start-5-minutes)
+3. [Jan AI Model Setup](#jan-ai-model-setup)
+4. [Admin Dashboard Setup](#admin-dashboard-setup)
+5. [Development Environment](#development-environment)
+6. [Multi-Node Deployment](#multi-node-deployment)
+7. [Production Deployment](#production-deployment)
+8. [CEO Operations](#ceo-operations)
+9. [API & SDK Usage](#api--sdk-usage)
+10. [Troubleshooting](#troubleshooting)
+11. [Security & Best Practices](#security--best-practices)
 
-This source code is licensed under the Business Source License 1.1
-found in the LICENSE file in the root directory of this source tree.
--->
+---
 
-# AIGEN Blockchain Noob Startup Guide
-
-> Production Deployment Guide available here: [PRODUCTION_GUIDE.md](file:///d:/Code/AIGEN/docs/PRODUCTION_GUIDE.md). Use it to configure the Admin Dashboard and nodes for a production environment with proper security, configuration loading, and validation.
-
-## What You Need Before Starting
+## Prerequisites & System Requirements
 
 ### System Requirements
 - **RAM:** 4GB minimum (8GB recommended)
 - **Storage:** 10GB free disk space
 - **OS:** Windows 10/11, macOS, or Linux
 
+### Windows 11 Enhanced Requirements (for AI Models)
+- **RAM:** 16GB minimum (32GB recommended)
+- **Storage:** 50GB free disk space
+- **GPU:** NVIDIA GPU with CUDA support (recommended)
+- **Software:** Visual Studio Build Tools, WSL2
+
 ### Required Software
-1. **Rust** - Install from https://rustup.rs/
-2. **Docker Desktop** - Install from https://www.docker.com/products/docker-desktop/
-3. **Git** - Install from https://git-scm.com/
+1. **Rust** - Install from [rustup.rs](https://rustup.rs/)
+2. **Docker Desktop** - Install from [docker.com](https://www.docker.com/products/docker-desktop/)
+3. **Git** - Install from [git-scm.com](https://git-scm.com/)
+4. **Node.js** (16+) & **Python** (3.8+) - For dashboard and SDKs
 
 ---
 
-## Step 1: Install Prerequisites
+## Quick Start (5 Minutes)
 
-### Install Rust
-```powershell
-# Download and run rustup-init.exe from https://rustup.rs/
-# Follow the installation prompts
-# Restart PowerShell after installation
+### 1. Clone and Build
+```bash
+git clone https://github.com/your-org/aigen.git
+cd AIGEN
+cargo build --release
 ```
 
-### Install Docker Desktop
-1. Download Docker Desktop from the official website
-2. Install with default settings
-3. Start Docker Desktop (it will run in background)
-4. Verify installation:
-```powershell
-docker --version
-docker info
-```
-
----
-
-## Windows 11 Specific Deployment Guide
-
-### Enhanced System Requirements for Windows 11
-- **RAM:** 16GB minimum (32GB recommended for AI model loading)
-- **Storage:** 50GB free disk space (20GB for project + 30GB for AI models)
-- **GPU:** NVIDIA GPU with CUDA support (recommended but not required)
-- **OS:** Windows 11 with latest updates
-
-### Windows 11 Prerequisites
-1. **Visual Studio Build Tools** - Required for some Rust crates
-2. **WSL2** - For better Linux compatibility (recommended)
-
-### Step 1.1: Install Windows-Specific Prerequisites
-
-```powershell
-# Install Visual Studio Build Tools (run as Administrator)
-# Download from: https://visualstudio.microsoft.com/visual-cpp-build-tools/
-# Select "C++ build tools" during installation
-
-# Install WSL2 (recommended)
-wsl --install
-# This will install WSL2 and Ubuntu by default
-
-# Enable Windows features for Docker
-dism.exe /online /enable-feature /featurename:Microsoft-Windows-Subsystem-Linux /all /norestart
-dism.exe /online /enable-feature /featurename:VirtualMachinePlatform /all /norestart
-
-# Restart your computer after these changes
-```
-
-### Step 1.2: Install Development Tools via Winget
-
-```powershell
-# Install Rust, Git, and Docker using winget (run PowerShell as Administrator)
-winget install Rustlang.Rust.MSVC
-winget install Git.Git
-winget install Docker.DockerDesktop
-
-# Verify installations
-rustc --version
-cargo --version
-git --version
-docker --version
-```
-
-### Step 1.3: Configure Docker for Windows
-
-1. **Start Docker Desktop** after installation
-2. **Enable WSL2 integration:**
-   - Open Docker Desktop settings
-   - Go to Resources → WSL Integration
-   - Enable "Use WSL 2 based engine"
-   - Enable integration with your WSL distributions
-
-### JAN AI Model Integration
-
-Since you have a JAN AI AI model, follow these additional steps:
-
-```powershell
-# Create models directory if it doesn't exist
-mkdir -p models
-
-# Place your JAN AI model files in the models directory
-# Ensure your model is in a compatible format (ONNX, Safetensors, etc.)
-
-# Register the JAN AI model in the system
-# This requires modifying the genesis configuration or using admin RPC
-```
-
-### Initialize Node with JAN AI Model
-
-```powershell
-# Initialize node with JAN AI model as worker
-cargo run -p node --bin node -- init --node-id jan-worker-1 --model jan-model --role worker
+### 2. Initialize and Start Node
+```bash
+# Initialize a single node
+cargo run -p node --bin node -- init --node-id my-node
 
 # Start the node
 cargo run -p node --bin node -- start
 ```
 
-### Windows-Specific Troubleshooting
-
-#### Common Issues and Solutions
-
-1. **Build Errors with Visual Studio:**
-```powershell
-# Clean and rebuild
-cargo clean
-cargo build --release
-
-# If still failing, check for missing C++ tools
-# Install Visual Studio 2022 Community with C++ development tools
-```
-
-2. **Docker Issues on Windows:**
-```powershell
-# Reset Docker to factory defaults
-# Open Docker Desktop → Settings → Reset → Reset to factory defaults
-
-# Check Docker is running
-docker info
-docker version
-```
-
-3. **Memory Issues with Large Models:**
-```powershell
-# Increase virtual memory if needed
-# Go to System Properties → Advanced → Performance Settings → Advanced → Virtual Memory → Change
-
-# Set custom page file size (recommend 1.5x your RAM)
-```
-
-#### Performance Optimization for Windows
-
-1. **Enable GPU Acceleration (if available):**
-   - Install NVIDIA CUDA Toolkit
-   - Ensure Docker Desktop can access GPU
-   - Configure model loading to use GPU
-
-2. **Optimize Docker Settings:**
-   - Allocate more RAM to Docker (recommended 8GB+)
-   - Increase CPU allocation
-   - Use WSL2 backend for better performance
-
-3. **Windows Defender Exclusions:**
-   - Add your AIGEN project folder to Windows Defender exclusions
-   - Exclude Docker containers from real-time scanning
-
-### Test JAN AI Model Deployment
-
-```powershell
-# Test the RPC API
-$body = @{
-    jsonrpc = "2.0"
-    id = 1
-    method = "getChainInfo"
-    params = @()
-} | ConvertTo-Json -Depth 10
-
-Invoke-RestMethod -Uri "http://localhost:9944" -Method POST -ContentType "application/json" -Body $body
-
-# Test JAN AI model availability
-$body = @{
-    jsonrpc = "2.0"
-    id = 2
-    method = "getModelInfo"
-    params = @(@{model_id = "jan-model"})
-} | ConvertTo-Json -Depth 10
-
-Invoke-RestMethod -Uri "http://localhost:9944" -Method POST -ContentType "application/json" -Body $body
-
-# Test chat completion with JAN AI model
-$body = @{
-    jsonrpc = "2.0"
-    id = 3
-    method = "chatCompletion"
-    params = @{
-        messages = @(
-            @{role = "user"; content = "Hello JAN AI model!"}
-        )
-        model_id = "jan-model"
-        stream = $false
-    }
-} | ConvertTo-Json -Depth 10
-
-Invoke-RestMethod -Uri "http://localhost:9944" -Method POST -ContentType "application/json" -Body $body
+### 3. Verify Connection
+```bash
+# Check system health
+curl -X POST http://localhost:9944 \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"system_health","params":[]}'
 ```
 
 ---
 
-## Step 2: Get the Code
+## Jan AI Model Setup
 
-```powershell
-# If you haven't already cloned the repository
-git clone <repository-url>
-cd AIGEN
-```
+AIGEN includes a pre-configured Mistral model for AI inference.
+
+### Model Location
+- Model file: `model/Mistral/model.gguf`
+- Configuration: `model/Mistral/model.yml`
+
+### Setup Instructions
+
+1. **Download Jan AI Desktop** (optional for model management):
+   - Visit `https://jan.ai`
+   - Download and install Jan AI for your platform
+   - Jan AI provides a user-friendly interface for managing GGUF models
+
+2. **Verify Model Files**:
+   ```bash
+   # Check model exists
+   ls -lh model/Mistral/model.gguf
+   
+   # View model configuration
+   cat model/Mistral/model.yml
+   ```
+
+3. **Configure Model in AIGEN**:
+   ```bash
+   # The model is automatically registered during genesis
+   # To verify model is available:
+   curl -X POST http://localhost:9944 \
+     -H "Content-Type: application/json" \
+     -d '{"jsonrpc":"2.0","method":"listModels","params":[],"id":1}'
+   ```
+
+4. **Initialize Node with Mistral Model**:
+   ```bash
+   # Initialize as AI worker node
+   cargo run -p node --bin node -- init \
+     --node-id mistral-worker-1 \
+     --model mistral-7b \
+     --role worker
+   
+   # Start the node
+   cargo run -p node --bin node -- start
+   ```
+
+5. **Test Model Inference**:
+   ```bash
+   curl -X POST http://localhost:9944 \
+     -H "Content-Type: application/json" \
+     -d '{
+       "jsonrpc":"2.0",
+       "method":"chatCompletion",
+       "params":{
+         "messages":[{"role":"user","content":"Hello!"}],
+         "model_id":"mistral-7b",
+         "stream":false
+       },
+       "id":1
+     }'
+   ```
+
+### Model Configuration Details
+
+The `model/Mistral/model.yml` contains:
+- `model_path`: Path to GGUF model file
+- `name`: Model identifier
+- `size_bytes`: Model size for resource planning
+- `embedding`: Whether model supports embeddings
+
+### Using Jan AI for Model Management
+
+Jan AI can be used to:
+- Browse and download additional GGUF models
+- Test models locally before deploying to AIGEN
+- Convert models to GGUF format
+- Manage model versions
+
+To use a Jan AI model with AIGEN:
+1. Export model from Jan AI to `model/` directory
+2. Create corresponding `model.yml` configuration
+3. Register model via admin dashboard or genesis configuration
+4. Initialize nodes with the new model
 
 ---
 
-## Step 3: Build the Project
+## Admin Dashboard Setup
 
-```powershell
-# Build the entire blockchain project
-cargo build --release
+The admin dashboard is located at `dashboard/` (root level).
 
-# This will take a few minutes and download dependencies
-# You should see "Finished release profile" at the end
-```
-
----
-
-## Step 4: Test Single Node (Quick Start)
-
-### Option A: Using Cargo (Easier)
-
-```powershell
-# Initialize a node
-cargo run -p node --bin node -- init --node-id my-node
-
-# Start the node (this will keep running)
-cargo run -p node --bin node -- start
-```
-
-### Option B: Using Built Binary
-
-```powershell
-# Initialize a node
-.\target\release\node.exe init --node-id my-node
-
-# Start the node (this will keep running)
-.\target\release\node.exe start
-```
-
-### Test if Node is Working
-
-**Open a NEW PowerShell window** (leave the node running in the first window):
-
-```powershell
-# Test the RPC API
-$body = @{
-    jsonrpc = "2.0"
-    id = 1
-    method = "getChainInfo"
-    params = @()
-} | ConvertTo-Json -Depth 10
-
-Invoke-RestMethod -Uri "http://localhost:9944" -Method POST -ContentType "application/json" -Body $body
-```
-
-**Expected Response:**
-```json
-{
-  "jsonrpc": "2.0",
-  "result": {
-    "chain_id": 13044767616725935409,
-    "height": 0,
-    "latest_block_hash": "0xe7a898896df73c59c4d0dc6e3e7e1d7a...",
-    "shutdown_status": false,
-    "total_supply": 0
-  },
-  "id": 1
-}
-```
-
----
-
-## Step 4.5: Initialize with AI Model (Optional)
-
-### Register Core AI Model
-
-Before initializing nodes with AI capabilities, register the model metadata:
-
-```powershell
-# Example: Register Mistral-7B model
-# (In production, this would be done via governance/admin RPC)
-# For testing, models are pre-registered in the genesis configuration
-```
-
-### Initialize AI Worker Node
-
-```powershell
-# Initialize node with core AI model
-cargo run -p node --bin node -- init --node-id ai-worker-1 --model mistral-7b --role worker
-
-# Start the AI worker node
-cargo run -p node --bin node -- start
-```
-
-**What happens during startup:**
-1. Node checks if `mistral-7b` exists in model registry
-2. Queries network for model shards
-3. Downloads missing shards (with 30-second timeout)
-4. Verifies shard integrity (SHA-256)
-5. Loads model into memory
-6. Announces shard availability to network
-
-**Expected output:**
-```
-loading core model: mistral-7b
-downloading 4 missing shards for core model
-core model shards downloaded successfully
-loading core model into memory...
-core model loaded successfully: mistral-7b
-core AI model ready for inference
-```
-
-### Initialize Non-Worker Node
-
-```powershell
-# Regular node without AI inference
-cargo run -p node --bin node -- init --node-id full-node-1
-
-# Or specify model but not as worker (lazy loading)
-cargo run -p node --bin node -- init --node-id full-node-2 --model mistral-7b
-```
-
-**Worker vs Non-Worker:**
-- **Worker nodes** (`--role worker`): Require core model on startup, fail if unavailable
-- **Non-worker nodes**: Continue without core model, load on-demand via RPC
-
-### Troubleshooting Model Loading
-
-**Timeout errors:**
-```powershell
-# Increase timeout via environment variable
-$env:AIGEN_MODEL_DOWNLOAD_TIMEOUT_SECS = "60"
-cargo run -p node --bin node -- start
-```
-
-**Missing model metadata:**
-```
-Error: core model 'mistral-7b' not found in registry
-```
-Solution: Register model metadata via admin RPC or genesis configuration
-
-**Insufficient peers:**
-```
-warning: core model redundancy below target (2 < 5)
-```
-Solution: Start more nodes with the same model to increase redundancy
-
-## AI Model Management
-
-### Model Registry Operations
-
-```powershell
-# List models
-$body = @{jsonrpc="2.0";id=1;method="listModels";params=@()} | ConvertTo-Json
-Invoke-RestMethod -Uri "http://localhost:9944" -Method POST -ContentType "application/json" -Body $body
-
-# Get model info
-$body = @{jsonrpc="2.0";id=2;method="getModelInfo";params=@(@{model_id="mistral-7b"})} | ConvertTo-Json
-Invoke-RestMethod -Uri "http://localhost:9944" -Method POST -ContentType "application/json" -Body $body
-
-# Load model
-$body = @{jsonrpc="2.0";id=3;method="loadModel";params=@(@{model_id="llama2-13b"})} | ConvertTo-Json
-Invoke-RestMethod -Uri "http://localhost:9944" -Method POST -ContentType "application/json" -Body $body
-```
+### Quick Start
 
 ```bash
-# curl examples
-curl -s -X POST http://localhost:9944 -H 'content-type: application/json' \
-  -d '{"jsonrpc":"2.0","id":1,"method":"listModels","params":[]}'
+# Navigate to dashboard directory
+cd dashboard
 
-curl -s -X POST http://localhost:9944 -H 'content-type: application/json' \
-  -d '{"jsonrpc":"2.0","id":2,"method":"getModelInfo","params":[{"model_id":"mistral-7b"}]}'
+# Serve with Python (recommended)
+py -m http.server 8081
 
-curl -s -X POST http://localhost:9944 -H 'content-type: application/json' \
-  -d '{"jsonrpc":"2.0","id":3,"method":"loadModel","params":[{"model_id":"llama2-13b"}]}'
+# Or with Node.js
+npx http-server -p 8081
+
+# Open http://localhost:8081 in browser
 ```
 
-### Shard Management
+### Configuration
 
-- Check shard availability by listing shard locations for a model
-- Verify redundancy target by ensuring each shard has at least 3 locations
+1. Copy sample configuration:
+   ```bash
+   cp dashboard/config.sample.json dashboard/config.json
+   ```
 
-### Model Switching
+2. Edit `dashboard/config.json`:
+   ```json
+   {
+     "rpc": {
+       "http": "http://localhost:9944",
+       "ws": "ws://localhost:9944"
+     },
+     "web3": {
+       "enableEvm": false
+     }
+   }
+   ```
 
-- Unload old model if necessary and load new core model
-- Restart worker nodes when changing core models to ensure preload
+3. Configure CEO key in dashboard Settings
 
-## Subscription Tier Management
+### Important: AIGEN is NOT EVM-Compatible
 
-### Purchase Subscription
+AIGEN uses Ed25519 cryptography (like Solana), NOT EVM/SECP256k1 (like Ethereum).
 
-```powershell
-$payload = @{ tier="pro"; duration_months=1; user_address="0x..." } | ConvertTo-Json
-$tx = @{
-  sender="0x..."; receiver="0x..."; amount=400;
-  timestamp=1730000000; nonce=1; priority=$false; chain_id=1;
-  payload= $payload
-} | ConvertTo-Json -Depth 10
-$body = @{jsonrpc="2.0";id=1;method="subscribeTier";params=@($tx)} | ConvertTo-Json -Depth 12
-Invoke-RestMethod -Uri "http://localhost:9944" -Method POST -ContentType "application/json" -Body $body
-```
+- ❌ MetaMask, Coinbase Wallet, Trust Wallet **CANNOT** be used
+- ❌ Not compatible with Ethereum, Polygon, BSC, Sepolia
+- ✅ Uses Ed25519 key pairs (same as Solana, Cardano, Polkadot)
+- ✅ CEO operations require Ed25519 private key in dashboard settings
 
+For detailed dashboard documentation, see `dashboard/README.md`
+
+---
+
+## Development Environment
+
+### Windows Specifics
+- Install Visual Studio Build Tools
+- Use WSL2 for best compatibility
+- Increase Docker memory allocation (8GB+)
+
+### Running Tests
 ```bash
-curl -s -X POST http://localhost:9944 -H 'content-type: application/json' \
-  -d '{
-    "jsonrpc":"2.0","id":1,"method":"subscribeTier","params":[
-      {"sender":"0x...","receiver":"0x...","amount":400,"timestamp":1730000000,"nonce":1,"priority":false,"chain_id":1,
-       "payload":"{\"tier\":\"pro\",\"duration_months\":1,\"user_address\":\"0x...\"}"}
-    ]}'
-```
-
-### Check Quota
-
-```powershell
-$body = @{jsonrpc="2.0";id=2;method="checkQuota";params=@()} | ConvertTo-Json
-Invoke-RestMethod -Uri "http://localhost:9944" -Method POST -ContentType "application/json" -Body $body
-```
-
-### Tier Comparison
-
-- Free: 10 requests/month, ads, basic models, 1K context
-- Basic: 100/month, 50 AIGEN, no ads, basic models, 4K context
-- Pro: 1000/month, 400 AIGEN, no ads, all models, 16K context
-- Unlimited: pay-per-use (1 AIGEN/1K tokens), volume discounts, all models, 32K context
-
-## Batch Processing
-
-### Submit Batch Job
-
-```powershell
-$payload = @{ user_address="0x..."; model_id="mistral-7b"; input_data=@( @{input="Hello"} ); priority="standard" } | ConvertTo-Json -Depth 10
-$tx = @{ sender="0x..."; receiver="0x..."; amount=10; timestamp=1730000000; nonce=1; chain_id=1; payload=$payload } | ConvertTo-Json -Depth 12
-$body = @{jsonrpc="2.0";id=1;method="submitBatchRequest";params=@($tx)} | ConvertTo-Json -Depth 12
-Invoke-RestMethod -Uri "http://localhost:9944" -Method POST -ContentType "application/json" -Body $body
-```
-
-```bash
-curl -s -X POST http://localhost:9944 -H 'content-type: application/json' \
-  -d '{"jsonrpc":"2.0","id":1,"method":"submitBatchRequest","params":[{"sender":"0x...","receiver":"0x...","amount":10,"timestamp":1730000000,"nonce":1,"chain_id":1,"payload":"{\"user_address\":\"0x...\",\"model_id\":\"mistral-7b\",\"input_data\":[{\"input\":\"Hello\"}],\"priority\":\"standard\"}"}]}'
-```
-
-### Get Batch Status
-
-```powershell
-$body = @{jsonrpc="2.0";id=2;method="getBatchStatus";params=@(@{job_id="batch-123"})} | ConvertTo-Json
-Invoke-RestMethod -Uri "http://localhost:9944" -Method POST -ContentType "application/json" -Body $body
-```
-
-### Pricing
-
-- Standard: 10 AIGEN (immediate)
-- Batch: 5 AIGEN (24-hour delay)
-- Economy: 3 AIGEN (72-hour delay)
-
-## Troubleshooting AI Operations
-
-- Model loading failures: increase timeout, register metadata, ensure peers
-- Inference errors: check quota, ensure model loaded, verify shutdown not active
-- Batch job failures: validate payment, check scheduling windows
-
-## Running Tests
-
-```powershell
 # Unit tests
 cargo test -p model
 
@@ -493,352 +222,131 @@ cargo test --test ai_node_integration_test
 cargo test --workspace
 ```
 
-### Test Environment Variables
+---
 
-- AIGEN_RUN_LARGE_SHARD_TEST
-- ORT_DYLIB_PATH
+## Multi-Node Deployment
 
-## Testing AI Features
-
-- Model loading: verify core model loads on startup
-- Inference: submit chat request and validate response
-- Tier transitions: purchase subscription and verify quota
-- Batch processing: submit batch job and check status
-
-## Step 5: Multi-Node Testnet (Full Experience)
-
-## Step 5: Multi-Node Testnet (Full Experience)
-
-### Windows PowerShell Method
-
-```powershell
-# Go to docker directory
+### Using Docker Compose
+```bash
 cd docker
-
-# Build Docker image
-docker build -t aigen-node:latest ..
-
-# Create data directories
-mkdir data/bootstrap
-mkdir data/full-node-1
-mkdir data/full-node-2
-mkdir data/miner
-mkdir data/validator
-
-# Generate keypairs for each node
-docker run --rm -v "${PWD}/data/bootstrap:/data" aigen-node:latest keygen --output /data/node_keypair.bin
-docker run --rm -v "${PWD}/data/full-node-1:/data" aigen-node:latest keygen --output /data/node_keypair.bin
-docker run --rm -v "${PWD}/data/full-node-2:/data" aigen-node:latest keygen --output /data/node_keypair.bin
-docker run --rm -v "${PWD}/data/miner:/data" aigen-node:latest keygen --output /data/node_keypair.bin
-docker run --rm -v "${PWD}/data/validator:/data" aigen-node:latest keygen --output /data/node_keypair.bin
-
-# Get bootstrap peer ID
-$bootstrapPeer = docker run --rm -v "${PWD}/data/bootstrap:/data" aigen-node:latest keygen --output /data/_tmp.bin --show-peer-id 2>&1
-Write-Host "Bootstrap peer ID: $bootstrapPeer"
-
-# Start the network
 docker-compose up -d
 ```
 
-### Alternative: Use WSL (Linux Subsystem)
-
-If you have WSL installed:
-```powershell
-wsl
-cd /mnt/d/Code/AIGEN/docker
-./scripts/init-network.sh
-./scripts/start-network.sh
-```
-
-### Test Multi-Node Network
-
-```powershell
-# Test different nodes (each has different RPC port)
-$ports = @(9944, 9945, 9946, 9947, 9948)
-foreach ($port in $ports) {
-    Write-Host "Testing port $port..."
-    try {
-        $body = @{jsonrpc="2.0";id=1;method="getChainInfo";params=@()} | ConvertTo-Json
-        $response = Invoke-RestMethod -Uri "http://localhost:$port" -Method POST -ContentType "application/json" -Body $body
-        Write-Host "✅ Port $port: Chain height $($response.result.height)"
-    } catch {
-        Write-Host "❌ Port $port: Not responding"
-    }
-}
-```
-
----
-
-## Step 6: Monitor Your Network
-
-### Check Node Status
-```powershell
-# See running containers
-docker ps
-
-# View logs for all nodes
+### Monitor Network
+```bash
+# Check logs
 docker-compose logs -f
 
-# View logs for specific node
-docker-compose logs -f bootstrap-node
+# Check node status
+docker ps
 ```
 
-### Monitor Network Health
-```powershell
-# Real-time monitoring script
-while ($true) {
-    Clear-Host
-    Write-Host "=== AIGEN Network Status ===" -ForegroundColor Green
-    Write-Host "Time: $(Get-Date)"
-    
-    $ports = @(9944, 9945, 9946, 9947, 9948)
-    $nodeNames = @("Bootstrap", "Full-1", "Full-2", "Miner", "Validator")
-    
-    for ($i = 0; $i -lt $ports.Length; $i++) {
-        try {
-            $body = @{jsonrpc="2.0";id=$i;method="getChainInfo";params=@()} | ConvertTo-Json
-            $response = Invoke-RestMethod -Uri "http://localhost:$($ports[$i])" -Method POST -ContentType "application/json" -Body $body -TimeoutSec 2
-            Write-Host "$($nodeNames[$i]): Height $($response.result.height) | Shutdown: $($response.result.shutdown_status)" -ForegroundColor Green
-        } catch {
-            Write-Host "$($nodeNames[$i]): Offline" -ForegroundColor Red
-        }
-    }
-    
-    Start-Sleep 5
-}
-```
+### Network Architecture
+- **Bootstrap Node**: Initial discovery point (port 9000)
+- **Full Nodes**: Store blockchain history
+- **Validators**: Participate in consensus
+- **Miners**: Generate new blocks
 
 ---
 
-## Step 7: Common Troubleshooting
+## Production Deployment
 
-### Node Won't Start
-```powershell
-# Check if port is already in use
-netstat -an | findstr 9944
+> **⚠️ IMPORTANT**: AIGEN Blockchain is licensed under the **Business Source License 1.1**. Production use requires a commercial license.
 
-# Kill existing node process
-taskkill /f /im node.exe
+### Cloud Providers
+- **AWS**: EC2 (t3.large/c6i.large), ALB for RPC
+- **DigitalOcean**: Droplets (4GB+ RAM)
+- **GCP**: Compute Engine or GKE
 
-# Try different port
-.\target\release\node.exe start --rpc-port 9945
-```
+### Best Practices
+- **Security**: Restrict RPC access, allow P2P
+- **TLS**: Use Nginx/Traefik for SSL termination
+- **Monitoring**: Track RPC latency, peer count, block height
+- **Backups**: Regular snapshots of data volumes
 
-### Docker Issues
-```powershell
-# Check Docker status
-docker info
-
-# Clean up Docker
-docker system prune -a
-
-# Rebuild image
-docker build -t aigen-node:latest .. --no-cache
-```
-
-### Network Connection Issues
-```powershell
-# Check if nodes can communicate
-docker network ls
-docker network inspect aigen_default
-
-# Restart network
-docker-compose down
-docker-compose up -d
-```
-
-### Build Errors
-```powershell
-# Clean build
-cargo clean
-cargo build --release
-
-# Update dependencies
-cargo update
-```
+See [docs/PRODUCTION_GUIDE.md](docs/PRODUCTION_GUIDE.md) for detailed production setup.
 
 ---
 
-## Step 8: What You Can Do Now
+## CEO Operations
 
-### Explore the API
-```powershell
-# Available methods (try these):
-$body = @{jsonrpc="2.0";id=1;method="getChainInfo";params=@()} | ConvertTo-Json
-$body = @{jsonrpc="2.0";id=2;method="getPeers";params=@()} | ConvertTo-Json
-$body = @{jsonrpc="2.0";id=3;method="getBlocks";params=@(@{"from":0;"to":10})} | ConvertTo-Json
-
-# Test each method
-Invoke-RestMethod -Uri "http://localhost:9944" -Method POST -ContentType "application/json" -Body $body
-```
-
-### Test AI Inference (If Model Loaded)
-
-```powershell
-# Check if core model is loaded
-$body = @{
-    jsonrpc = "2.0"
-    id = 1
-    method = "getModelInfo"
-    params = @(@{model_id = "mistral-7b"})
-} | ConvertTo-Json -Depth 10
-
-Invoke-RestMethod -Uri "http://localhost:9944" -Method POST -ContentType "application/json" -Body $body
-
-# Submit inference request (requires subscription or payment)
-$body = @{
-    jsonrpc = "2.0"
-    id = 2
-    method = "chatCompletion"
-    params = @{
-        messages = @(
-            @{role = "user"; content = "Hello, AI!"}
-        )
-        model_id = "mistral-7b"
-        stream = $false
-    }
-} | ConvertTo-Json -Depth 10
-
-Invoke-RestMethod -Uri "http://localhost:9944" -Method POST -ContentType "application/json" -Body $body
-```
-
-### Submit Transactions (Advanced)
-```powershell
-# Create a test transaction (this is complex, see docs/API.md)
-$transaction = @{
-    "from" = "0x..."
-    "to" = "0x..."
-    "value" = "1000"
-    "data" = "0x"
-} | ConvertTo-Json -Depth 10
-
-$body = @{
-    jsonrpc = "2.0"
-    id = 4
-    method = "submitTransaction"
-    params = @($transaction)
-} | ConvertTo-Json -Depth 10
-
-Invoke-RestMethod -Uri "http://localhost:9944" -Method POST -ContentType "application/json" -Body $body
-```
-
----
-
-## Step 9: Stop Everything
-
-### Stop Single Node
-```powershell
-# Press Ctrl+C in the node terminal
-# Or close the PowerShell window
-```
-
-### Stop Multi-Node Network
-```powershell
-cd docker
-docker-compose down
-
-# Clean up data (optional)
-docker-compose down -v
-```
-
----
-
-## Using the Chat API
-
-### With Subscription
-
+### Key Generation
+Run on an air-gapped machine:
 ```bash
-# Basic chat completion (requires active subscription)
-curl -X POST http://localhost:9944 \
-  -H "Content-Type: application/json" \
-  -d '{
-    "jsonrpc": "2.0",
-    "method": "chatCompletion",
-    "params": {
-      "messages": [
-        {"role": "user", "content": "Hello!"}
-      ],
-      "model_id": "mistral-7b",
-      "stream": false
-    },
-    "id": 1
-  }'
+cargo run -p scripts --bin generate-ceo-keypair
 ```
 
-### Pay-Per-Use (No Subscription)
+### Emergency Shutdown
+1. Sign shutdown command offline:
+   ```bash
+   cargo run -p scripts --bin sign-shutdown-command -- --message "shutdown:..." --key "./ceo-key.enc"
+   ```
+2. Broadcast via `submitShutdown` RPC
 
-For pay-per-use, you need to create and sign a payment transaction:
-
-1. **Create payment transaction** with chat payload:
-```bash
-# First, create a transaction with the chat payment payload
-# This is a simplified example - see docs/API.md for full details
-```
-
-2. **Include transaction in chatCompletion request**:
-```bash
-curl -X POST http://localhost:9944 \
-  -H "Content-Type: application/json" \
-  -d '{
-  "jsonrpc": "2.0",
-  "method": "chatCompletion",
-  "params": {
-    "messages": [
-      {"role": "system", "content": "You are a helpful assistant."},
-      {"role": "user", "content": "Explain blockchain in simple terms."}
-    ],
-    "model_id": "mistral-7b",
-    "stream": false,
-    "max_tokens": 500,
-    "transaction": {
-      "sender": "0x...",
-      "receiver": "0x...",
-      "amount": 1,
-      "payload": "{\"user_address\":\"0x...\",\"model_id\":\"mistral-7b\",\"max_tokens\":500}",
-      "signature": "0x...",
-      "timestamp": 1234567890,
-      "nonce": 1,
-      "chain_id": 1
-    }
-  },
-  "id": 1
-}'
-```
-
-**Pricing:**
-- **Subscription users**: Deducted from monthly quota
-- **Pay-per-use**: 1 AIGEN per 1000 tokens
-- **Free tier**: 10 requests/month with ads
-
-**Available Models:**
-- `mistral-7b` - General purpose language model
-- `llama2-13b` - Larger language model (requires Pro tier)
-- `codegen-16b` - Code generation model (requires Pro tier)
-
-See `docs/examples/javascript/chat-example.js` and `docs/examples/python/chat_example.py` for SDK examples.
+### Governance (SIPs)
+- **Approve**: Sign `sip_approve` message and submit `approveSIP`
+- **Veto**: Sign `sip_veto` message and submit `vetoSIP`
 
 ---
 
-## What You've Accomplished
+## API & SDK Usage
 
-✅ **Built a blockchain from source code**  
-✅ **Run your own node**  
-✅ **Tested RPC API**  
-✅ **Created a multi-node network**  
-✅ **Monitored blockchain activity**  
+### JavaScript SDK
+```bash
+cd docs/examples/javascript
+npm install
+npm run chat
+```
 
-## Next Steps
+### Python SDK
+```bash
+cd docs/examples/python
+pip install -r requirements.txt
+python chat_example.py
+```
 
-1. **Read the Documentation:** Check the `docs/` folder for detailed API docs
-2. **Experiment with Transactions:** Try submitting different transaction types
-3. **Explore CEO Controls:** Learn about the Genesis key management
-4. **Understand the AI Vision:** Read `spec.md` to understand the Proof-of-Intelligence concept
+### Core API Methods
+- `chatCompletion`: AI inference
+- `subscribeTier`: Manage subscriptions
+- `submitBatchRequest`: Batch processing
+- `checkQuota`: Usage monitoring
 
-## Need Help?
+See [docs/API.md](docs/API.md) for full reference.
 
-- **Issues:** Check `docs/TROUBLESHOOTING.md`
-- **API Reference:** See `docs/API.md`
-- **Security:** Read `docs/GENESIS_KEY_SECURITY.md`
-- **Community:** Open an issue on GitHub with your error logs
+---
 
-**Congratulations! You're now running an AIGEN blockchain node! 🎉**
+## Troubleshooting
+
+### Common Issues
+
+1. **Node Won't Start**
+   - Check if port 9944/9000 is in use
+   - Verify config validity
+   - Check permissions on data directory
+
+2. **Model Loading Failed**
+   - Increase download timeout: `$env:AIGEN_MODEL_DOWNLOAD_TIMEOUT_SECS = "60"`
+   - Verify model path and files
+   - Ensure peers are connected
+
+3. **RPC Connection Refused**
+   - Ensure node is running
+   - Check firewall rules
+   - Verify CORS settings
+
+4. **"Insufficient Tier" Error**
+   - Upgrade subscription
+   - Check quota usage
+
+### Getting Help
+- Check logs: `docker logs <container_id>`
+- Open issue on GitHub
+
+---
+
+## Security & Best Practices
+
+1. **Key Management**: Use hardware wallets or air-gapped machines for CEO keys.
+2. **Network Security**: Firewall P2P ports, restrict RPC access.
+3. **Updates**: Regularly update nodes to latest release.
+4. **Monitoring**: Set up alerts for downtime and abnormal activity.

@@ -26,42 +26,82 @@ class AdminRPCClient {
         this.reconnectDelay = 3000;
     }
 
-    connect() {
-        return new Promise((resolve, reject) => {
-            this.ws = new WebSocket(this.wsUrl);
+    async connect(maxRetries = 3, onStatusUpdate = null) {
+        const isFileProtocol = typeof window !== 'undefined' && window.location && window.location.protocol.startsWith('file');
+        let lastError;
+        
+        // Store callback for reconnects
+        this.onStatusUpdate = onStatusUpdate;
+        
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+            if (attempt > 1 && onStatusUpdate) {
+                onStatusUpdate(`Connecting... (attempt ${attempt}/${maxRetries})`);
+            }
+
+            let wsOk = false;
+            try {
+                await new Promise((resolve, reject) => {
+                    this.ws = new WebSocket(this.wsUrl);
+                    const timeout = setTimeout(() => reject(new Error('WebSocket connection timeout')), 3000);
+                    this.ws.onopen = () => {
+                        clearTimeout(timeout);
+                        this.reconnectAttempts = 0;
+                        wsOk = true;
+                        resolve();
+                    };
+                    this.ws.onmessage = (event) => {
+                        const response = JSON.parse(event.data);
+                        const { id, result, error } = response;
+                        if (this.pendingRequests.has(id)) {
+                            const { resolve, reject } = this.pendingRequests.get(id);
+                            this.pendingRequests.delete(id);
+                            if (error) reject(new Error(error.message));
+                            else resolve(result);
+                        }
+                    };
+                    this.ws.onerror = (error) => {
+                        clearTimeout(timeout);
+                        if (this.onStatusUpdate) this.onStatusUpdate('error', 'WebSocket error');
+                        reject(error);
+                    };
+                    this.ws.onclose = () => {
+                        if (this.onStatusUpdate) this.onStatusUpdate('disconnected');
+                        this.handleReconnect();
+                    };
+                });
+            } catch (_) {}
             
-            this.ws.onopen = () => {
-                console.log('WebSocket connected');
-                this.reconnectAttempts = 0;
-                resolve();
-            };
-            
-            this.ws.onmessage = (event) => {
-                const response = JSON.parse(event.data);
-                const { id, result, error } = response;
-                
-                if (this.pendingRequests.has(id)) {
-                    const { resolve, reject } = this.pendingRequests.get(id);
-                    this.pendingRequests.delete(id);
-                    
-                    if (error) {
-                        reject(new Error(error.message));
-                    } else {
-                        resolve(result);
-                    }
-                }
-            };
-            
-            this.ws.onerror = (error) => {
-                console.error('WebSocket error:', error);
-                reject(error);
-            };
-            
-            this.ws.onclose = () => {
-                console.log('WebSocket disconnected');
-                this.handleReconnect();
-            };
-        });
+            try {
+                if (onStatusUpdate) onStatusUpdate('Checking health...');
+                const health = await this.callHttp('health', []);
+                if (health && typeof health.status === 'string' && wsOk) return;
+            } catch (httpErr) {
+                lastError = httpErr;
+            }
+
+            // If we're here, either WS failed or Health check failed
+            if (attempt < maxRetries) {
+                const backoff = 1000 * Math.pow(2, attempt - 1);
+                await new Promise(r => setTimeout(r, backoff));
+                continue;
+            }
+        }
+
+        let msg = `RPC connection failed: ${lastError ? lastError.message : 'WebSocket or Health check failed'}`;
+        if (lastError && lastError.message.includes("Failed to fetch")) {
+            msg = `Node not running on ${this.rpcUrl} or CORS blocked`;
+        }
+        
+        if (isFileProtocol) {
+            msg += ' — Serve the dashboard over http:// or https:// instead of file://';
+        } else {
+            msg += '. Check if node is running: cargo run --release';
+        }
+        throw new Error(msg);
+    }
+
+    async testHealth() {
+        return this.callHttp('health', []);
     }
 
     disconnect() {
@@ -74,10 +114,21 @@ class AdminRPCClient {
     handleReconnect() {
         if (this.reconnectAttempts < this.maxReconnectAttempts) {
             this.reconnectAttempts++;
-            console.log(`Reconnecting... Attempt ${this.reconnectAttempts}`);
+            const msg = `Reconnecting... Attempt ${this.reconnectAttempts}`;
+            console.log(msg);
+            if (this.onStatusUpdate) this.onStatusUpdate('connecting', msg);
+            
             setTimeout(() => {
-                this.connect().catch(console.error);
+                this.connect().catch((err) => {
+                    console.error(err);
+                    // If this was the last attempt, mark as disconnected/error
+                    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+                         if (this.onStatusUpdate) this.onStatusUpdate('disconnected', 'Failed - Check if node is running');
+                    }
+                });
             }, this.reconnectDelay);
+        } else {
+            if (this.onStatusUpdate) this.onStatusUpdate('disconnected', 'Failed - Check if node is running');
         }
     }
 
@@ -128,19 +179,6 @@ class AdminRPCClient {
         }
     }
 
-    async connectWallet() {
-        if (!window.ethereum) {
-            throw new Error('No Web3 wallet detected. Please install MetaMask or WalletConnect.');
-        }
-        
-        try {
-            const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
-            return accounts[0];
-        } catch (error) {
-            throw new Error(`Wallet connection failed: ${error.message}`);
-        }
-    }
-
     async signMessage(message) {
         // Use ed25519 signing with CEO private key from localStorage
         const ceoPrivateKey = localStorage.getItem('ceoPrivateKey');
@@ -186,29 +224,6 @@ class AdminRPCClient {
         return Array.from(bytes)
             .map(b => b.toString(16).padStart(2, '0'))
             .join('');
-    }
-
-    async getWalletAddress() {
-        if (!window.ethereum) {
-            throw new Error('No Web3 wallet detected');
-        }
-        
-        const accounts = await window.ethereum.request({ method: 'eth_accounts' });
-        if (accounts.length === 0) {
-            throw new Error('No wallet connected');
-        }
-        
-        return accounts[0];
-    }
-
-    verifyCeoWallet(address) {
-        const storedCeoAddress = localStorage.getItem('ceoAddress');
-        if (!storedCeoAddress) {
-            console.warn('CEO address not configured');
-            return false;
-        }
-        
-        return address.toLowerCase() === storedCeoAddress.toLowerCase();
     }
 
     async getBlock(blockHeight = null, blockHash = null) {

@@ -34,13 +34,13 @@ Licensed under the Business Source License 1.1
    ```
 
 ## Admin Dashboard Deployment
-1. Host the static files in docs/admin with nginx or any static server:
+1. Host the static files in dashboard with nginx or any static server:
    - Example nginx snippet:
      ```
      server {
        listen 80;
        server_name admin.yourdomain.com;
-       root /srv/aigen/docs/admin;
+       root /srv/aigen/dashboard;
        index index.html;
        location / {
          try_files $uri $uri/ /index.html;
@@ -48,7 +48,7 @@ Licensed under the Business Source License 1.1
      }
      ```
 2. Provide production configuration via one of:
-   - config.json in docs/admin (served alongside index.html)
+   - config.json in dashboard (served alongside index.html)
    - window.__AIGEN_CONFIG injected by your server
 3. Sample config.json:
    ```json
@@ -62,14 +62,14 @@ Licensed under the Business Source License 1.1
      "chains": { }
    }
    ```
-4. The dashboard loads this config automatically via [config.js](file:///d:/Code/AIGEN/docs/admin/config.js).
+4. The dashboard loads this config automatically via [config.js](../dashboard/config.js).
 
 ## Environment Configurations
 - Laptop (local):
-  - Use [config.laptop.sample.json](file:///d:/Code/AIGEN/docs/admin/config.laptop.sample.json) and save as `docs/admin/config.json`.
+  - Use [config.laptop.sample.json](../dashboard/config.laptop.sample.json) and save as `dashboard/config.json`.
   - Set RPC to `http://127.0.0.1:9944` and `ws://127.0.0.1:9944`.
 - Cloud VPS (production):
-  - Use [config.vps.sample.json](file:///d:/Code/AIGEN/docs/admin/config.vps.sample.json) and save as `docs/admin/config.json`.
+  - Use [config.vps.sample.json](../dashboard/config.vps.sample.json) and save as `dashboard/config.json`.
   - Set RPC to your public HTTPS/WSS endpoints behind TLS and reverse proxy pointing to the node’s internal port 9944.
 
 ## Security and Secrets
