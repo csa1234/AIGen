@@ -19,6 +19,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AIGEN Admin Dashboard</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%231f6feb'/%3E%3Cpath d='M10 22l6-14 6 14' stroke='%23fff' stroke-width='3' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
     <link rel="stylesheet" href="style.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <!-- Removed ethers.js for non-EVM architecture -->
@@ -401,8 +402,8 @@
     <!-- Footer -->
     <footer class="footer">
         <p>AIGEN Admin Dashboard v1.0.0</p>
-        <p>Serve this dashboard over HTTP (do not open via file://). Example: <code>cd docs/admin &amp;&amp; python -m http.server 8081</code> then open <code>http://localhost:8081</code>.</p>
-        <p>If you see 'Failed to fetch', ensure the AIGEN node is running (<code>cargo run --release</code>) and RPC is enabled on the correct port (default: 9944).</p>
+        <p>Serve this dashboard over HTTP (do not open via file://). Example: <code>cd dashboard &amp;&amp; python -m http.server 8081</code> then open <code>http://127.0.0.1:8081</code>.</p>
+        <p>If you see 'Failed to fetch', ensure the AIGEN node is running (<code>cargo run --release --bin node -- start</code>) and RPC is enabled on the correct port (default: 9944).</p>
         <a href="https://github.com/aigen-blockchain" target="_blank">GitHub</a>
         <a href="README.md">Documentation</a>
     </footer>
@@ -428,7 +429,7 @@
                     <div class="form-group">
                         <label for="ceoPrivateKey">CEO Private Key (Ed25519)</label>
                         <div class="key-input-group">
-                            <input type="password" id="ceoPrivateKey" placeholder="64-byte hex private key (seed + public key)">
+                            <input type="password" id="ceoPrivateKey" placeholder="64-byte hex private key (seed + public key)" autocomplete="current-password">
                             <button type="button" id="toggleKeyVisibility" class="btn btn-icon" title="Toggle visibility">
                                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                     <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
@@ -451,6 +452,14 @@
                         </button>
                         <small class="text-secondary">
                             Generates a new Ed25519 keypair using tweetnacl. Save the private key securely!
+                        </small>
+                    </div>
+                    <div class="form-group">
+                        <button type="button" id="useDevCeoKeyBtn" class="btn btn-secondary" style="width: 100%;">
+                            Use Dev CEO Key (Local Demo)
+                        </button>
+                        <small class="text-secondary">
+                            Uses a known development key that matches the default hardcoded genesis CEO public key.
                         </small>
                     </div>
 
@@ -492,6 +501,16 @@
             </div>
             <div class="modal-body">
                 <form id="initModelForm">
+                    <div class="form-group">
+                        <label for="modelYamlFile">Model YAML (optional)</label>
+                        <input type="file" id="modelYamlFile" accept=".yml,.yaml">
+                        <button type="button" id="autofillModelFromYamlBtn" class="btn btn-secondary" style="width: 100%; margin-top: 8px;">
+                            Auto-fill From YAML
+                        </button>
+                        <small class="text-secondary">
+                            Browser security can’t read files by path. Use this to select the YAML file (e.g. model.yml).
+                        </small>
+                    </div>
                     <div class="form-group">
                         <label for="modelId">Model ID</label>
                         <input type="text" id="modelId" required>

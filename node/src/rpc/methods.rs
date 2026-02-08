@@ -20,7 +20,7 @@ use tokio::sync::Mutex;
 use tracing::info;
 
 use crate::rpc::types::{
-    BalanceResponse, BlockResponse, ChainInfoResponse, HealthResponse, RpcError,
+    BalanceResponse, BlockResponse, ChainInfoResponse, HealthResponse, NodeInfoResponse, RpcError,
     SubmitTransactionResponse, TransactionResponse,
 };
 
@@ -44,6 +44,9 @@ pub trait PublicRpc {
 
     #[method(name = "getChainInfo")]
     async fn get_chain_info(&self) -> Result<ChainInfoResponse, RpcError>;
+
+    #[method(name = "getNodeInfo")]
+    async fn get_node_info(&self) -> Result<NodeInfoResponse, RpcError>;
 
     #[method(name = "health")]
     async fn health(&self) -> Result<HealthResponse, RpcError>;
@@ -195,6 +198,14 @@ impl PublicRpcServer for RpcMethods {
             latest_block_hash: format!("0x{}", hex::encode(latest.0)),
             shutdown_status: bc.shutdown,
             total_supply,
+        })
+    }
+
+    async fn get_node_info(&self) -> Result<NodeInfoResponse, RpcError> {
+        let bc = self.blockchain.lock().await;
+        Ok(NodeInfoResponse {
+            network_magic: bc.genesis_config.network_magic,
+            ceo_public_key_hex: genesis::config::CEO_PUBLIC_KEY_HEX.to_string(),
         })
     }
 

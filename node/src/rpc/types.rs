@@ -125,6 +125,12 @@ pub struct ChainInfoResponse {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct NodeInfoResponse {
+    pub network_magic: u64,
+    pub ceo_public_key_hex: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct HealthResponse {
     pub status: String,
     pub uptime_seconds: u64,

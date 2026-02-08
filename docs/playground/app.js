@@ -15,29 +15,34 @@
 // limitations under the License.
 
 class AIGENRPCClient {
-    constructor(rpcUrl, wsUrl) {
+    constructor(rpcUrl, wsUrl, onStatusUpdate = null) {
         this.rpcUrl = rpcUrl;
         this.wsUrl = wsUrl;
         this.ws = null;
         this.messageQueue = [];
         this.reconnectAttempts = 0;
         this.maxReconnectAttempts = 5;
-        this.reconnectDelay = 1000;
+        this.reconnectDelay = 500;
         this.isConnected = false;
         this.subscriptions = new Map();
         this.requestId = 0;
+        this.pendingRequests = new Map();
+        this.onStatusUpdate = onStatusUpdate;
     }
 
     async connect() {
         try {
+            if (this.onStatusUpdate) this.onStatusUpdate('connecting');
             await this.checkRPCConnection();
             await this.connectWebSocket();
             this.isConnected = true;
             this.reconnectAttempts = 0;
+            if (this.onStatusUpdate) this.onStatusUpdate('connected');
             return true;
         } catch (error) {
             console.error('Connection failed:', error);
             this.isConnected = false;
+            if (this.onStatusUpdate) this.onStatusUpdate('disconnected');
             throw error;
         }
     }
@@ -52,7 +57,7 @@ class AIGENRPCClient {
                 body: JSON.stringify({
                     jsonrpc: '2.0',
                     id: ++this.requestId,
-                    method: 'system_health',
+                    method: 'health',
                     params: []
                 })
             });
@@ -74,15 +79,18 @@ class AIGENRPCClient {
         return new Promise((resolve, reject) => {
             try {
                 this.ws = new WebSocket(this.wsUrl);
+                const timeout = setTimeout(() => reject(new Error('WebSocket connection timeout')), 4000);
                 
                 this.ws.onopen = () => {
                     console.log('WebSocket connected');
+                    clearTimeout(timeout);
                     this.setupWebSocketHandlers();
                     resolve();
                 };
 
                 this.ws.onerror = (error) => {
                     console.error('WebSocket error:', error);
+                    clearTimeout(timeout);
                     reject(new Error('WebSocket connection failed'));
                 };
 
@@ -113,65 +121,103 @@ class AIGENRPCClient {
     }
 
     handleWebSocketMessage(data) {
-        if (data.method && data.params) {
-            if (data.method === 'subscription' && data.params.subscription) {
-                const callback = this.subscriptions.get(data.params.subscription);
-                if (callback) {
-                    callback(data.params.result);
-                }
-            }
+        if (data && typeof data.id !== 'undefined' && this.pendingRequests.has(data.id)) {
+            const { resolve, reject } = this.pendingRequests.get(data.id);
+            this.pendingRequests.delete(data.id);
+            if (data.error) reject(new Error(data.error.message || 'RPC error'));
+            else resolve(data.result);
+            return;
+        }
+
+        if (data && data.params && data.params.subscription) {
+            const callback = this.subscriptions.get(data.params.subscription);
+            if (callback) callback(data.params.result);
         }
     }
 
     handleDisconnection() {
         if (this.reconnectAttempts < this.maxReconnectAttempts) {
             this.reconnectAttempts++;
-            console.log(`Reconnecting... Attempt ${this.reconnectAttempts}`);
-            setTimeout(() => {
-                this.connectWebSocket().catch(error => {
+            const exp = Math.min(30000, this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1));
+            const jitter = Math.floor(Math.random() * 250);
+            const waitMs = exp + jitter;
+            console.log(`Reconnecting... Attempt ${this.reconnectAttempts} in ${waitMs}ms`);
+            if (this.onStatusUpdate) this.onStatusUpdate('connecting');
+            setTimeout(async () => {
+                try {
+                    await this.checkRPCConnection();
+                    await this.connectWebSocket();
+                    this.isConnected = true;
+                    this.reconnectAttempts = 0;
+                    if (this.onStatusUpdate) this.onStatusUpdate('connected');
+                } catch (error) {
                     console.error('Reconnection failed:', error);
-                });
-            }, this.reconnectDelay * this.reconnectAttempts);
+                    this.isConnected = false;
+                    if (this.onStatusUpdate) this.onStatusUpdate('disconnected');
+                    this.handleDisconnection();
+                }
+            }, waitMs);
+        } else {
+            if (this.onStatusUpdate) this.onStatusUpdate('disconnected');
         }
     }
 
-    async chatCompletion(messages, options = {}) {
+    async callWs(method, params = []) {
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+            throw new Error('WebSocket not connected');
+        }
+        const id = ++this.requestId;
+        const payload = { jsonrpc: '2.0', id, method, params };
+        return new Promise((resolve, reject) => {
+            this.pendingRequests.set(id, { resolve, reject });
+            try {
+                this.ws.send(JSON.stringify(payload));
+            } catch (e) {
+                this.pendingRequests.delete(id);
+                reject(e);
+            }
+        });
+    }
+
+    async callHttp(method, params = []) {
         const payload = {
             jsonrpc: '2.0',
             id: ++this.requestId,
-            method: 'chatCompletion',
-            params: {
-                messages,
-                model_id: options.modelId || 'mistral-7b',
-                max_tokens: options.maxTokens || 2048,
-                temperature: options.temperature || 0.7,
-                stream: options.stream || false
-            }
+            method,
+            params
         };
-
-        if (options.transaction) {
-            payload.params.transaction = options.transaction;
+        const response = await fetch(this.rpcUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        const data = await response.json();
+        if (data.error) {
+            throw new Error(data.error.message || 'RPC error');
         }
+        return data.result;
+    }
+
+    async listModels(userAddress = null) {
+        const res = await this.callHttp('listModels', [userAddress]);
+        if (Array.isArray(res)) return res;
+        if (res && Array.isArray(res.models)) return res.models;
+        return [];
+    }
+
+    async chatCompletion(messages, options = {}) {
+        const request = {
+            messages,
+            model_id: options.modelId || 'mistral-7b',
+            stream: Boolean(options.stream),
+            max_tokens: options.maxTokens || 2048,
+            temperature: options.temperature || 0.7,
+            user_address: options.userAddress || null
+        };
+        if (options.transaction) request.transaction = options.transaction;
 
         try {
-            const response = await fetch(this.rpcUrl, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify(payload)
-            });
-
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
-            }
-
-            const data = await response.json();
-            if (data.error) {
-                throw new Error(`RPC error: ${data.error.message} (code: ${data.error.code})`);
-            }
-
-            return data.result;
+            return await this.callHttp('chatCompletion', [request]);
         } catch (error) {
             throw new Error(`Chat completion failed: ${error.message}`);
         }
@@ -181,9 +227,18 @@ class AIGENRPCClient {
         if (!this.isConnected) {
             throw new Error('WebSocket not connected');
         }
+        const request = {
+            messages,
+            model_id: options.modelId || 'mistral-7b',
+            stream: true,
+            max_tokens: options.maxTokens || 2048,
+            temperature: options.temperature || 0.7,
+            user_address: options.userAddress || null
+        };
+        if (options.transaction) request.transaction = options.transaction;
 
-        const subscriptionId = `sub_${++this.requestId}`;
-        
+        const subscriptionId = await this.callWs('subscribeChatCompletion', [request]);
+
         this.subscriptions.set(subscriptionId, (result) => {
             if (result.error) {
                 if (onError) {
@@ -202,58 +257,15 @@ class AIGENRPCClient {
             }
         });
 
-        const payload = {
-            jsonrpc: '2.0',
-            id: this.requestId,
-            method: 'subscribeChatCompletion',
-            params: {
-                messages,
-                model_id: options.modelId || 'mistral-7b',
-                max_tokens: options.maxTokens || 2048,
-                temperature: options.temperature || 0.7,
-                subscription: subscriptionId
-            }
-        };
-
-        if (options.transaction) {
-            payload.params.transaction = options.transaction;
-        }
-
-        try {
-            this.ws.send(JSON.stringify(payload));
-        } catch (error) {
-            this.subscriptions.delete(subscriptionId);
-            throw new Error(`Failed to subscribe: ${error.message}`);
-        }
-
         return subscriptionId;
     }
 
-    async checkQuota() {
+    async checkQuota(userAddress) {
         try {
-            const response = await fetch(this.rpcUrl, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    jsonrpc: '2.0',
-                    id: ++this.requestId,
-                    method: 'checkQuota',
-                    params: []
-                })
-            });
-
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
+            if (!userAddress) {
+                throw new Error('user_address is required');
             }
-
-            const data = await response.json();
-            if (data.error) {
-                throw new Error(`RPC error: ${data.error.message}`);
-            }
-
-            return data.result;
+            return await this.callHttp('checkQuota', [{ user_address: userAddress }]);
         } catch (error) {
             throw new Error(`Failed to check quota: ${error.message}`);
         }
@@ -261,29 +273,7 @@ class AIGENRPCClient {
 
     async getTierInfo() {
         try {
-            const response = await fetch(this.rpcUrl, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    jsonrpc: '2.0',
-                    id: ++this.requestId,
-                    method: 'getTierInfo',
-                    params: []
-                })
-            });
-
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
-            }
-
-            const data = await response.json();
-            if (data.error) {
-                throw new Error(`RPC error: ${data.error.message}`);
-            }
-
-            return data.result;
+            return await this.callHttp('getTierInfo', []);
         } catch (error) {
             throw new Error(`Failed to get tier info: ${error.message}`);
         }
@@ -407,16 +397,20 @@ class AIGENPlayground {
 
     loadSettings() {
         const defaultSettings = {
-            rpcUrl: 'http://localhost:9944',
-            wsUrl: 'ws://localhost:9944',
+            rpcUrl: 'http://127.0.0.1:9944',
+            wsUrl: 'ws://127.0.0.1:9944',
             maxTokens: 2048,
             temperature: 0.7,
-            walletAddress: '',
+            walletAddress: '0x0000000000000000000000000000000000000002',
             theme: 'dark'
         };
 
         const saved = localStorage.getItem('aigenPlaygroundSettings');
-        const settings = saved ? { ...defaultSettings, ...JSON.parse(saved) } : defaultSettings;
+        const parsed = saved ? JSON.parse(saved) : null;
+        const settings = parsed ? { ...defaultSettings, ...parsed } : defaultSettings;
+        if (settings.rpcUrl === 'http://localhost:9944') settings.rpcUrl = defaultSettings.rpcUrl;
+        if (settings.wsUrl === 'ws://localhost:9944') settings.wsUrl = defaultSettings.wsUrl;
+        if (!settings.walletAddress) settings.walletAddress = defaultSettings.walletAddress;
 
         document.getElementById('settingsRpcUrl').value = settings.rpcUrl;
         document.getElementById('settingsWsUrl').value = settings.wsUrl;
@@ -434,6 +428,7 @@ class AIGENPlayground {
         document.getElementById('temperatureValue').textContent = settings.temperature;
         document.documentElement.setAttribute('data-theme', settings.theme);
 
+        localStorage.setItem('aigenPlaygroundSettings', JSON.stringify(settings));
         return settings;
     }
 
@@ -472,10 +467,15 @@ class AIGENPlayground {
         try {
             this.showLoading(true);
             
-            this.client = new AIGENRPCClient(this.elements.rpcUrl.value, this.elements.wsUrl.value);
+            this.client = new AIGENRPCClient(
+                this.elements.rpcUrl.value,
+                this.elements.wsUrl.value,
+                (status) => this.updateConnectionStatus(status)
+            );
             await this.client.connect();
             
             this.updateConnectionStatus('connected');
+            await this.loadAvailableModels();
             await this.updateQuota();
             
             this.showNotification('Connected to AIGEN network!', 'success');
@@ -486,6 +486,20 @@ class AIGENPlayground {
         } finally {
             this.showLoading(false);
         }
+    }
+
+    async loadAvailableModels() {
+        if (!this.client) return;
+        const models = await this.client.listModels(null);
+        if (!Array.isArray(models) || models.length === 0) return;
+
+        this.elements.modelSelector.innerHTML = models
+            .map(m => `<option value="${m.model_id}">${m.name} (${m.model_id})</option>`)
+            .join('');
+
+        const selected = models.find(m => m.model_id === this.currentModel) ? this.currentModel : models[0].model_id;
+        this.currentModel = selected;
+        this.elements.modelSelector.value = selected;
     }
 
     updateConnectionStatus(status) {
@@ -512,7 +526,12 @@ class AIGENPlayground {
     async updateQuota() {
         try {
             if (this.client) {
-                const quota = await this.client.checkQuota();
+                const wallet = (this.settings && this.settings.walletAddress) ? this.settings.walletAddress.trim() : '';
+                if (!wallet) {
+                    this.elements.quotaValue.textContent = '--';
+                    return;
+                }
+                const quota = await this.client.checkQuota(wallet);
                 this.elements.quotaValue.textContent = `${quota.used}/${quota.limit}`;
             }
         } catch (error) {
@@ -572,7 +591,8 @@ class AIGENPlayground {
             {
                 modelId: this.currentModel,
                 maxTokens: this.settings.maxTokens,
-                temperature: this.settings.temperature
+                temperature: this.settings.temperature,
+                userAddress: this.settings.walletAddress
             },
             (chunk) => {
                 if (chunk.delta && chunk.delta.content) {
@@ -596,7 +616,8 @@ class AIGENPlayground {
                 modelId: this.currentModel,
                 maxTokens: this.settings.maxTokens,
                 temperature: this.settings.temperature,
-                stream: false
+                stream: false,
+                userAddress: this.settings.walletAddress
             }
         );
 

@@ -351,7 +351,7 @@ impl CeoRpcServer for CeoRpcMethods {
         let bc = self.blockchain.lock().await;
         let network_magic = bc.genesis_config.network_magic;
         let hashes_str = request.verification_hashes.join(":");
-        let msg = format!(
+        let msg_str = format!(
             "init_model:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}",
             network_magic, request.timestamp, request.model_id, request.version,
             request.total_size, request.shard_count,
@@ -359,8 +359,21 @@ impl CeoRpcServer for CeoRpcMethods {
             request.minimum_tier.as_deref().unwrap_or(""),
             request.is_experimental, request.name,
             hashes_str
-        ).into_bytes();
-        verify_ceo_request(&msg, &request.signature)?;
+        );
+        let msg = msg_str.clone().into_bytes();
+        if let Err(e) = verify_ceo_request(&msg, &request.signature) {
+            eprintln!(
+                "initNewModel signature verification failed: network_magic={} timestamp={} model_id={} shard_count={} hashes_count={} err={}",
+                network_magic,
+                request.timestamp,
+                request.model_id,
+                request.shard_count,
+                request.verification_hashes.len(),
+                e
+            );
+            eprintln!("initNewModel signed message: {}", msg_str);
+            return Err(e);
+        }
         drop(bc);
 
         println!("initializing new model: id={}, version={}, is_core={}",
@@ -413,7 +426,18 @@ impl CeoRpcServer for CeoRpcMethods {
         self.model_registry.register_model(metadata)
             .map_err(|e| {
                 println!("failed to register model: {}", e);
-                RpcError::Internal(e.to_string())
+                match e {
+                    model::ModelError::InvalidModelId => RpcError::InvalidParams(
+                        "invalid model_id: allowed characters are letters, numbers, '-' and '_'"
+                            .to_string(),
+                    ),
+                    model::ModelError::InvalidShard => RpcError::InvalidParams(
+                        "invalid shard parameters (total_size, shard_count, or verification_hashes)"
+                            .to_string(),
+                    ),
+                    model::ModelError::Shutdown => RpcError::ShutdownActive,
+                    other => RpcError::Internal(other.to_string()),
+                }
             })?;
 
         println!("model initialized successfully: {}", request.model_id);

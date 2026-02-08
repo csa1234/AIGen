@@ -76,8 +76,8 @@ npx serve -s . -l 8080
 
 ### Default Settings
 
-- **RPC URL**: `http://localhost:9944`
-- **WebSocket URL**: `ws://localhost:9944`
+- **RPC URL**: `http://127.0.0.1:9944`
+- **WebSocket URL**: `ws://127.0.0.1:9944`
 - **Max Tokens**: 2048
 - **Temperature**: 0.7
 - **Theme**: Dark mode

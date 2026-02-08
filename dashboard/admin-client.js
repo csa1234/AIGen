@@ -24,6 +24,8 @@ class AdminRPCClient {
         this.reconnectAttempts = 0;
         this.maxReconnectAttempts = 5;
         this.reconnectDelay = 3000;
+        this.networkMagic = null;
+        this.ceoPublicKeyHex = null;
     }
 
     async connect(maxRetries = 3, onStatusUpdate = null) {
@@ -74,7 +76,14 @@ class AdminRPCClient {
             try {
                 if (onStatusUpdate) onStatusUpdate('Checking health...');
                 const health = await this.callHttp('health', []);
-                if (health && typeof health.status === 'string' && wsOk) return;
+                if (health && typeof health.status === 'string') {
+                    try {
+                        const nodeInfo = await this.getNodeInfo();
+                        this.networkMagic = nodeInfo?.network_magic ?? null;
+                        this.ceoPublicKeyHex = nodeInfo?.ceo_public_key_hex ?? null;
+                    } catch (_) {}
+                    if (wsOk) return;
+                }
             } catch (httpErr) {
                 lastError = httpErr;
             }
@@ -154,28 +163,41 @@ class AdminRPCClient {
 
     async callHttp(method, params = []) {
         try {
+            const body = {
+                jsonrpc: '2.0',
+                id: ++this.requestId,
+                method,
+                params
+            };
             const response = await fetch(this.rpcUrl, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
                 },
-                body: JSON.stringify({
-                    jsonrpc: '2.0',
-                    id: ++this.requestId,
-                    method,
-                    params
-                })
+                body: JSON.stringify(body)
             });
             
             const data = await response.json();
             
             if (data.error) {
-                throw new Error(data.error.message);
+                const msg = typeof data.error.message === 'string' ? data.error.message : 'Unknown RPC error';
+                const code = data.error.code;
+                console.error('RPC error', { rpcUrl: this.rpcUrl, method, code, msg });
+                throw new Error(msg);
             }
             
             return data.result;
         } catch (error) {
-            throw new Error(`RPC call failed: ${error.message}`);
+            const msg = typeof error.message === 'string' ? error.message : String(error);
+            console.error('RPC call failed', { rpcUrl: this.rpcUrl, method, message: msg });
+            if (msg === 'invalid signature') {
+                const derived = this.derivePublicKeyFromStoredKey();
+                if (this.ceoPublicKeyHex && derived && derived.toLowerCase() !== this.ceoPublicKeyHex.toLowerCase()) {
+                    throw new Error(`CEO key mismatch. Expected CEO public key: ${this.ceoPublicKeyHex}`);
+                }
+                throw new Error('Invalid signature. Ensure CEO key matches the node and retry.');
+            }
+            throw new Error(`RPC call failed: ${msg}`);
         }
     }
 
@@ -211,6 +233,20 @@ class AdminRPCClient {
         return this.bytesToHex(signature);
     }
 
+    derivePublicKeyFromStoredKey() {
+        try {
+            const ceoPrivateKey = localStorage.getItem('ceoPrivateKey');
+            if (!ceoPrivateKey) return null;
+            if (typeof nacl === 'undefined') return null;
+            const privateKeyBytes = this.hexToBytes(ceoPrivateKey);
+            if (privateKeyBytes.length !== 64) return null;
+            const keyPair = nacl.sign.keyPair.fromSeed(privateKeyBytes.slice(0, 32));
+            return this.bytesToHex(keyPair.publicKey);
+        } catch {
+            return null;
+        }
+    }
+
     hexToBytes(hex) {
         hex = hex.replace(/^0x/, '');
         const bytes = new Uint8Array(hex.length / 2);
@@ -227,10 +263,36 @@ class AdminRPCClient {
     }
 
     async getBlock(blockHeight = null, blockHash = null) {
+        // Backward-compatible convenience:
+        // - getBlock(123) fetches by height
+        // - getBlock("0x...") fetches by hash
+        // - getBlock(null, "0x...") fetches by hash
+        if (blockHash === null && (typeof blockHeight === 'string')) {
+            blockHash = blockHeight;
+            blockHeight = null;
+        }
         if (blockHeight === null && blockHash === null) {
             throw new Error('Must provide either blockHeight or blockHash');
         }
-        return this.callHttp('getBlock', [{ block_height: blockHeight, block_hash: blockHash }]);
+        if (typeof blockHeight === 'string') {
+            const trimmed = blockHeight.trim();
+            const parsed = Number(trimmed);
+            if (Number.isFinite(parsed) && String(parsed) === trimmed) {
+                blockHeight = parsed;
+            } else {
+                blockHash = trimmed;
+                blockHeight = null;
+            }
+        }
+        if (typeof blockHeight === 'number') {
+            if (!Number.isFinite(blockHeight) || blockHeight < 0) {
+                throw new Error('blockHeight must be a non-negative number');
+            }
+            blockHeight = Math.floor(blockHeight);
+        }
+        // jsonrpsee expects positional params for this method signature:
+        // getBlock(block_height?: u64, block_hash?: string)
+        return this.callHttp('getBlock', [blockHeight ?? null, blockHash ?? null]);
     }
 
     async getTransaction(txHash) {
@@ -241,6 +303,10 @@ class AdminRPCClient {
 
     async getChainInfo() {
         return this.callHttp('getChainInfo', []);
+    }
+
+    async getNodeInfo() {
+        return this.callHttp('getNodeInfo', []);
     }
 
     async getLatestBlocks(count = 10) {
@@ -273,15 +339,19 @@ class AdminRPCClient {
     }
 
     async listModels(userAddress = null) {
-        return this.callHttp('listModels', [userAddress]);
+        const res = await this.callHttp('listModels', [userAddress]);
+        if (Array.isArray(res)) return res;
+        if (res && Array.isArray(res.models)) return res.models;
+        return [];
     }
 
     async getModelInfo(modelId) {
         return this.callHttp('getModelInfo', [{ model_id: modelId }]);
     }
 
-    async initNewModel(request, signature) {
-        return this.callHttp('initNewModel', [{ ...request, signature }]);
+    async initNewModel(request, signature, timestamp) {
+        const ts = typeof timestamp === 'number' ? timestamp : Math.floor(Date.now() / 1000);
+        return this.callHttp('initNewModel', [{ ...request, signature, timestamp: ts }]);
     }
 
     async loadModel(modelId, userAddress, transaction) {
@@ -347,7 +417,7 @@ class AdminRPCClient {
     }
 
     formatAdminMessage(action, params = {}) {
-        const networkMagic = 0x41494745;
+        const networkMagic = typeof this.networkMagic === 'number' ? this.networkMagic : 0xA1A1A1A1;
         const timestamp = Math.floor(Date.now() / 1000);
 
         // Exact message formats as defined in node/src/rpc/ceo.rs
@@ -368,9 +438,18 @@ class AdminRPCClient {
                     timestamp
                 };
             case 'initNewModel':
-                const hashesStr = params.verification_hashes.join(':');
+                const modelId = params.model_id ?? params.modelId ?? '';
+                const name = params.name ?? '';
+                const version = params.version ?? '';
+                const totalSize = params.total_size ?? params.totalSize ?? 0;
+                const shardCount = params.shard_count ?? params.shardCount ?? 0;
+                const verificationHashes = params.verification_hashes ?? params.verificationHashes ?? [];
+                const isCoreModel = params.is_core_model ?? params.isCoreModel ?? false;
+                const minimumTier = params.minimum_tier ?? params.minimumTier ?? '';
+                const isExperimental = params.is_experimental ?? params.isExperimental ?? false;
+                const hashesStr = Array.isArray(verificationHashes) ? verificationHashes.join(':') : '';
                 return {
-                    message: `init_model:${networkMagic}:${timestamp}:${params.model_id}:${params.version}:${params.totalSize}:${params.shardCount}:${params.verification_hashes.length}:${params.isCoreModel}:${params.minimumTier || ''}:${params.isExperimental}:${params.name}:${hashesStr}`,
+                    message: `init_model:${networkMagic}:${timestamp}:${modelId}:${version}:${totalSize}:${shardCount}:${Array.isArray(verificationHashes) ? verificationHashes.length : 0}:${isCoreModel}:${minimumTier || ''}:${isExperimental}:${name}:${hashesStr}`,
                     timestamp
                 };
             case 'approveModelUpgrade':

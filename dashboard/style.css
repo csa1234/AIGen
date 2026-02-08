@@ -615,12 +615,15 @@ body {
 .modal-content {
     position: relative;
     max-width: 600px;
+    width: calc(100% - 2rem);
     margin: 10vh auto;
     background: var(--bg-primary);
     border: 1px solid var(--border-color);
     border-radius: var(--radius-lg);
     box-shadow: var(--shadow-lg);
     animation: slideUp 0.3s ease;
+    max-height: calc(100vh - 2rem);
+    overflow: hidden;
 }
 
 @keyframes slideUp {
@@ -664,6 +667,27 @@ body {
 
 .modal-body {
     padding: 1.5rem;
+    overflow-y: auto;
+    max-height: calc(100vh - 2rem - 70px);
+}
+
+@media (max-width: 640px) {
+    .modal-content {
+        margin: 1rem auto;
+        max-width: 100%;
+    }
+    .modal-body {
+        padding: 1rem;
+    }
+}
+
+@media (max-height: 700px) {
+    .modal-content {
+        margin: 1rem auto;
+    }
+    .modal-body {
+        max-height: calc(100vh - 2rem - 64px);
+    }
 }
 
 .notification-container {
