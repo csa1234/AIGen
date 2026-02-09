@@ -22,3 +22,6 @@ coverage/
 
 # Large model files
 *.gguf
+
+# Patent files
+*.md
