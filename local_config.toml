@@ -1,0 +1,60 @@
+node_id = "test-node"
+data_dir = "D:/Code/AIGEN/aigen-data"
+keypair_path = "D:/Code/AIGEN/aigen-data/node_keypair.bin"
+
+[model]
+core_model_id = "mistral-7b"
+# LocalStorage appends "models" to this path, so point to parent of models dir
+model_storage_path = "D:/Code/AIGEN/aigen-data"
+cache_dir = "D:/Code/AIGEN/aigen-data/model-cache"
+max_memory_mb = 4096
+num_threads = 4
+download_timeout_secs = 300
+min_redundancy_nodes = 0
+worker_mode = false
+
+[rpc]
+rpc_enabled = true
+rpc_addr = "127.0.0.1:9944"
+rpc_cors = ["*"]
+rpc_max_connections = 100
+
+[network]
+listen_addr = "/ip4/0.0.0.0/tcp/9000"
+bootstrap_peers = []
+max_peers = 50
+enable_mdns = true
+
+[network.gossipsub_config]
+mesh_n = 6
+mesh_n_low = 4
+mesh_n_high = 12
+heartbeat_ms = 700
+max_transmit_size = 10485760
+
+[network.reputation_config]
+ban_threshold = 0.2
+cleanup_interval_secs = 3600
+
+[genesis]
+chain_id = "aigen-mainnet-1"
+genesis_timestamp = 0
+network_magic = 2711724449
+# CEO wallet and key (matches default genesis config)
+ceo_wallet = "0x0000000000000000000000000000000000000001"
+ceo_public_key_bytes = [215, 90, 152, 1, 130, 177, 10, 183, 213, 84, 191, 237, 60, 150, 64, 115, 160, 238, 23, 47, 61, 170, 98, 50, 90, 240, 33, 166, 143, 112, 117, 26]
+
+[node]
+node_type = "full_node"
+
+[verification]
+cache_capacity = 256
+epsilon = 0.00001
+
+[ads]
+enabled = true
+injection_rate = 0.5
+max_ad_length = 500
+max_total_output_length = 10000
+upgrade_prompt_threshold = 8
+free_tier_only = true

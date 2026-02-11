@@ -1,0 +1,24 @@
+{
+  "created_at": 1770790586,
+  "is_core_model": true,
+  "is_experimental": false,
+  "minimum_tier": null,
+  "model_id": "mistral-7b",
+  "model_path": "./aigen-data\\models\\mistral-7b\\model.onnx",
+  "name": "Mistral-7B-Test-Identity",
+  "shard_count": 1,
+  "shard_dir": "./aigen-data\\models\\mistral-7b\\shards",
+  "shards": [
+    {
+      "hash": "427175dd26168d4bf76029134a7e71c1c330358b1f1923e66f2cfc4c6bb05035",
+      "shard_index": 0,
+      "size": 122,
+      "total_shards": 1
+    }
+  ],
+  "total_size": 122,
+  "verification_hashes": [
+    "427175dd26168d4bf76029134a7e71c1c330358b1f1923e66f2cfc4c6bb05035"
+  ],
+  "version": "1.0.0"
+}
