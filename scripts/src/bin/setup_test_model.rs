@@ -26,6 +26,8 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use prost::Message;
 
+use model::{ModelMetadata, ModelRegistry, ModelShard, ShardLocation};
+
 #[derive(Parser)]
 #[command(name = "setup-test-model")]
 #[command(about = "Generate a test ONNX identity model for AIGEN node")]
@@ -35,7 +37,7 @@ struct Args {
     model_id: String,
 
     /// Human-readable model name
-    #[arg(long, default_value = "Mistral-7B-v0.1")]
+    #[arg(long, default_value = "Mistral-7B-Test-Identity")]
     model_name: String,
 
     /// Data directory (models will be stored under <data-dir>/models/<model-id>/)
@@ -90,12 +92,64 @@ async fn run(args: Args) -> Result<()> {
         .context("failed to split model into shards")?;
     println!("  Created {} shard(s)", shards.len());
 
-    // Step 3: Write manifest file for node registration
-    println!("\n[3/3] Writing manifest file...");
+    // Step 3: Register model with ModelRegistry
+    println!("\n[3/4] Registering model with registry...");
+    let registry = ModelRegistry::new();
+
+    let verification_hashes: Vec<[u8; 32]> = shards.iter().map(|s| s.hash).collect();
+
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs() as i64;
+
+    let metadata = ModelMetadata {
+        model_id: args.model_id.clone(),
+        name: args.model_name.clone(),
+        version: args.version.clone(),
+        total_size: model_size,
+        shard_count: shards.len() as u32,
+        verification_hashes: verification_hashes.clone(),
+        is_core_model: true,
+        minimum_tier: None,
+        is_experimental: false,
+        created_at: now,
+    };
+
+    registry.register_model(metadata)
+        .context("failed to register model")?;
+    println!("  Registered model: {}", args.model_id);
+
+    // Register shards
+    for shard in &shards {
+        let model_shard = ModelShard {
+            model_id: args.model_id.clone(),
+            shard_index: shard.shard_index,
+            total_shards: shard.total_shards,
+            hash: shard.hash,
+            size: shard.size,
+            ipfs_cid: None,
+            http_urls: Vec::new(),
+            locations: vec![ShardLocation {
+                node_id: "setup-node".to_string(),
+                backend_type: "local".to_string(),
+                location_uri: format!("file://{}", storage_shard_dir.display()),
+                last_verified: now,
+                is_healthy: true,
+            }],
+        };
+        registry.register_shard(model_shard)
+            .context(format!("failed to register shard {}", shard.shard_index))?;
+    }
+    println!("  Registered {} shard(s)", shards.len());
+
+    // Set as core model
+    registry.set_core_model(&args.model_id)
+        .context("failed to set core model")?;
+    println!("  Set {} as core model", args.model_id);
+
+    // Step 4: Write manifest file for node registration
+    println!("\n[4/4] Writing manifest file...");
 
     let verification_hashes: Vec<String> = shards.iter().map(|s| hex::encode(s.hash)).collect();
     let shard_infos: Vec<serde_json::Value> = shards
@@ -149,11 +203,11 @@ async fn run(args: Args) -> Result<()> {
     }
 
     println!("\n✅ Test model setup complete!");
+    println!("\nModel registered and set as core: {}", args.model_id);
     println!("\nTo use this model, ensure your node/config.toml has:");
     println!("  [model]");
     println!("  core_model_id = \"{}\"", args.model_id);
     println!("  model_storage_path = \"{}\"", args.data_dir.join("models").display());
-    println!("\nThe node will auto-register the model from the manifest on startup.");
 
     Ok(())
 }

@@ -575,6 +575,10 @@ pub struct ModelInfoResponse {
     pub is_core_model: bool,
     pub minimum_tier: Option<String>,
     pub is_experimental: bool,
+    #[serde(rename = "isAvailable")]
+    pub is_available: bool,
+    #[serde(rename = "isLoaded")]
+    pub is_loaded: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

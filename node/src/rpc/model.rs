@@ -187,6 +187,7 @@ impl ModelRpcServer for ModelRpcMethods {
         if genesis::is_shutdown() {
             return Err(RpcError::ShutdownActive);
         }
+        let cache = self.inference_engine.cache();
         match user_address {
             Some(addr) => {
                 info!(user_address = %addr, "list_models request received");
@@ -203,7 +204,10 @@ impl ModelRpcServer for ModelRpcMethods {
                         error!(error = %e, "list_models_for_tier failed");
                         map_model_error(e)
                     })?;
-                let items = models.into_iter().map(to_model_info).collect();
+                let items = models
+                    .into_iter()
+                    .map(|m| to_model_info(m, &self.model_registry, &cache))
+                    .collect();
                 Ok(ModelListResponse { models: items })
             }
             None => {
@@ -212,7 +216,10 @@ impl ModelRpcServer for ModelRpcMethods {
                     error!(error = %e, "list_models failed");
                     map_model_error(e)
                 })?;
-                let items = models.into_iter().map(to_model_info).collect();
+                let items = models
+                    .into_iter()
+                    .map(|m| to_model_info(m, &self.model_registry, &cache))
+                    .collect();
                 Ok(ModelListResponse { models: items })
             }
         }
@@ -231,7 +238,8 @@ impl ModelRpcServer for ModelRpcMethods {
             error!(error = %e, "get_model failed");
             map_model_error(e)
         })?;
-        Ok(to_model_info(model))
+        let cache = self.inference_engine.cache();
+        Ok(to_model_info(model, &self.model_registry, &cache))
     }
 
     async fn get_shard(&self, request: GetShardRequest) -> Result<ShardInfoResponse, RpcError> {
@@ -697,7 +705,20 @@ fn feature_to_string(f: &model::tiers::FeatureFlag) -> String {
     }
 }
 
-fn to_model_info(m: model::ModelMetadata) -> ModelInfoResponse {
+fn to_model_info(
+    m: model::ModelMetadata,
+    registry: &model::ModelRegistry,
+    cache: &model::ModelCache,
+) -> ModelInfoResponse {
+    // Check if all shards are registered for availability
+    let is_available = registry
+        .list_shards(&m.model_id)
+        .map(|shards| shards.len() == m.shard_count as usize)
+        .unwrap_or(false);
+
+    // Check if model is loaded in cache
+    let is_loaded = cache.model_exists(&m.model_id).unwrap_or(false);
+
     ModelInfoResponse {
         model_id: m.model_id,
         name: m.name,
@@ -707,6 +728,8 @@ fn to_model_info(m: model::ModelMetadata) -> ModelInfoResponse {
         is_core_model: m.is_core_model,
         minimum_tier: m.minimum_tier.map(tier_to_string),
         is_experimental: m.is_experimental,
+        is_available,
+        is_loaded,
     }
 }
 

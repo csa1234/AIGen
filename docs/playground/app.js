@@ -532,7 +532,14 @@ class AIGENPlayground {
                     return;
                 }
                 const quota = await this.client.checkQuota(wallet);
-                this.elements.quotaValue.textContent = `${quota.used}/${quota.limit}`;
+                const used = quota.requests_used;
+                const remaining = quota.requests_remaining;
+                if (typeof used === 'undefined' || typeof remaining === 'undefined') {
+                    this.elements.quotaValue.textContent = '--';
+                    return;
+                }
+                const limit = used + remaining;
+                this.elements.quotaValue.textContent = `${used}/${limit}`;
             }
         } catch (error) {
             console.error('Failed to update quota:', error);

@@ -752,12 +752,38 @@ class AdminDashboard {
     }
 
     async loadGovernanceProposals() {
-        try {
-            // Governance listing RPC not implemented on server
-            // Show message in table
-            this.renderGovernanceTable(null);
-        } catch (error) {
-            this.showNotification(`Failed to load proposals: ${error.message}`, 'error');
+        // Governance listing RPC not yet implemented on server
+        // Replace the entire tab content with a CLI call-to-action
+        const governanceTab = document.getElementById('governanceTab');
+        if (governanceTab) {
+            governanceTab.innerHTML = `
+                <div class="governance-placeholder" style="
+                    display: flex;
+                    flex-direction: column;
+                    align-items: center;
+                    justify-content: center;
+                    padding: 3rem 2rem;
+                    text-align: center;
+                    color: var(--text-secondary);
+                ">
+                    <div style="font-size: 3rem; margin-bottom: 1rem;">🏛️</div>
+                    <h3 style="margin-bottom: 1rem; color: var(--text-primary);">Governance Features</h3>
+                    <p style="max-width: 500px; margin-bottom: 1.5rem; line-height: 1.6;">
+                        Governance proposals and voting are currently managed through the CLI.
+                        Please use the <code>aigen-cli</code> tool to create proposals, vote, and manage governance operations.
+                    </p>
+                    <div style="
+                        background: var(--bg-secondary);
+                        padding: 1rem 1.5rem;
+                        border-radius: var(--border-radius);
+                        font-family: monospace;
+                        font-size: 0.9rem;
+                        color: var(--text-primary);
+                    ">
+                        $ aigen-cli governance --help
+                    </div>
+                </div>
+            `;
         }
     }
 
@@ -765,7 +791,7 @@ class AdminDashboard {
         const tbody = document.getElementById('governanceTableBody');
         
         if (!proposals || proposals.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="5" class="loading-cell">Governance listing RPC not available. Use CLI for governance operations.</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="5" class="loading-cell" style="color: var(--text-secondary);">Governance features coming soon. Please use the CLI for governance operations.</td></tr>';
             return;
         }
         
