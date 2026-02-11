@@ -16,13 +16,13 @@ mod rpc;
 #[cfg(test)]
 mod chat_completion_test;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{anyhow, Context, Result};
 use blockchain_core::{BlockHeight, Blockchain, Transaction};
 use consensus::{set_inference_verification_config, PoIConsensus};
-use model::{set_global_inference_engine, InferenceEngine, LocalStorage, ModelRegistry, TierManager, AdManager};
+use model::{set_global_inference_engine, InferenceEngine, LocalStorage, ModelMetadata, ModelRegistry, ModelShard, ShardLocation, TierManager, AdManager};
 use network::model_sync::ModelShardRequestEnvelope;
 use network::{ModelSyncManager, NetworkEvent, NetworkMessage, P2PNode};
 use tokio::sync::{mpsc, Mutex};
@@ -151,6 +151,204 @@ async fn async_main() -> Result<()> {
         }
     }
 
+    Ok(())
+}
+
+/// Auto-register models from manifest files found in the model storage directory.
+/// This allows the node to discover and register local models at startup.
+async fn auto_register_local_models(
+    model_storage_path: &Path,
+    registry: &Arc<ModelRegistry>,
+    node_id: &str,
+) -> Result<()> {
+    // Convert to forward slashes for glob compatibility on Windows
+    let manifest_pattern = model_storage_path.join("*/manifest.json");
+    let pattern_str = manifest_pattern.to_string_lossy().replace('\\', "/");
+    
+    // Use glob to find all manifest files
+    let manifest_files: Vec<_> = glob::glob(&pattern_str)
+        .context("failed to create glob pattern")?
+        .filter_map(|entry| entry.ok())
+        .filter(|path| path.is_file())
+        .collect();
+    
+    if manifest_files.is_empty() {
+        println!("no local model manifests found");
+        return Ok(());
+    }
+    
+    println!("found {} local model manifest(s)", manifest_files.len());
+    
+    for manifest_path in manifest_files {
+        let manifest_path_str = manifest_path.to_string_lossy().to_string();
+        let manifest_content = match tokio::fs::read_to_string(&manifest_path).await {
+            Ok(content) => content,
+            Err(e) => {
+                eprintln!("warning: failed to read manifest {}: {}", manifest_path_str, e);
+                continue;
+            }
+        };
+        
+        let manifest: serde_json::Value = match serde_json::from_str(&manifest_content) {
+            Ok(value) => value,
+            Err(e) => {
+                eprintln!("warning: failed to parse manifest {}: {}", manifest_path_str, e);
+                continue;
+            }
+        };
+        
+        let model_id = match manifest["model_id"].as_str() {
+            Some(id) => id,
+            None => {
+                eprintln!("warning: manifest {} missing model_id", manifest_path_str);
+                continue;
+            }
+        };
+        let model_name = manifest["name"].as_str().unwrap_or(model_id);
+        let version = manifest["version"].as_str().unwrap_or("1.0.0");
+        
+        let total_size = match manifest["total_size"].as_u64() {
+            Some(size) => size,
+            None => {
+                eprintln!("warning: manifest {} missing total_size", manifest_path_str);
+                continue;
+            }
+        };
+        
+        let shard_count = match manifest["shard_count"].as_u64() {
+            Some(count) => count,
+            None => {
+                eprintln!("warning: manifest {} missing shard_count", manifest_path_str);
+                continue;
+            }
+        };
+        
+        let is_core_model = manifest["is_core_model"].as_bool().unwrap_or(false);
+        let created_at = manifest["created_at"].as_i64()
+            .unwrap_or_else(|| model::now_timestamp());
+        
+        // Parse verification hashes
+        let verification_hashes: Result<Vec<[u8; 32]>> = match manifest["verification_hashes"].as_array() {
+            Some(arr) => {
+                let hashes: Result<Vec<[u8; 32]>, _> = arr.iter()
+                    .map(|hash_str| {
+                        let hex_str = hash_str.as_str()
+                            .ok_or_else(|| anyhow!("verification_hash must be string"))?;
+                        let bytes = hex::decode(hex_str)
+                            .context("failed to decode verification hash")?;
+                        bytes.try_into()
+                            .map_err(|_| anyhow!("verification hash must be 32 bytes"))
+                    })
+                    .collect();
+                hashes
+            }
+            None => Err(anyhow!("manifest missing verification_hashes")),
+        };
+        
+        let verification_hashes = match verification_hashes {
+            Ok(hashes) => hashes,
+            Err(e) => {
+                eprintln!("warning: failed to parse verification hashes in {}: {}", manifest_path_str, e);
+                continue;
+            }
+        };
+        
+        // Check if model already registered
+        if registry.model_exists(model_id)? {
+            println!("model already registered: {}", model_id);
+            continue;
+        }
+        
+        println!("auto-registering model: {} ({})", model_name, model_id);
+        
+        // Create and register model metadata
+        let metadata = ModelMetadata {
+            model_id: model_id.to_string(),
+            name: model_name.to_string(),
+            version: version.to_string(),
+            total_size,
+            shard_count: shard_count as u32,
+            verification_hashes,
+            is_core_model,
+            minimum_tier: None,
+            is_experimental: false,
+            created_at,
+        };
+        
+        if let Err(e) = registry.register_model(metadata) {
+            eprintln!("warning: failed to register model {}: {}", model_id, e);
+            continue;
+        }
+        
+        // Register shards with local storage locations
+        if let Some(shards) = manifest["shards"].as_array() {
+            for shard_info in shards {
+                let shard_index = match shard_info["shard_index"].as_u64() {
+                    Some(i) => i as u32,
+                    None => {
+                        eprintln!("warning: shard missing shard_index in {}", model_id);
+                        continue;
+                    }
+                };
+                
+                let shard_size = match shard_info["size"].as_u64() {
+                    Some(s) => s,
+                    None => {
+                        eprintln!("warning: shard {} missing size in {}", shard_index, model_id);
+                        continue;
+                    }
+                };
+                
+                let hash_hex = match shard_info["hash"].as_str() {
+                    Some(h) => h,
+                    None => {
+                        eprintln!("warning: shard {} missing hash in {}", shard_index, model_id);
+                        continue;
+                    }
+                };
+                
+                let hash_bytes = match hex::decode(hash_hex) {
+                    Ok(bytes) => match bytes.try_into() {
+                        Ok(h) => h,
+                        Err(_) => {
+                            eprintln!("warning: invalid hash length for shard {} in {}", shard_index, model_id);
+                            continue;
+                        }
+                    },
+                    Err(e) => {
+                        eprintln!("warning: failed to decode hash for shard {} in {}: {}", shard_index, model_id, e);
+                        continue;
+                    }
+                };
+                
+                let shard = ModelShard {
+                    model_id: model_id.to_string(),
+                    shard_index,
+                    total_shards: shard_count as u32,
+                    hash: hash_bytes,
+                    size: shard_size,
+                    ipfs_cid: None,
+                    http_urls: Vec::new(),
+                    locations: vec![
+                        ShardLocation {
+                            node_id: node_id.to_string(),
+                            backend_type: "local".to_string(),
+                            location_uri: format!("file://{}", model_storage_path.display()),
+                            last_verified: created_at,
+                            is_healthy: true,
+                        }
+                    ],
+                };
+                
+                if let Err(e) = registry.register_shard(shard) {
+                    eprintln!("warning: failed to register shard {} for model {}: {}", shard_index, model_id, e);
+                }
+            }
+        }
+        
+        println!("registered model: {} ({} shards)", model_id, shard_count);
+    }
+    
     Ok(())
 }
 
@@ -315,6 +513,15 @@ async fn run_node(
     let (publish_tx, publish_rx) = mpsc::channel::<NetworkMessage>(1024);
     let model_registry = Arc::new(ModelRegistry::new());
     let model_storage = Arc::new(LocalStorage::new(cfg.model.model_storage_path.clone()));
+    
+    // Auto-register local models from manifest files
+    if let Err(err) = auto_register_local_models(
+        &cfg.model.model_storage_path,
+        &model_registry,
+        &cfg.node_id,
+    ).await {
+        eprintln!("warning: failed to auto-register local models: {}", err);
+    }
     
     // Initialize TierManager and AdManager with configuration
     let tier_manager = Arc::new(TierManager::with_chain_state(

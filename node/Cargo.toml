@@ -21,6 +21,7 @@ serde_json = { workspace = true }
 hex = { workspace = true }
 thiserror = { workspace = true }
 uuid = { version = "1.0", features = ["v4", "serde"] }
+glob = "0.3"
 
 jsonrpsee = { version = "0.21", features = ["server", "macros"] }
 tower = "0.4"

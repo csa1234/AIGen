@@ -1,4 +1,4 @@
-<!--
+/*
   Copyright (c) 2025-present Cesar Saguier Antebi
   
   This file is part of AIGEN Blockchain.
@@ -12,7 +12,7 @@
   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
   See the License for the specific language governing permissions and
   limitations under the License.
--->
+*/
 :root {
   --primary-bg: #1a1a1a;
   --secondary-bg: #2a2a2a;
@@ -180,6 +180,31 @@ body {
 .settings-btn:hover {
   background: var(--accent-blue);
   color: white;
+}
+
+/* Icon base styles */
+.settings-btn svg,
+.send-btn svg {
+  width: 20px;
+  height: 20px;
+  stroke: currentColor;
+  stroke-width: 2;
+  fill: none;
+  transition: transform 0.2s ease;
+}
+
+.settings-btn:hover svg,
+.send-btn:hover:not(:disabled) svg {
+  transform: scale(1.1);
+}
+
+/* Ensure icons inherit color properly */
+.settings-btn:hover svg {
+  stroke: white;
+}
+
+.send-btn:disabled svg {
+  opacity: 0.6;
 }
 
 /* Main Content */

@@ -45,10 +45,24 @@ curl -s -X POST http://localhost:9944 \
   -d '{"jsonrpc":"2.0","id":1,"method":"getChainInfo","params":[]}'
 ```
 
-## Documentation
+## Setting Up Test Model
+
+For development and testing, generate a test ONNX identity model:
+
+```bash
+cargo run --bin setup-test-model -- --model-id mistral-7b --data-dir ./data
+```
+
+This creates:
+- `./data/models/mistral-7b/model.onnx` - Identity ONNX model
+- `./data/models/mistral-7b/shards/` - Model shards
+- `./data/models/mistral-7b/manifest.json` - Metadata for auto-registration
+
+The node will automatically register the model on startup. See [SETUP.md](SETUP.md) for detailed instructions.
 
 ### Quick Start
 - **[Complete Guide](GUIDE.md)** - Comprehensive setup, deployment, and usage guide
+- **[Setup Guide](SETUP.md)** - Step-by-step model setup instructions
 - **[Admin Dashboard](dashboard/README.md)** - Web-based management interface
 
 ### API & Development

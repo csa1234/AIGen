@@ -9,6 +9,16 @@ node_id = "full-node-2"
 data_dir = "/data"
 keypair_path = "/data/node_keypair.bin"
 
+[model]
+core_model_id = "mistral-7b"
+cache_dir = "/data/model-cache"
+max_memory_mb = 4096
+num_threads = 4
+download_timeout_secs = 300
+min_redundancy_nodes = 1
+worker_mode = false
+model_storage_path = "/data/models"
+
 [network]
 listen_addr = "/ip4/0.0.0.0/tcp/9000"
 bootstrap_peers = ["/ip4/172.20.0.10/tcp/9000/p2p/BOOTSTRAP_PEER_ID"]

@@ -8,17 +8,25 @@
 # AIGEN Node Configuration (TOML)
 
 node_id = "node-1"
-# data_dir is where node_keypair.bin and other node state should live
-# data_dir = "C:\\Users\\you\\AppData\\Roaming\\aigen"
-data_dir = ".\\data"
+data_dir = "./data"
 
 [model]
+# Core model ID to load at startup
+core_model_id = "mistral-7b"
 # cache_dir defaults to <data_dir>/model-cache if omitted
-cache_dir = ".\\data\\model-cache"
+cache_dir = "./data/model-cache"
 # maximum resident memory for models (MB)
-max_memory_mb = 2048
+max_memory_mb = 4096
 # number of ONNX runtime threads (0 = runtime default)
-num_threads = 0
+num_threads = 4
+# Timeout for downloading model shards (seconds)
+download_timeout_secs = 300
+# Minimum number of redundant nodes per shard
+min_redundancy_nodes = 1
+# Worker mode - if true, this node downloads models but doesn't serve them
+worker_mode = false
+# Path where models are stored (LocalStorage backend)
+model_storage_path = "./data/models"
 
 [verification]
 # inference verification cache size
@@ -33,15 +41,8 @@ max_ad_length = 500
 max_total_output_length = 10000
 upgrade_prompt_threshold = 8
 free_tier_only = true
-# Optional: specify custom ad templates inline or via file path
-# templates = [
-#   { id = "custom-upgrade", content = "Upgrade to {tier} for more requests!", priority = 5, active = true }
-# ]
-# template_file_path = "./ad_templates.json"
 
-# keypair_path is currently derived from data_dir by default.
-# keypair_path = ".\\data\\node_keypair.bin"
-keypair_path = ".\\data\\node_keypair.bin"
+keypair_path = "./data/node_keypair.bin"
 
 [network]
 listen_addr = "/ip4/0.0.0.0/tcp/9000"
@@ -72,10 +73,10 @@ network_magic = 2711724449
 [node]
 # node_type: miner | validator | full_node | light_client
 node_type = "full_node"
-# validator_address is required for validator nodes
-validator_address = null
-# stake_amount is required for validator nodes
-stake_amount = null
+# validator_address is required for validator nodes (uncomment when needed)
+# validator_address = "0x..."
+# stake_amount is required for validator nodes in lamports (uncomment when needed)
+# stake_amount = 1000000
 
 [rpc]
 rpc_enabled = true

@@ -35,6 +35,7 @@ pub struct NodeConfiguration {
     pub genesis: GenesisConfig,
     pub node: NodeConfig,
     pub rpc: RpcConfig,
+    #[serde(default)]
     pub keypair_path: PathBuf,
 }
 
@@ -124,6 +125,10 @@ impl NodeConfiguration {
         }
         if cfg.model.min_redundancy_nodes == 0 {
             cfg.model.min_redundancy_nodes = 5;
+        }
+        // Ensure keypair_path is set
+        if cfg.keypair_path.as_os_str().is_empty() {
+            cfg.keypair_path = crate::keypair::default_keypair_path(&cfg.data_dir);
         }
         Ok(cfg)
     }

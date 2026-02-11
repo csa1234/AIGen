@@ -9,18 +9,42 @@ Binaries:
 - `generate-ceo-keypair` — generate a new Ed25519 CEO keypair and encrypt the private key
 - `sign-shutdown-command` — sign an emergency `ShutdownCommand` JSON
 - `sign-sip-approval` — sign a SIP approval or veto payload
+- `setup-test-model` — generate test ONNX identity model for development
 
 Canonical invocation (from the workspace root):
 
 - `cargo run -p aigen-scripts --bin generate-ceo-keypair -- <args>`
 - `cargo run -p aigen-scripts --bin sign-shutdown-command -- <args>`
 - `cargo run -p aigen-scripts --bin sign-sip-approval -- <args>`
+- `cargo run -p aigen-scripts --bin setup-test-model -- <args>`
 
 ## Security Model
 
 - Run these tools on an **air-gapped** machine.
 - Treat the encrypted private key file as highly sensitive.
 - Do not move plaintext private key material onto internet-connected systems.
+
+## Model Setup
+
+Generate a test model for local development:
+
+```bash
+cargo run -p aigen-scripts --bin setup-test-model -- \
+  --model-id mistral-7b \
+  --model-name "Mistral-7B-Test-Identity" \
+  --data-dir ./data \
+  --version 1.0.0
+```
+
+This creates a minimal ONNX identity model that echoes input to output, useful for:
+- Testing inference engine functionality
+- Validating model registry and storage
+- Development without downloading large models
+- CI/CD pipeline testing
+
+The model is automatically registered when the node starts via the manifest.json file.
+
+See [SETUP.md](../SETUP.md) for complete model setup documentation.
 
 ## Installation
 

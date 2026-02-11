@@ -3,15 +3,16 @@
 ## Table of Contents
 1. [Prerequisites & System Requirements](#prerequisites--system-requirements)
 2. [Quick Start (5 Minutes)](#quick-start-5-minutes)
-3. [Jan AI Model Setup](#jan-ai-model-setup)
-4. [Admin Dashboard Setup](#admin-dashboard-setup)
-5. [Development Environment](#development-environment)
-6. [Multi-Node Deployment](#multi-node-deployment)
-7. [Production Deployment](#production-deployment)
-8. [CEO Operations](#ceo-operations)
-9. [API & SDK Usage](#api--sdk-usage)
-10. [Troubleshooting](#troubleshooting)
-11. [Security & Best Practices](#security--best-practices)
+3. [Test Model Setup (Development)](#test-model-setup-development)
+4. [Production Model Setup (Jan AI / GGUF)](#production-model-setup-jan-ai--gguf)
+5. [Admin Dashboard Setup](#admin-dashboard-setup)
+6. [Development Environment](#development-environment)
+7. [Multi-Node Deployment](#multi-node-deployment)
+8. [Production Deployment](#production-deployment)
+9. [CEO Operations](#ceo-operations)
+10. [API & SDK Usage](#api--sdk-usage)
+11. [Troubleshooting](#troubleshooting)
+12. [Security & Best Practices](#security--best-practices)
 
 ---
 
@@ -62,9 +63,113 @@ curl -X POST http://localhost:9944 \
   -d '{"jsonrpc":"2.0","id":1,"method":"system_health","params":[]}'
 ```
 
+For detailed model setup instructions, see [SETUP.md](SETUP.md).
+
 ---
 
-## Jan AI Model Setup
+## Test Model Setup (Development)
+
+For development and testing without large model downloads, use the built-in test model script to generate a minimal ONNX identity model.
+
+### Quick Setup
+
+```bash
+# Generate test model
+cargo run --bin setup-test-model -- --model-id mistral-7b --data-dir ./data
+```
+
+### CLI Arguments
+
+| Argument | Description | Default |
+|----------|-------------|---------|
+| `--model-id` | Unique identifier for the model | `mistral-7b` |
+| `--model-name` | Human-readable model name | `Mistral-7B-Test-Identity` |
+| `--data-dir` | Base directory for model storage | `./data` |
+| `--version` | Model version string | `1.0.0` |
+
+### What It Creates
+
+```
+data/
+└── models/
+    └── mistral-7b/
+        ├── model.onnx          # ONNX identity model (echoes input to output)
+        ├── manifest.json       # Metadata for auto-registration
+        └── shards/
+            ├── shard_0.bin   # Model shards
+            └── shard_1.bin
+```
+
+### Auto-Registration Mechanism
+
+The node automatically discovers and registers models at startup:
+
+1. Scans `data_dir/models/*/` for `manifest.json` files
+2. Parses manifest to extract model metadata and shard locations
+3. Registers model with `ModelRegistry` (in-memory structure)
+4. Registers each shard with the storage backend
+5. Sets the core model for inference engine (configured via `core_model_id`)
+
+This is implemented in `node/src/main.rs` lines 157-351 in the `auto_register_local_models` function.
+
+### Verifying Model Registration
+
+```bash
+# List registered models
+curl -X POST http://localhost:9944 \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"listModels","params":[],"id":1}'
+```
+
+Expected response:
+```json
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "models": [{
+      "id": "mistral-7b",
+      "name": "Mistral-7B-Test-Identity",
+      "version": "1.0.0",
+      "state": "ready"
+    }]
+  },
+  "id": 1
+}
+```
+
+### Test Inference
+
+```bash
+curl -X POST http://localhost:9944 \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc":"2.0",
+    "method":"runInference",
+    "params":{
+      "model_id":"mistral-7b",
+      "inputs":[{"name":"input","shape":[1,3],"data":[0.5,0.6,0.7]}]
+    },
+    "id":1
+  }'
+```
+
+### When to Use Test Models
+
+- Testing inference engine functionality
+- Validating model registry and storage
+- Development without downloading large models
+- CI/CD pipeline testing
+- Local debugging and experimentation
+
+Test models are **NOT** for production use - they simply echo inputs.
+
+---
+
+## Production Model Setup (Jan AI / GGUF)
+
+For production use with real AI capabilities, AIGEN supports GGUF models via integration with Jan AI.
+
+### Prerequisites
 
 AIGEN includes a pre-configured Mistral model for AI inference.
 
@@ -146,6 +251,19 @@ To use a Jan AI model with AIGEN:
 2. Create corresponding `model.yml` configuration
 3. Register model via admin dashboard or genesis configuration
 4. Initialize nodes with the new model
+
+### ONNX vs GGUF: Key Differences
+
+| Aspect | Test (ONNX) | Production (GGUF) |
+|--------|-------------|-------------------|
+| Purpose | Development/Testing | Real AI inference |
+| Model Format | ONNX | GGUF |
+| Size | ~1 KB | Multi-GB |
+| Behavior | Echoes input | Actual AI reasoning |
+| Auto-registration | Yes (via manifest.json) | Manual/config-based |
+| Use Case | CI/CD, debugging | Production workloads |
+
+For detailed setup instructions, see [SETUP.md](SETUP.md).
 
 ---
 

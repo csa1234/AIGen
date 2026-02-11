@@ -17,9 +17,14 @@ path = "src/bin/sign_shutdown_command.rs"
 name = "sign-sip-approval"
 path = "src/bin/sign_sip_approval.rs"
 
+[[bin]]
+name = "setup-test-model"
+path = "src/bin/setup_test_model.rs"
+
 [dependencies]
 genesis = { path = "../genesis" }
 blockchain-core = { path = "../blockchain-core" }
+model = { path = "../model" }
 ed25519-dalek.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -27,11 +32,14 @@ hex.workspace = true
 clap.workspace = true
 rand.workspace = true
 chrono.workspace = true
+sha2.workspace = true
+tokio = { workspace = true, features = ["full"] }
 anyhow = "1.0"
 argon2 = "0.5"
 chacha20poly1305 = "0.10"
 zeroize = { version = "1.7", features = ["derive"] }
 rpassword = "7.3"
+prost = "0.12"
 
 [dev-dependencies]
 tempfile = "3.8"
