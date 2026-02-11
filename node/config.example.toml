@@ -28,6 +28,11 @@ max_memory_mb = 2048
 # number of ONNX runtime threads (0 = runtime default)
 num_threads = 0
 
+# NOTE: The ONNX Runtime shared library (onnxruntime.dll/so/dylib) must be present
+# in the working directory or specified via ORT_DYLIB_PATH environment variable.
+# See docs/INFERENCE_SETUP.md for installation instructions.
+
+
 [verification]
 # inference verification cache size
 cache_capacity = 256
