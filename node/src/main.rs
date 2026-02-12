@@ -584,7 +584,7 @@ async fn run_node(
     ));
 
     // Spawn heartbeat loop
-    let heartbeat_handle = {
+    let _heartbeat_handle = {
         let manager = heartbeat_manager.clone();
         tokio::spawn(async move {
             manager.start_heartbeat_loop().await;
@@ -592,7 +592,7 @@ async fn run_node(
     };
 
     // Start DCS with failure monitoring
-    dcs.start_with_monitoring().await;
+    dcs.clone().start_with_monitoring().await;
 
     // networking tasks are spawned below; defer core model loading until after they start
 
@@ -641,16 +641,20 @@ async fn run_node(
     // Clone publish_tx for VRAM announcement task before it's moved
     let publish_tx_for_vram = publish_tx.clone();
 
+    // Clone publish_tx for consensus network task before it's moved
+    let publish_tx_for_consensus = publish_tx.clone();
+
     tokio::spawn(async move {
         let mut rx = consensus_network_rx;
+        let tx = publish_tx_for_consensus.clone();
         while let Some(msg) = rx.recv().await {
             #[allow(unreachable_patterns)]
             match msg {
                 consensus::NetworkMessage::Block(block) => {
-                    let _ = publish_tx.send(NetworkMessage::Block(block)).await;
+                    let _ = tx.send(NetworkMessage::Block(block)).await;
                 }
                 consensus::NetworkMessage::ValidatorVote(vote) => {
-                    let _ = publish_tx.send(NetworkMessage::ValidatorVote(vote)).await;
+                    let _ = tx.send(NetworkMessage::ValidatorVote(vote)).await;
                 }
                 _ => {
                     eprintln!("unhandled consensus network message variant");
@@ -711,6 +715,10 @@ async fn run_node(
         // Map to store chunks for reconstruction: (task_id, chunk_index) -> chunk
         let pending_chunks: Arc<Mutex<HashMap<uuid::Uuid, Vec<TensorActivationChunk>>>> = 
             Arc::new(Mutex::new(HashMap::new()));
+        // Clone values for use in the async block
+        let publish_tx_clone = publish_tx.clone();
+        let cfg_node_id = cfg.node_id.clone();
+        let inference_engine_clone = inference_engine.clone();
         tokio::spawn(async move {
             loop {
                 tokio::select! {
@@ -824,16 +832,16 @@ async fn run_node(
                                         tensor_shard_index,
                                         total_tensor_shards,
                                     } => {
-                                        if assigned_node == cfg.node_id {
+                                        if assigned_node == cfg_node_id {
                                             println!(
                                                 "received compute task: task_id={}, model_id={}, layers={:?}, shard={}/{}",
                                                 task_id, model_id, layer_range, tensor_shard_index + 1, total_tensor_shards
                                             );
                                             // Spawn task execution
-                                            let inference_engine = inference_engine.clone();
-                                            let publish_tx = publish_tx.clone();
+                                            let inference_engine = inference_engine_clone.clone();
+                                            let publish_tx = publish_tx_clone.clone();
                                             let dcs_state = dcs_state.clone();
-                                            let node_id = cfg.node_id.clone();
+                                            let node_id = cfg_node_id.clone();
                                             let activation_stream = activation_stream.clone();
                                             tokio::spawn(async move {
                                                 // Update VRAM allocation
@@ -859,7 +867,7 @@ async fn run_node(
                                                             eprintln!("failed to receive activation: task_id={}, error={}", task_id, e);
                                                             // Update VRAM allocation
                                                             if let Some(mut node) = dcs_state.nodes.get_mut(&node_id) {
-                                                                node.vram_allocated_gb = node.vram_allocated_gb.saturating_sub(0.5);
+                                                                node.vram_allocated_gb = (node.vram_allocated_gb - 0.5).max(0.0);
                                                             }
                                                             let fail_msg = NetworkMessage::TaskFailure {
                                                                 task_id,
@@ -943,7 +951,7 @@ async fn run_node(
 
                                                 // Update VRAM allocation
                                                 if let Some(mut node) = dcs_state.nodes.get_mut(&node_id) {
-                                                    node.vram_allocated_gb = node.vram_allocated_gb.saturating_sub(0.5);
+                                                    node.vram_allocated_gb = (node.vram_allocated_gb - 0.5).max(0.0);
                                                 }
                                             });
                                         }
@@ -1042,7 +1050,7 @@ async fn run_node(
                                             checkpoint_hash,
                                             layer_range,
                                             timestamp,
-                                            node_id: cfg.node_id.clone(),
+                                            node_id: cfg_node_id.clone(),
                                         };
                                         dcs_state.store_checkpoint(record);
                                         println!("checkpoint stored: task_id={}", task_id);
@@ -1054,20 +1062,20 @@ async fn run_node(
                                         replacement_node,
                                         resume_from_checkpoint,
                                     } => {
-                                        if replacement_node == cfg.node_id {
+                                        if replacement_node == cfg_node_id {
                                             // This node is the replacement, resume from checkpoint
                                             println!("failover received: task_id={}, resuming from checkpoint", task_id);
                                             
                                             // Spawn recovery task
-                                            let inference_engine = inference_engine.clone();
-                                            let publish_tx = publish_tx.clone();
+                                            let inference_engine = inference_engine_clone.clone();
+                                            let publish_tx = publish_tx_clone.clone();
                                             tokio::spawn(async move {
                                                 match inference_engine.cache().resume_from_checkpoint(
                                                     task_id,
                                                     failed_node,
                                                     resume_from_checkpoint,
                                                 ).await {
-                                                    Ok(result) => {
+                                                    Ok(_result) => {
                                                         println!("failover recovery completed: task_id={}", task_id);
                                                         let result_msg = NetworkMessage::TaskResult {
                                                             task_id,

@@ -423,6 +423,12 @@ impl ActivationStream {
         self.completed_activations.write().await.remove(&task_id);
         self.pending_activations.write().await.remove(&task_id);
     }
+
+    /// Enqueue an activation tensor directly (for reconstructed activations)
+    pub async fn enqueue_activation(&self, activation: ActivationTensor) -> Result<(), ActivationStreamError> {
+        self.completed_activations.write().await.insert(activation.task_id, activation);
+        Ok(())
+    }
 }
 
 /// Errors that can occur during activation streaming

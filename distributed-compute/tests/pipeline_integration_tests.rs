@@ -169,7 +169,7 @@ fn test_vram_tracking() {
 #[test]
 fn test_pipeline_activation_linking() {
     let state = GlobalState::new();
-    let router = RouteSelector::new(std::sync::Arc::new(state));
+    let _router = RouteSelector::new(std::sync::Arc::new(state));
     
     // Create tasks for a pipeline
     let inference_id = Uuid::new_v4();
@@ -203,7 +203,7 @@ fn test_pipeline_activation_linking() {
         total_tensor_shards: 1,
     };
     
-    let mut plan = TaskPlan {
+    let plan = TaskPlan {
         inference_id,
         tasks: vec![task, task2],
         pipeline_order: vec!["node_1".to_string(), "node_2".to_string()],

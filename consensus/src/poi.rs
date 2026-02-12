@@ -291,6 +291,31 @@ impl PoIProof {
     }
 }
 
+impl Default for PoIProof {
+    fn default() -> Self {
+        Self {
+            work_hash: [0u8; 32],
+            miner_address: String::new(),
+            timestamp: 0,
+            verification_data: serde_json::Value::Null,
+            work_type: WorkType::Inference,
+            input_hash: [0u8; 32],
+            output_data: Vec::new(),
+            computation_metadata: ComputationMetadata {
+                rows: 0,
+                cols: 0,
+                inner: 0,
+                iterations: 0,
+                model_id: String::new(),
+                compression_method: CompressionMethod::None,
+                original_size: 0,
+            },
+            difficulty: 0,
+            nonce: 0,
+        }
+    }
+}
+
 fn validate_work_difficulty(work_hash: &[u8; 32], difficulty: u64) -> Result<u64, ConsensusError> {
     if difficulty == 0 {
         return Err(ConsensusError::InvalidProof);

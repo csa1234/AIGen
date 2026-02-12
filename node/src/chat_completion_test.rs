@@ -19,8 +19,8 @@ mod chat_completion_tests {
     use crate::rpc::types::*;
     use crate::rpc::model::ModelRpcMethods;
     use crate::rpc::model::ModelRpcServer;
-    use blockchain_core::types::{Amount, ChainId, Fee, Nonce, Timestamp, TxHash};
-    use blockchain_core::{generate_keypair, sign_message};
+    use blockchain_core::types::Amount;
+    use blockchain_core::generate_keypair;
     use blockchain_core::Transaction;
     use tokio::fs;
     use tokio::io::AsyncWriteExt;
@@ -95,7 +95,7 @@ mod chat_completion_tests {
         let sender = blockchain_core::derive_address_from_pubkey(&public_key);
         let receiver = genesis::CEO_WALLET.to_string();
         {
-            let mut chain = bc.lock().await;
+            let chain = bc.lock().await;
             chain
                 .state
                 .set_balance(

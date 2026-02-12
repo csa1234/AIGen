@@ -1174,7 +1174,19 @@ async fn load_model_from_shards(
     for shard in shards.iter() {
         ensure_running()?;
         let shard_path = shard_dir.join(format!("{}_shard_{}.bin", model_id, shard.shard_index));
-        storage.download_shard(shard, &shard_path).await?;
+        // Wrap storage call in spawn_blocking to make it Send-safe
+        let storage_clone = storage.clone();
+        let shard_clone = shard.clone();
+        let path_clone = shard_path.clone();
+        tokio::task::spawn_blocking(move || {
+            let rt = tokio::runtime::Handle::try_current()
+                .map_err(|e| StorageError::Io(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
+            rt.block_on(async move {
+                storage_clone.download_shard(&shard_clone, &path_clone).await
+            })
+        })
+        .await
+        .map_err(|e| InferenceError::ModelLoadFailed(e.to_string()))??;
         let valid = verify_shard_integrity(&shard_path, &shard.hash).await?;
         if !valid {
             println!(
@@ -1292,7 +1304,19 @@ async fn load_fragments_to_vram(
         
         // Download from storage (first available location)
         if let Some(_location) = fragment.locations.first() {
-            storage.download_fragment(fragment, &fragment_path).await?;
+            // Wrap storage call in spawn_blocking to make it Send-safe
+            let storage_clone = storage.clone();
+            let fragment_clone = fragment.clone();
+            let path_clone = fragment_path.clone();
+            tokio::task::spawn_blocking(move || {
+                let rt = tokio::runtime::Handle::try_current()
+                    .map_err(|e| StorageError::Io(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
+                rt.block_on(async move {
+                    storage_clone.download_fragment(&fragment_clone, &path_clone).await
+                })
+            })
+            .await
+            .map_err(|e| FragmentExecutorError::FragmentLoadFailed(e.to_string()))??;
         } else {
             return Err(FragmentExecutorError::FragmentLoadFailed(
                 format!("no storage location for fragment {}", fragment.fragment_id)
