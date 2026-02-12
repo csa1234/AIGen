@@ -12,6 +12,8 @@ use consensus::CompressionMethod;
 use libp2p::PeerId;
 use serde::{Deserialize, Serialize};
 
+use uuid::Uuid;
+
 use crate::protocol::NetworkMessage;
 
 #[derive(Clone, Debug)]
@@ -19,6 +21,7 @@ pub enum NetworkEvent {
     PeerDiscovered(PeerId),
     MessageReceived(NetworkMessage),
     TensorChunkReceived(TensorChunk),
+    ActivationReceived(ActivationReceivedPayload),
     ModelShardAnnounced {
         model_id: String,
         shard_index: u32,
@@ -62,4 +65,17 @@ pub struct TensorChunk {
     pub total_chunks: u32,
     pub data: Vec<u8>,
     pub compression: CompressionMethod,
+}
+
+/// Payload for activation received event
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ActivationReceivedPayload {
+    pub task_id: Uuid,
+    pub inference_id: Uuid,
+    pub chunk_index: u32,
+    pub total_chunks: u32,
+    pub data: Vec<u8>,
+    pub compression_level: i32,
+    pub checkpoint_hash: [u8; 32],
+    pub from_node: Option<String>,
 }

@@ -56,6 +56,8 @@ fn test_routing_selection() {
             input_activation_ref: None,
             assigned_node: String::new(),
             status: TaskStatus::Pending,
+            tensor_shard_index: 0,
+            total_tensor_shards: 1,
         }],
         pipeline_order: vec![],
     };

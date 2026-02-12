@@ -83,6 +83,7 @@ impl RouteSelector {
 
     pub fn select_route(&self, task_plan: &mut TaskPlan) -> Result<(), SchedulerError> {
         let mut prev_node_id = String::new(); // Ideally the source of the request
+        let mut prev_task_id: Option<uuid::Uuid> = None;
 
         for task in &mut task_plan.tasks {
             if task.required_fragments.is_empty() {
@@ -114,7 +115,21 @@ impl RouteSelector {
                 .ok_or(SchedulerError::NoAvailableNode(frag_id.clone()))?;
             
             task.assigned_node = best_node.node_id.clone();
+            
+            // Link activations between pipeline nodes
+            if let Some(prev_id) = prev_task_id {
+                // This task receives activation from previous task
+                task.input_activation_ref = Some(crate::task::ActivationRef {
+                    location: format!("{}/{}", prev_node_id, prev_id),
+                    size_bytes: 0, // Will be populated after first task runs
+                });
+            }
+            
+            // Store task in active_tasks
+            self.state.active_tasks.insert(task.task_id, task.clone());
+            
             prev_node_id = best_node.node_id.clone();
+            prev_task_id = Some(task.task_id);
             
             // Allocate task update load
             self.state.allocate_task(task, &best_node.node_id);

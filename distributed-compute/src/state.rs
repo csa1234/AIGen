@@ -48,6 +48,18 @@ pub struct GlobalState {
     pub nodes: DashMap<String, NodeState>,
     pub fragments: DashMap<String, FragmentLocation>, // fragment_id -> location
     pub active_tasks: DashMap<TaskId, ComputeTask>,
+    // NEW: Checkpoint storage
+    pub checkpoints: DashMap<TaskId, Vec<CheckpointRecord>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CheckpointRecord {
+    pub task_id: Uuid,
+    pub inference_id: Uuid,
+    pub checkpoint_hash: [u8; 32],
+    pub layer_range: (u32, u32),
+    pub timestamp: i64,
+    pub node_id: String, // Node that created checkpoint
 }
 
 impl GlobalState {
@@ -56,6 +68,33 @@ impl GlobalState {
             nodes: DashMap::new(),
             fragments: DashMap::new(),
             active_tasks: DashMap::new(),
+            checkpoints: DashMap::new(),
+        }
+    }
+
+    /// Store checkpoint for a task
+    pub fn store_checkpoint(&self, record: CheckpointRecord) {
+        self.checkpoints
+            .entry(record.task_id)
+            .or_insert_with(Vec::new)
+            .push(record);
+    }
+
+    /// Get latest checkpoint for a task
+    pub fn get_latest_checkpoint(&self, task_id: &Uuid) -> Option<CheckpointRecord> {
+        self.checkpoints
+            .get(task_id)
+            .and_then(|records| records.iter().max_by_key(|r| r.timestamp).cloned())
+    }
+
+    /// Cleanup old checkpoints (keep last 3 per task)
+    pub fn cleanup_old_checkpoints(&self, task_id: &Uuid) {
+        if let Some(mut records) = self.checkpoints.get_mut(task_id) {
+            records.sort_by_key(|r| r.timestamp);
+            let len = records.len();
+            if len > 3 {
+                records.drain(0..len - 3);
+            }
         }
     }
 

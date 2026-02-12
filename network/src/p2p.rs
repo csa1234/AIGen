@@ -12,7 +12,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::collections::{HashMap, VecDeque};
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use futures::StreamExt;
 use genesis::is_shutdown;
@@ -31,7 +31,8 @@ use libp2p::yamux;
 use libp2p::PeerId;
 use libp2p::Transport;
 use sha2::{Digest, Sha256};
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::{broadcast, mpsc, RwLock};
+use uuid::Uuid;
 
 use crate::config::NetworkConfig;
 use crate::events::NetworkEvent;
@@ -993,4 +994,133 @@ fn compute_fragment_hash(data: &[u8]) -> [u8; 32] {
     let mut hash = [0u8; 32];
     hash.copy_from_slice(&digest);
     hash
+}
+
+/// Heartbeat manager for failure detection
+pub struct HeartbeatManager {
+    local_node_id: String,
+    interval: Duration,
+    missed_threshold: u32,
+    last_seen: Arc<RwLock<HashMap<String, Instant>>>,
+    network_tx: mpsc::Sender<NetworkMessage>,
+    active_tasks: Arc<RwLock<Vec<Uuid>>>,
+    load_score: Arc<RwLock<f32>>,
+}
+
+impl HeartbeatManager {
+    pub fn new(
+        node_id: String,
+        network_tx: mpsc::Sender<NetworkMessage>,
+    ) -> Self {
+        Self {
+            local_node_id: node_id,
+            interval: Duration::from_millis(500),
+            missed_threshold: 3,
+            last_seen: Arc::new(RwLock::new(HashMap::new())),
+            network_tx,
+            active_tasks: Arc::new(RwLock::new(Vec::new())),
+            load_score: Arc::new(RwLock::new(0.0)),
+        }
+    }
+
+    /// Start periodic heartbeat broadcast (500ms interval)
+    pub async fn start_heartbeat_loop(&self) {
+        let node_id = self.local_node_id.clone();
+        let network_tx = self.network_tx.clone();
+        let active_tasks = self.active_tasks.clone();
+        let load_score = self.load_score.clone();
+        let interval = self.interval;
+
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(interval);
+            loop {
+                ticker.tick().await;
+
+                let tasks = active_tasks.read().await.clone();
+                let load = *load_score.read().await;
+                let timestamp = model::now_timestamp();
+
+                let msg = NetworkMessage::Heartbeat {
+                    node_id: node_id.clone(),
+                    timestamp,
+                    active_tasks: tasks,
+                    load_score: load,
+                };
+
+                if let Err(e) = network_tx.send(msg).await {
+                    eprintln!("heartbeat send failed: {}", e);
+                }
+            }
+        });
+    }
+
+    /// Process incoming heartbeat from peer
+    pub async fn handle_heartbeat(
+        &self,
+        node_id: String,
+        timestamp: i64,
+        active_tasks: Vec<Uuid>,
+        load_score: f32,
+    ) {
+        let now = Instant::now();
+        let mut last_seen = self.last_seen.write().await;
+        last_seen.insert(node_id.clone(), now);
+        drop(last_seen);
+
+        // Update active tasks tracking for this peer (for future use)
+        let _ = active_tasks;
+        let _ = load_score;
+        let _ = timestamp;
+    }
+
+    /// Check for failed nodes (missed 3+ heartbeats = 1500ms)
+    pub async fn detect_failures(&self) -> Vec<String> {
+        let now = Instant::now();
+        let threshold = Duration::from_millis(1500); // 3 x 500ms
+        let last_seen = self.last_seen.read().await;
+
+        last_seen
+            .iter()
+            .filter(|(_, last)| now.duration_since(**last) > threshold)
+            .map(|(node_id, _)| node_id.clone())
+            .collect()
+    }
+
+    /// Update local active tasks list
+    pub async fn update_active_tasks(&self, tasks: Vec<Uuid>) {
+        let mut active = self.active_tasks.write().await;
+        *active = tasks;
+    }
+
+    /// Update local load score
+    pub async fn update_load_score(&self, score: f32) {
+        let mut load = self.load_score.write().await;
+        *load = score;
+    }
+
+    /// Get the last seen timestamp for a node
+    pub async fn get_last_seen(&self, node_id: &str) -> Option<Instant> {
+        let last_seen = self.last_seen.read().await;
+        last_seen.get(node_id).cloned()
+    }
+
+    /// Record that we've seen a node (update last_seen)
+    pub async fn record_node_seen(&self, node_id: String) {
+        let mut last_seen = self.last_seen.write().await;
+        last_seen.insert(node_id, Instant::now());
+    }
+}
+
+impl Clone for HeartbeatManager {
+    fn clone(&self) -> Self {
+        Self {
+            local_node_id: self.local_node_id.clone(),
+            interval: self.interval,
+            missed_threshold: self.missed_threshold,
+            last_seen: self.last_seen.clone(),
+            network_tx: self.network_tx.clone(),
+            active_tasks: self.active_tasks.clone(),
+            load_score: self.load_score.clone(),
+        }
+    }
 }

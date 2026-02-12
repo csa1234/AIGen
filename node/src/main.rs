@@ -25,8 +25,10 @@ use blockchain_core::{BlockHeight, Blockchain, Transaction};
 use consensus::{set_inference_verification_config, PoIConsensus};
 use model::{set_global_inference_engine, InferenceEngine, LocalStorage, ModelMetadata, ModelRegistry, ModelShard, ShardLocation, TierManager, AdManager};
 use network::model_sync::ModelShardRequestEnvelope;
+use network::tensor_stream::{ActivationStream, ActivationTensor, ActivationChunk as TensorActivationChunk};
 use network::{ModelSyncManager, NetworkEvent, NetworkMessage, P2PNode};
 use tokio::sync::{mpsc, Mutex};
+use std::collections::HashMap;
 
 fn main() -> Result<()> {
     tokio::runtime::Runtime::new()?.block_on(async_main())
@@ -571,26 +573,26 @@ async fn run_node(
         dcs_router,
         consensus.lock().await.validator_registry.clone(),
         publish_tx.clone(),
-        cfg.node_id.clone(),
         local_validator_address,
         model_registry.clone(),
     ));
 
-    // Spawn DCS leader election task
-    tokio::spawn({
-        let dcs = dcs.clone();
-        async move {
-            let mut interval = tokio::time::interval(Duration::from_secs(60));
-            loop {
-                interval.tick().await;
-                if let Ok(is_leader) = dcs.elect_leader().await {
-                    if is_leader {
-                        println!("elected as DCS leader");
-                    }
-                }
-            }
-        }
-    });
+    // Initialize HeartbeatManager
+    let heartbeat_manager = Arc::new(network::p2p::HeartbeatManager::new(
+        cfg.node_id.clone(),
+        publish_tx.clone(),
+    ));
+
+    // Spawn heartbeat loop
+    let heartbeat_handle = {
+        let manager = heartbeat_manager.clone();
+        tokio::spawn(async move {
+            manager.start_heartbeat_loop().await;
+        })
+    };
+
+    // Start DCS with failure monitoring
+    dcs.start_with_monitoring().await;
 
     // networking tasks are spawned below; defer core model loading until after they start
 
@@ -704,6 +706,11 @@ async fn run_node(
         let mut local_shutdown_rx = local_shutdown_rx;
         let block_broadcast_tx = block_broadcast_tx.clone();
         let tx_broadcast_tx = tx_broadcast_tx.clone();
+        // Create ActivationStream for receiving/sending activations
+        let activation_stream = ActivationStream::new(1000);
+        // Map to store chunks for reconstruction: (task_id, chunk_index) -> chunk
+        let pending_chunks: Arc<Mutex<HashMap<uuid::Uuid, Vec<TensorActivationChunk>>>> = 
+            Arc::new(Mutex::new(HashMap::new()));
         tokio::spawn(async move {
             loop {
                 tokio::select! {
@@ -805,6 +812,281 @@ async fn run_node(
                                     NetworkMessage::ValidatorVote(vote) => {
                                         let c = consensus.lock().await;
                                         let _ = c.submit_validator_vote(vote);
+                                    }
+                                    NetworkMessage::ComputeTask {
+                                        task_id,
+                                        inference_id,
+                                        model_id,
+                                        layer_range,
+                                        required_fragments,
+                                        assigned_node,
+                                        input_activation_ref,
+                                        tensor_shard_index,
+                                        total_tensor_shards,
+                                    } => {
+                                        if assigned_node == cfg.node_id {
+                                            println!(
+                                                "received compute task: task_id={}, model_id={}, layers={:?}, shard={}/{}",
+                                                task_id, model_id, layer_range, tensor_shard_index + 1, total_tensor_shards
+                                            );
+                                            // Spawn task execution
+                                            let inference_engine = inference_engine.clone();
+                                            let publish_tx = publish_tx.clone();
+                                            let dcs_state = dcs_state.clone();
+                                            let node_id = cfg.node_id.clone();
+                                            let activation_stream = activation_stream.clone();
+                                            tokio::spawn(async move {
+                                                // Update VRAM allocation
+                                                if let Some(mut node) = dcs_state.nodes.get_mut(&node_id) {
+                                                    node.vram_allocated_gb += 0.5; // Estimate
+                                                }
+
+                                                // Get input activation - either from previous node or create initial
+                                                let input = if let Some(activation_ref) = input_activation_ref {
+                                                    // Receive activation from previous node via ActivationStream
+                                                    println!("waiting for activation from: {}", activation_ref.location);
+                                                    match activation_stream.receive_activation(task_id, 30000).await {
+                                                        Ok(tensor) => {
+                                                            model::inference::FragmentActivation::new(
+                                                                tensor.task_id,
+                                                                tensor.inference_id,
+                                                                tensor.layer_range,
+                                                                tensor.shape,
+                                                                tensor.data,
+                                                            )
+                                                        }
+                                                        Err(e) => {
+                                                            eprintln!("failed to receive activation: task_id={}, error={}", task_id, e);
+                                                            // Update VRAM allocation
+                                                            if let Some(mut node) = dcs_state.nodes.get_mut(&node_id) {
+                                                                node.vram_allocated_gb = node.vram_allocated_gb.saturating_sub(0.5);
+                                                            }
+                                                            let fail_msg = NetworkMessage::TaskFailure {
+                                                                task_id,
+                                                                error: format!("activation receive failed: {}", e),
+                                                            };
+                                                            let _ = publish_tx.send(fail_msg).await;
+                                                            return;
+                                                        }
+                                                    }
+                                                } else {
+                                                    // First node in pipeline - create initial activation
+                                                    println!("first node in pipeline, creating initial activation");
+                                                    model::inference::FragmentActivation::new(
+                                                        task_id,
+                                                        inference_id,
+                                                        (0, 0), // Input layer
+                                                        vec![1, 768], // Standard embedding dimension
+                                                        vec![0.0f32; 768], // Zero initialization for prompt embedding
+                                                    )
+                                                };
+
+                                                // Execute fragment task
+                                                match inference_engine.cache().execute_fragment_task(
+                                                    &model_id,
+                                                    required_fragments,
+                                                    layer_range,
+                                                    &input,
+                                                    tensor_shard_index,
+                                                    total_tensor_shards,
+                                                ).await {
+                                                    Ok(result) => {
+                                                        println!("task completed: task_id={}, time={}ms", 
+                                                            task_id, result.execution_time_ms);
+                                                        
+                                                        // Create output activation tensor
+                                                        let output_tensor = ActivationTensor::new(
+                                                            result.output_activation.task_id,
+                                                            result.output_activation.inference_id,
+                                                            result.output_activation.layer_range,
+                                                            result.output_activation.shape,
+                                                            result.output_activation.data,
+                                                        );
+                                                        
+                                                        // Serialize activation for TaskResult
+                                                        let output_activation_bytes = match bincode::serialize(&output_tensor) {
+                                                            Ok(bytes) => bytes,
+                                                            Err(e) => {
+                                                                eprintln!("failed to serialize activation: {}", e);
+                                                                vec![]
+                                                            }
+                                                        };
+                                                        
+                                                        // Send TaskResult back to DCS with serialized activation
+                                                        let result_msg = NetworkMessage::TaskResult {
+                                                            task_id,
+                                                            output_activation: output_activation_bytes,
+                                                            poi_proof: consensus::PoIProof::default(),
+                                                        };
+                                                        let _ = publish_tx.send(result_msg).await;
+
+                                                        // Stream activation chunks to next node in pipeline
+                                                        // This happens asynchronously after task result
+                                                        let stream_clone = activation_stream.clone();
+                                                        tokio::spawn(async move {
+                                                            if let Err(e) = stream_clone.send_activation(&output_tensor, 1).await {
+                                                                eprintln!("failed to stream activation: task_id={}, error={}", task_id, e);
+                                                            } else {
+                                                                println!("activation streamed: task_id={}", task_id);
+                                                            }
+                                                        });
+                                                    }
+                                                    Err(e) => {
+                                                        eprintln!("task failed: task_id={}, error={}", task_id, e);
+                                                        let fail_msg = NetworkMessage::TaskFailure {
+                                                            task_id,
+                                                            error: e.to_string(),
+                                                        };
+                                                        let _ = publish_tx.send(fail_msg).await;
+                                                    }
+                                                }
+
+                                                // Update VRAM allocation
+                                                if let Some(mut node) = dcs_state.nodes.get_mut(&node_id) {
+                                                    node.vram_allocated_gb = node.vram_allocated_gb.saturating_sub(0.5);
+                                                }
+                                            });
+                                        }
+                                    }
+                                    NetworkMessage::ActivationChunk { 
+                                        task_id,
+                                        inference_id,
+                                        chunk_index,
+                                        total_chunks,
+                                        data,
+                                        compression_level,
+                                        checkpoint_hash,
+                                    } => {
+                                        println!("received activation chunk: task_id={}, chunk={}/{}", task_id, chunk_index + 1, total_chunks);
+                                        
+                                        // Store chunk for reconstruction
+                                        let chunks_lock = pending_chunks.clone();
+                                        let stream_clone = activation_stream.clone();
+                                        tokio::spawn(async move {
+                                            let mut chunks_map = chunks_lock.lock().await;
+                                            let chunk = TensorActivationChunk {
+                                                task_id,
+                                                inference_id,
+                                                chunk_index,
+                                                total_chunks,
+                                                data,
+                                                compression_level,
+                                                checkpoint_hash,
+                                                shape: vec![], // Will be filled during reconstruction
+                                                layer_range: (0, 0),
+                                            };
+                                            
+                                            let entry = chunks_map.entry(task_id).or_insert_with(Vec::new);
+                                            entry.push(chunk);
+                                            
+                                            // Check if we have all chunks
+                                            if entry.len() as u32 >= total_chunks {
+                                                // Sort by chunk index
+                                                entry.sort_by_key(|c| c.chunk_index);
+                                                
+                                                // Reconstruct activation
+                                                match network::tensor_stream::reconstruct_activation(entry) {
+                                                    Ok(tensor) => {
+                                                        // Verify integrity
+                                                        if tensor.verify_integrity() {
+                                                            // Enqueue in activation stream
+                                                            if let Err(e) = stream_clone.enqueue_activation(tensor).await {
+                                                                eprintln!("failed to enqueue activation: {}", e);
+                                                            } else {
+                                                                println!("activation reconstructed and enqueued: task_id={}", task_id);
+                                                            }
+                                                        } else {
+                                                            eprintln!("activation integrity check failed: task_id={}", task_id);
+                                                        }
+                                                    }
+                                                    Err(e) => {
+                                                        eprintln!("failed to reconstruct activation: task_id={}, error={}", task_id, e);
+                                                    }
+                                                }
+                                                
+                                                // Clean up
+                                                chunks_map.remove(&task_id);
+                                            }
+                                        });
+                                    }
+                                    NetworkMessage::Heartbeat {
+                                        node_id,
+                                        timestamp,
+                                        active_tasks,
+                                        load_score,
+                                    } => {
+                                        // Update heartbeat tracking
+                                        heartbeat_manager.handle_heartbeat(
+                                            node_id.clone(),
+                                            timestamp,
+                                            active_tasks.clone(),
+                                            load_score,
+                                        ).await;
+                                        
+                                        // Update GlobalState
+                                        if let Some(mut node) = dcs_state.nodes.get_mut(&node_id) {
+                                            node.last_heartbeat = blockchain_core::Timestamp(timestamp);
+                                            node.load_score = load_score;
+                                        }
+                                    }
+                                    NetworkMessage::Checkpoint {
+                                        task_id,
+                                        inference_id,
+                                        checkpoint_hash,
+                                        layer_range,
+                                        timestamp,
+                                    } => {
+                                        let record = distributed_compute::state::CheckpointRecord {
+                                            task_id,
+                                            inference_id,
+                                            checkpoint_hash,
+                                            layer_range,
+                                            timestamp,
+                                            node_id: cfg.node_id.clone(),
+                                        };
+                                        dcs_state.store_checkpoint(record);
+                                        println!("checkpoint stored: task_id={}", task_id);
+                                    }
+                                    NetworkMessage::Failover {
+                                        task_id,
+                                        inference_id: _,
+                                        failed_node,
+                                        replacement_node,
+                                        resume_from_checkpoint,
+                                    } => {
+                                        if replacement_node == cfg.node_id {
+                                            // This node is the replacement, resume from checkpoint
+                                            println!("failover received: task_id={}, resuming from checkpoint", task_id);
+                                            
+                                            // Spawn recovery task
+                                            let inference_engine = inference_engine.clone();
+                                            let publish_tx = publish_tx.clone();
+                                            tokio::spawn(async move {
+                                                match inference_engine.cache().resume_from_checkpoint(
+                                                    task_id,
+                                                    failed_node,
+                                                    resume_from_checkpoint,
+                                                ).await {
+                                                    Ok(result) => {
+                                                        println!("failover recovery completed: task_id={}", task_id);
+                                                        let result_msg = NetworkMessage::TaskResult {
+                                                            task_id,
+                                                            output_activation: vec![], // TODO: serialize result
+                                                            poi_proof: consensus::PoIProof::default(),
+                                                        };
+                                                        let _ = publish_tx.send(result_msg).await;
+                                                    }
+                                                    Err(e) => {
+                                                        eprintln!("failover recovery failed: task_id={}, error={}", task_id, e);
+                                                        let fail_msg = NetworkMessage::TaskFailure {
+                                                            task_id,
+                                                            error: format!("failover recovery failed: {}", e),
+                                                        };
+                                                        let _ = publish_tx.send(fail_msg).await;
+                                                    }
+                                                }
+                                            });
+                                        }
                                     }
                                     _ => {}
                                 }

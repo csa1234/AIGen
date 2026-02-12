@@ -27,6 +27,13 @@ pub struct NodeCapabilities {
     pub max_fragment_size_mb: u32,
 }
 
+/// Reference to an activation tensor stored on a node
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ActivationRef {
+    pub location: String, // Format: "node_id/task_id"
+    pub size_bytes: usize,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum NetworkMessage {
     ShutdownSignal(ShutdownMessage),
@@ -92,6 +99,10 @@ pub enum NetworkMessage {
         layer_range: (u32, u32),
         required_fragments: Vec<String>,
         assigned_node: String,
+        input_activation_ref: Option<ActivationRef>,
+        // Tensor parallelism fields
+        tensor_shard_index: u32,
+        total_tensor_shards: u32,
     },
     TaskResult {
         task_id: Uuid,
@@ -102,6 +113,53 @@ pub enum NetworkMessage {
         task_id: Uuid,
         error: String,
     },
+    ActivationChunk {
+        task_id: Uuid,
+        inference_id: Uuid,
+        chunk_index: u32,
+        total_chunks: u32,
+        data: Vec<u8>, // compressed activation data
+        compression_level: i32,
+        checkpoint_hash: [u8; 32],
+    },
+    /// Heartbeat message sent every 500ms by active nodes
+    Heartbeat {
+        node_id: String,
+        timestamp: i64,
+        active_tasks: Vec<Uuid>, // Currently executing task IDs
+        load_score: f32,
+    },
+    /// Checkpoint message for intermediate state persistence
+    Checkpoint {
+        task_id: Uuid,
+        inference_id: Uuid,
+        checkpoint_hash: [u8; 32],
+        layer_range: (u32, u32),
+        timestamp: i64,
+    },
+    /// Reassign fragment/task to different replica after failure
+    ReassignFragment {
+        task_id: Uuid,
+        inference_id: Uuid,
+        old_node: String,
+        new_node: String,
+        checkpoint_ref: Option<CheckpointRef>,
+    },
+    /// Failover notification to resume from checkpoint
+    Failover {
+        task_id: Uuid,
+        inference_id: Uuid,
+        failed_node: String,
+        replacement_node: String,
+        resume_from_checkpoint: [u8; 32],
+    },
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CheckpointRef {
+    pub checkpoint_hash: [u8; 32],
+    pub layer_range: (u32, u32),
+    pub location: String, // Node ID where checkpoint is stored
 }
 
 impl NetworkMessage {
@@ -109,6 +167,9 @@ impl NetworkMessage {
         match self {
             NetworkMessage::ShutdownSignal(_) => 255,
             NetworkMessage::ValidatorVote(_) => 200,
+            NetworkMessage::Checkpoint { .. } => 200,
+            NetworkMessage::Failover { .. } => 190,
+            NetworkMessage::Heartbeat { .. } => 180,
             NetworkMessage::Block(_) => 100,
             NetworkMessage::VramCapabilityAnnouncement { .. } => 90,
             NetworkMessage::ModelAnnouncement { .. } => 80,
@@ -125,6 +186,8 @@ impl NetworkMessage {
             NetworkMessage::ComputeTask { .. } => 150,
             NetworkMessage::TaskResult { .. } => 150,
             NetworkMessage::TaskFailure { .. } => 150,
+            NetworkMessage::ActivationChunk { .. } => 140,
+            NetworkMessage::ReassignFragment { .. } => 160,
             NetworkMessage::Ping | NetworkMessage::Pong => 10,
         }
     }

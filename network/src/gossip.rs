@@ -22,6 +22,9 @@ pub const TOPIC_POI_PROOFS: &str = "/aigen/poi-proofs/1.0.0";
 pub const TOPIC_MODEL_ANNOUNCEMENTS: &str = "/aigen/model-announcements/1.0.0";
 pub const TOPIC_SHUTDOWN: &str = "/aigen/shutdown/1.0.0";
 pub const TOPIC_VRAM_CAPABILITIES: &str = "/aigen/vram-capabilities/1.0.0";
+pub const TOPIC_HEARTBEAT: &str = "/aigen/heartbeat/1.0.0";
+pub const TOPIC_CHECKPOINT: &str = "/aigen/checkpoint/1.0.0";
+pub const TOPIC_FAILOVER: &str = "/aigen/failover/1.0.0";
 
 pub fn topic_blocks() -> Topic {
     Topic::new(TOPIC_BLOCKS)
@@ -100,5 +103,67 @@ impl GossipHandler {
 
     pub fn publish_shutdown(msg: ShutdownMessage) -> NetworkMessage {
         NetworkMessage::ShutdownSignal(msg)
+    }
+}
+
+pub fn topic_heartbeat() -> Topic {
+    Topic::new(TOPIC_HEARTBEAT)
+}
+
+pub fn topic_checkpoint() -> Topic {
+    Topic::new(TOPIC_CHECKPOINT)
+}
+
+pub fn topic_failover() -> Topic {
+    Topic::new(TOPIC_FAILOVER)
+}
+
+/// GossipManager for handling heartbeat and checkpoint propagation
+pub struct GossipManager {
+    local_peer_id: libp2p::PeerId,
+    heartbeat_topic: Topic,
+    checkpoint_topic: Topic,
+    failover_topic: Topic,
+}
+
+impl GossipManager {
+    pub fn new(local_peer_id: libp2p::PeerId) -> Self {
+        Self {
+            local_peer_id,
+            heartbeat_topic: topic_heartbeat(),
+            checkpoint_topic: topic_checkpoint(),
+            failover_topic: topic_failover(),
+        }
+    }
+
+    /// Subscribe to heartbeat and checkpoint topics
+    pub fn subscribe_topics(
+        &self,
+        gossipsub: &mut libp2p::gossipsub::Behaviour,
+    ) -> Result<(), libp2p::gossipsub::SubscriptionError> {
+        gossipsub.subscribe(&self.heartbeat_topic)?;
+        gossipsub.subscribe(&self.checkpoint_topic)?;
+        gossipsub.subscribe(&self.failover_topic)?;
+        Ok(())
+    }
+
+    /// Get the heartbeat topic
+    pub fn heartbeat_topic(&self) -> Topic {
+        self.heartbeat_topic.clone()
+    }
+
+    /// Get the checkpoint topic
+    pub fn checkpoint_topic(&self) -> Topic {
+        self.checkpoint_topic.clone()
+    }
+
+    /// Get the failover topic
+    pub fn failover_topic(&self) -> Topic {
+        self.failover_topic.clone()
+    }
+
+    /// Get local peer ID
+    pub fn local_peer_id(&self) -> libp2p::PeerId {
+        self.local_peer_id
     }
 }

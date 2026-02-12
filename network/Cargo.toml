@@ -38,6 +38,7 @@ libp2p = { workspace = true, features = [
 parking_lot = { workspace = true }
 sysinfo = "0.30"
 uuid = { version = "1.4", features = ["v4", "serde"] }
+bytemuck = { version = "1.14", features = ["derive"] }
 
 [dev-dependencies]
 genesis = { path = "../genesis", features = ["test-utils"] }
