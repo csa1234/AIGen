@@ -36,6 +36,7 @@ network = { path = "../network" }
 model = { path = "../model" }
 ed25519-dalek = { workspace = true }
 rand = { workspace = true }
+num_cpus = "1.16"
 
 [dev-dependencies]
 prost = "0.12"

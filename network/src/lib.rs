@@ -14,6 +14,7 @@ pub mod config;
 pub mod consensus_bridge;
 pub mod discovery;
 pub mod events;
+pub mod fragment_stream;
 pub mod gossip;
 pub mod metrics;
 pub mod model_stream;
@@ -24,12 +25,15 @@ pub mod protocol;
 pub mod reputation;
 pub mod shutdown_propagation;
 pub mod tensor_stream;
+pub mod vram_monitor;
 
 pub use crate::events::{NetworkEvent, TensorChunk};
+pub use crate::fragment_stream::{ModelFragmentRequest, ModelFragmentResponse, FragmentStreamCodec};
 pub use crate::model_stream::{ModelShardRequest, ModelShardResponse, ModelStreamCodec};
 pub use crate::model_sync::{ModelSyncManager, ShardAvailability};
 pub use crate::p2p::P2PNode;
 pub use crate::protocol::NetworkMessage;
+pub use crate::vram_monitor::VramMonitor;
 pub use crate::shutdown_propagation::{
     broadcast_shutdown, handle_shutdown_message, NetworkError, ShutdownMessage,
     ShutdownPropagationConfig,

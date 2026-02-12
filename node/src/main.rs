@@ -18,6 +18,7 @@ mod chat_completion_test;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
 use blockchain_core::{BlockHeight, Blockchain, Transaction};
@@ -511,6 +512,7 @@ async fn run_node(
     let consensus = Arc::new(Mutex::new(consensus));
 
     let (publish_tx, publish_rx) = mpsc::channel::<NetworkMessage>(1024);
+    let vram_monitor = Arc::new(network::VramMonitor::new());
     let model_registry = Arc::new(ModelRegistry::new());
     let model_storage = Arc::new(LocalStorage::new(cfg.model.model_storage_path.clone()));
     
@@ -602,6 +604,9 @@ async fn run_node(
     let (local_shutdown_tx, _) = tokio::sync::broadcast::channel::<()>(4);
     let local_shutdown_rx = local_shutdown_tx.subscribe();
 
+    // Clone publish_tx for VRAM announcement task before it's moved
+    let publish_tx_for_vram = publish_tx.clone();
+
     tokio::spawn(async move {
         let mut rx = consensus_network_rx;
         while let Some(msg) = rx.recv().await {
@@ -631,6 +636,33 @@ async fn run_node(
             .start_with_publisher(publish_rx, model_request_rx)
             .await;
     });
+
+    // Spawn periodic VRAM capability announcement task
+    let _vram_announcement_task = {
+        let vram_monitor = vram_monitor.clone();
+        let node_id = cfg.node_id.clone();
+        
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(30));
+            loop {
+                interval.tick().await;
+                
+                let capabilities = vram_monitor.get_capabilities();
+                let msg = NetworkMessage::VramCapabilityAnnouncement {
+                    node_id: node_id.clone(),
+                    vram_total_gb: vram_monitor.vram_total_gb,
+                    vram_free_gb: vram_monitor.get_vram_free_gb(),
+                    vram_allocated_gb: vram_monitor.get_vram_allocated_gb(),
+                    cpu_cores: num_cpus::get() as u32,
+                    region: None,
+                    capabilities,
+                    timestamp: model::now_timestamp(),
+                };
+                
+                let _ = publish_tx_for_vram.send(msg).await;
+            }
+        })
+    };
 
     let network_task = {
         let blockchain = blockchain.clone();
@@ -752,6 +784,10 @@ async fn run_node(
                                 if let Err(err) = model_sync.handle_model_query(&model_id).await {
                                     eprintln!("failed to handle model query: {}", err);
                                 }
+                            }
+                            NetworkEvent::VramCapabilityReceived { node_id, vram_free_gb, .. } => {
+                                // Track peer capabilities for future DCS use
+                                println!("peer vram capability: node={}, free={}GB", node_id, vram_free_gb);
                             }
                             _ => {}
                         }

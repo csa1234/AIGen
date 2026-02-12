@@ -17,6 +17,9 @@ thiserror = { workspace = true }
 dashmap = { workspace = true }
 bincode = { workspace = true }
 sha2 = { workspace = true }
+sha3 = { workspace = true }
+zstd = { workspace = true }
+hex = { workspace = true }
 async-trait = "0.1"
 futures = "0.3"
 libp2p = { workspace = true, features = [
@@ -32,6 +35,8 @@ libp2p = { workspace = true, features = [
     "request-response",
     "macros",
 ] }
+parking_lot = { workspace = true }
+sysinfo = "0.30"
 
 [dev-dependencies]
 genesis = { path = "../genesis", features = ["test-utils"] }

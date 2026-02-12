@@ -103,6 +103,41 @@ pub struct ShardLocation {
     pub is_healthy: bool,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct WeightFragment {
+    pub model_id: String,
+    pub fragment_id: String,  // e.g., "model-id_frag_0"
+    pub fragment_index: u32,
+    pub total_fragments: u32,
+    pub hash: [u8; 32],  // SHA3-256
+    pub size_bytes: u64,
+    pub compressed_size_bytes: Option<u64>,
+    pub is_compressed: bool,
+    pub layer_range: Option<(u32, u32)>,  // Optional: which layers this fragment contains
+    pub locations: Vec<FragmentLocation>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct FragmentLocation {
+    pub node_id: String,
+    pub backend_type: String,  // "local", "ipfs", "http"
+    pub location_uri: String,
+    pub vram_allocated_mb: Option<u32>,  // VRAM used if loaded
+    pub last_verified: i64,
+    pub is_healthy: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct FragmentManifest {
+    pub model_id: String,
+    pub total_fragments: u32,
+    pub total_size_bytes: u64,
+    pub fragment_size_bytes: u64,
+    pub is_compressed: bool,
+    pub fragments: Vec<WeightFragment>,
+    pub created_at: i64,
+}
+
 impl ModelShard {
     pub fn validate(&self) -> Result<(), ModelError> {
         if self.model_id.trim().is_empty() {
@@ -122,6 +157,8 @@ impl ModelShard {
 pub struct ModelRegistry {
     models: Arc<DashMap<String, ModelMetadata>>,
     shards: Arc<DashMap<(String, u32), ModelShard>>,
+    fragments: Arc<DashMap<String, FragmentManifest>>,  // NEW: model_id -> manifest
+    fragment_index: Arc<DashMap<(String, u32), WeightFragment>>,  // NEW: (model_id, fragment_index) -> fragment
     core_model_id: Arc<RwLock<Option<String>>>,
 }
 
@@ -130,6 +167,8 @@ impl ModelRegistry {
         Self {
             models: Arc::new(DashMap::new()),
             shards: Arc::new(DashMap::new()),
+            fragments: Arc::new(DashMap::new()),
+            fragment_index: Arc::new(DashMap::new()),
             core_model_id: Arc::new(RwLock::new(None)),
         }
     }
@@ -398,6 +437,116 @@ impl ModelRegistry {
             }
         }
         Ok(results)
+    }
+
+    pub fn register_fragment_manifest(&self, manifest: FragmentManifest) -> Result<(), ModelError> {
+        check_shutdown()?;
+        if manifest.total_fragments == 0 || manifest.fragments.is_empty() {
+            return Err(ModelError::InvalidShard);
+        }
+        if manifest.fragments.len() as u32 != manifest.total_fragments {
+            return Err(ModelError::InvalidShard);
+        }
+        
+        // Index all fragments for fast lookup
+        for fragment in &manifest.fragments {
+            let key = (fragment.model_id.clone(), fragment.fragment_index);
+            self.fragment_index.insert(key, fragment.clone());
+        }
+        
+        let model_id = manifest.model_id.clone();
+        let total_fragments = manifest.total_fragments;
+        self.fragments.insert(model_id.clone(), manifest);
+        println!("registered fragment manifest: model={}, fragments={}", model_id, total_fragments);
+        Ok(())
+    }
+
+    pub fn get_fragment_manifest(&self, model_id: &str) -> Result<FragmentManifest, ModelError> {
+        check_shutdown()?;
+        self.fragments
+            .get(model_id)
+            .map(|entry| entry.value().clone())
+            .ok_or(ModelError::ModelNotFound)
+    }
+
+    pub fn register_fragment(&self, fragment: WeightFragment) -> Result<(), ModelError> {
+        check_shutdown()?;
+        let key = (fragment.model_id.clone(), fragment.fragment_index);
+        self.fragment_index.insert(key, fragment.clone());
+        
+        // Update manifest if exists
+        if let Some(mut manifest) = self.fragments.get_mut(&fragment.model_id) {
+            if let Some(idx) = manifest.fragments.iter().position(|f| f.fragment_index == fragment.fragment_index) {
+                manifest.fragments[idx] = fragment;
+            } else {
+                manifest.fragments.push(fragment);
+                manifest.total_fragments = manifest.fragments.len() as u32;
+            }
+        }
+        Ok(())
+    }
+
+    pub fn get_fragment(&self, model_id: &str, fragment_index: u32) -> Result<WeightFragment, ModelError> {
+        check_shutdown()?;
+        let key = (model_id.to_string(), fragment_index);
+        self.fragment_index
+            .get(&key)
+            .map(|entry| entry.value().clone())
+            .ok_or(ModelError::ShardNotFound)
+    }
+
+    pub fn list_fragments(&self, model_id: &str) -> Result<Vec<WeightFragment>, ModelError> {
+        check_shutdown()?;
+        let mut fragments: Vec<WeightFragment> = self
+            .fragment_index
+            .iter()
+            .filter(|entry| entry.key().0 == model_id)
+            .map(|entry| entry.value().clone())
+            .collect();
+        fragments.sort_by_key(|fragment| fragment.fragment_index);
+        Ok(fragments)
+    }
+
+    pub fn register_fragment_location(
+        &self,
+        model_id: &str,
+        fragment_index: u32,
+        location: FragmentLocation,
+    ) -> Result<(), ModelError> {
+        check_shutdown()?;
+        let key = (model_id.to_string(), fragment_index);
+        let mut entry = self.fragment_index.get_mut(&key).ok_or(ModelError::ShardNotFound)?;
+        let locations = &mut entry.locations;
+        
+        if let Some(existing) = locations
+            .iter_mut()
+            .find(|item| item.location_uri == location.location_uri)
+        {
+            *existing = location;
+        } else {
+            locations.push(location);
+        }
+        Ok(())
+    }
+
+    pub fn get_fragment_locations(
+        &self,
+        model_id: &str,
+        fragment_index: u32,
+    ) -> Result<Vec<FragmentLocation>, ModelError> {
+        check_shutdown()?;
+        let key = (model_id.to_string(), fragment_index);
+        let entry = self.fragment_index.get(&key).ok_or(ModelError::ShardNotFound)?;
+        Ok(entry
+            .locations
+            .iter()
+            .filter(|loc| loc.is_healthy)
+            .cloned()
+            .collect())
+    }
+
+    pub fn has_fragment_manifest(&self, model_id: &str) -> bool {
+        self.fragments.contains_key(model_id)
     }
 }
 

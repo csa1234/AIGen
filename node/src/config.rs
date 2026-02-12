@@ -50,6 +50,10 @@ pub struct ModelConfig {
     pub num_threads: usize,
     pub download_timeout_secs: u64,
     pub min_redundancy_nodes: usize,
+    pub fragment_size_mb: u32,
+    pub enable_fragments: bool,
+    pub fragment_compression: bool,
+    pub fragment_compression_level: i32,
 }
 
 impl ModelConfig {
@@ -63,6 +67,10 @@ impl ModelConfig {
             num_threads: 0,
             download_timeout_secs: 30,
             min_redundancy_nodes: 5,
+            fragment_size_mb: 200,
+            enable_fragments: false,  // Opt-in for Phase 1
+            fragment_compression: true,
+            fragment_compression_level: 3,
         }
     }
 }

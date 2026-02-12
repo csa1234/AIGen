@@ -18,6 +18,15 @@ use crate::shutdown_propagation::NetworkError;
 use crate::events::TensorChunk;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct NodeCapabilities {
+    pub has_gpu: bool,
+    pub gpu_model: Option<String>,
+    pub supports_inference: bool,
+    pub supports_training: bool,
+    pub max_fragment_size_mb: u32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum NetworkMessage {
     ShutdownSignal(ShutdownMessage),
     Block(Block),
@@ -34,9 +43,25 @@ pub enum NetworkMessage {
         data: Vec<u8>,
         hash: [u8; 32],
     },
+    ModelFragmentRequest {
+        model_id: String,
+        fragment_index: u32,
+    },
+    ModelFragmentResponse {
+        model_id: String,
+        fragment_index: u32,
+        data: Vec<u8>,
+        hash: [u8; 32],
+        is_compressed: bool,
+    },
     ModelAnnouncement {
         model_id: String,
         shard_index: u32,
+        node_id: String,
+    },
+    ModelFragmentAnnouncement {
+        model_id: String,
+        fragment_index: u32,
         node_id: String,
     },
     ModelQuery {
@@ -47,6 +72,16 @@ pub enum NetworkMessage {
         chunk_index: u32,
     },
     TensorResponse(TensorChunk),
+    VramCapabilityAnnouncement {
+        node_id: String,
+        vram_total_gb: f32,
+        vram_free_gb: f32,
+        vram_allocated_gb: f32,
+        cpu_cores: u32,
+        region: Option<String>,
+        capabilities: NodeCapabilities,
+        timestamp: i64,
+    },
     Ping,
     Pong,
 }
@@ -57,10 +92,14 @@ impl NetworkMessage {
             NetworkMessage::ShutdownSignal(_) => 255,
             NetworkMessage::ValidatorVote(_) => 200,
             NetworkMessage::Block(_) => 100,
+            NetworkMessage::VramCapabilityAnnouncement { .. } => 90,
             NetworkMessage::ModelAnnouncement { .. } => 80,
+            NetworkMessage::ModelFragmentAnnouncement { .. } => 80,
             NetworkMessage::ModelQuery { .. } => 80,
             NetworkMessage::ModelShardRequest { .. } => 85,
             NetworkMessage::ModelShardResponse { .. } => 85,
+            NetworkMessage::ModelFragmentRequest { .. } => 85,
+            NetworkMessage::ModelFragmentResponse { .. } => 85,
             NetworkMessage::PoIProof(_) => 75,
             NetworkMessage::Transaction(_) => 50,
             NetworkMessage::TensorRequest { .. } => 150,

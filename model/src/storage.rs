@@ -28,7 +28,7 @@ use thiserror::Error;
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
 
-use crate::registry::ModelShard;
+use crate::registry::{ModelShard, WeightFragment};
 use crate::sharding::{compute_file_hash, verify_shard_integrity, ShardError};
 
 #[derive(Debug, Error)]
@@ -101,6 +101,20 @@ pub trait StorageBackend: Send + Sync {
 
     /// Return the storage backend identifier.
     fn backend_type(&self) -> &str;
+
+    /// Upload a fragment file to the storage backend and return its location.
+    async fn upload_fragment(
+        &self,
+        fragment: &WeightFragment,
+        data_path: &Path,
+    ) -> Result<String, StorageError>;
+
+    /// Download a fragment file from the storage backend to the output path.
+    async fn download_fragment(
+        &self,
+        fragment: &WeightFragment,
+        output_path: &Path,
+    ) -> Result<(), StorageError>;
 }
 
 #[derive(Clone, Debug)]
@@ -277,6 +291,102 @@ impl StorageBackend for LocalStorage {
     fn backend_type(&self) -> &str {
         "local"
     }
+
+    async fn upload_fragment(
+        &self,
+        fragment: &WeightFragment,
+        data_path: &Path,
+    ) -> Result<String, StorageError> {
+        ensure_running()?;
+        println!(
+            "uploading fragment to {}: model={}, fragment={}",
+            self.backend_type(),
+            fragment.model_id,
+            fragment.fragment_index
+        );
+
+        let fragment_path = self
+            .root_dir
+            .join("models")
+            .join(&fragment.model_id)
+            .join("fragments")
+            .join(format!("frag_{}.bin", fragment.fragment_index));
+
+        if let Some(parent) = fragment_path.parent() {
+            fs::create_dir_all(parent).await?;
+        }
+        fs::copy(data_path, &fragment_path).await?;
+
+        // Create replicas for redundancy (K=3)
+        for replica_id in 1..self.redundancy_factor {
+            ensure_running()?;
+            let replica_path = self
+                .root_dir
+                .join("models")
+                .join(&fragment.model_id)
+                .join("fragments")
+                .join("replicas")
+                .join(format!("replica_{}", replica_id))
+                .join(format!("frag_{}.bin", fragment.fragment_index));
+            if let Some(parent) = replica_path.parent() {
+                fs::create_dir_all(parent).await?;
+            }
+            fs::copy(&fragment_path, &replica_path).await?;
+        }
+
+        Ok(fragment_path.display().to_string())
+    }
+
+    async fn download_fragment(
+        &self,
+        fragment: &WeightFragment,
+        output_path: &Path,
+    ) -> Result<(), StorageError> {
+        ensure_running()?;
+        println!(
+            "downloading fragment from {}: model={}, fragment={}",
+            self.backend_type(),
+            fragment.model_id,
+            fragment.fragment_index
+        );
+
+        let mut source = self
+            .root_dir
+            .join("models")
+            .join(&fragment.model_id)
+            .join("fragments")
+            .join(format!("frag_{}.bin", fragment.fragment_index));
+
+        // Try replicas if primary is not available
+        if fs::metadata(&source).await.is_err() {
+            let mut found = None;
+            for replica_id in 1..self.redundancy_factor {
+                let candidate = self
+                    .root_dir
+                    .join("models")
+                    .join(&fragment.model_id)
+                    .join("fragments")
+                    .join("replicas")
+                    .join(format!("replica_{}", replica_id))
+                    .join(format!("frag_{}.bin", fragment.fragment_index));
+                if fs::metadata(&candidate).await.is_ok() {
+                    found = Some(candidate);
+                    break;
+                }
+            }
+            if let Some(candidate) = found {
+                source = candidate;
+            } else {
+                return Err(StorageError::ShardNotFound);
+            }
+        }
+
+        if let Some(parent) = output_path.parent() {
+            fs::create_dir_all(parent).await?;
+        }
+        fs::copy(&source, output_path).await?;
+        Ok(())
+    }
 }
 
 #[derive(Clone)]
@@ -439,6 +549,89 @@ impl StorageBackend for IpfsStorage {
     fn backend_type(&self) -> &str {
         "ipfs"
     }
+
+    async fn upload_fragment(
+        &self,
+        fragment: &WeightFragment,
+        data_path: &Path,
+    ) -> Result<String, StorageError> {
+        ensure_running()?;
+        println!(
+            "uploading fragment to {}: model={}, fragment={}",
+            self.backend_type(),
+            fragment.model_id,
+            fragment.fragment_index
+        );
+
+        let response = self
+            .client
+            .add_path(data_path)
+            .await
+            .map_err(|err| StorageError::Ipfs(err.to_string()))?;
+        let cid = response
+            .first()
+            .map(|item| item.hash.clone())
+            .ok_or_else(|| StorageError::Ipfs("empty ipfs add response".to_string()))?;
+
+        if self.pin_shards {
+            self.client
+                .pin_add(&cid, true)
+                .await
+                .map_err(|err| StorageError::Ipfs(err.to_string()))?;
+        }
+
+        Ok(cid)
+    }
+
+    async fn download_fragment(
+        &self,
+        fragment: &WeightFragment,
+        output_path: &Path,
+    ) -> Result<(), StorageError> {
+        ensure_running()?;
+        // For IPFS, we need to look up the CID from the first location
+        let cid = fragment
+            .locations
+            .first()
+            .map(|loc| loc.location_uri.clone())
+            .ok_or(StorageError::ShardNotFound)?;
+
+        let url = self.gateway_shard_url(&cid);
+        println!(
+            "downloading fragment from {}: model={}, fragment={}",
+            self.backend_type(),
+            fragment.model_id,
+            fragment.fragment_index
+        );
+
+        let client = Client::builder()
+            .timeout(Duration::from_secs(300))
+            .build()
+            .map_err(|err| StorageError::Http(err.to_string()))?;
+        let response = client
+            .get(&url)
+            .send()
+            .await
+            .map_err(|err| StorageError::Http(err.to_string()))?;
+        if !response.status().is_success() {
+            return Err(StorageError::ShardNotFound);
+        }
+
+        if let Some(parent) = output_path.parent() {
+            fs::create_dir_all(parent).await?;
+        }
+        let mut output = fs::File::create(output_path).await?;
+        let mut stream = response.bytes_stream();
+        while let Some(chunk) = stream.next().await {
+            ensure_running()?;
+            let chunk = chunk.map_err(|err| StorageError::Http(err.to_string()))?;
+            output.write_all(&chunk).await?;
+        }
+        output.flush().await?;
+        output.sync_all().await?;
+
+        Ok(())
+    }
 }
 
 #[derive(Clone)]
@@ -475,6 +668,21 @@ impl HttpStorage {
             base.trim_end_matches('/'),
             shard.model_id,
             shard.shard_index
+        )
+    }
+
+    /// Construct a fragment URL for a given index.
+    pub fn fragment_url(&self, fragment: &WeightFragment, mirror_index: usize) -> String {
+        let base = self
+            .mirror_urls
+            .get(mirror_index)
+            .cloned()
+            .unwrap_or_default();
+        format!(
+            "{}/models/{}/fragments/frag_{}.bin",
+            base.trim_end_matches('/'),
+            fragment.model_id,
+            fragment.fragment_index
         )
     }
 }
@@ -674,5 +882,118 @@ impl StorageBackend for HttpStorage {
 
     fn backend_type(&self) -> &str {
         "http"
+    }
+
+    async fn upload_fragment(
+        &self,
+        fragment: &WeightFragment,
+        data_path: &Path,
+    ) -> Result<String, StorageError> {
+        ensure_running()?;
+        println!(
+            "uploading fragment to {}: model={}, fragment={}",
+            self.backend_type(),
+            fragment.model_id,
+            fragment.fragment_index
+        );
+
+        let payload = fs::read(data_path).await?;
+        let file_name = data_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("fragment.bin")
+            .to_string();
+        let mut success_url = None;
+
+        for (index, _) in self.mirror_urls.iter().enumerate() {
+            ensure_running()?;
+            let url = self.fragment_url(fragment, index);
+            let part = Part::bytes(payload.clone()).file_name(file_name.clone());
+            let form = Form::new().part("file", part);
+            match self.client.post(&url).multipart(form).send().await {
+                Ok(response) if response.status().is_success() => {
+                    success_url = Some(url);
+                    break;
+                }
+                Ok(response) => {
+                    eprintln!(
+                        "storage operation failed: backend={}, error={}",
+                        self.backend_type(),
+                        response.status()
+                    );
+                }
+                Err(err) => {
+                    eprintln!(
+                        "storage operation failed: backend={}, error={}",
+                        self.backend_type(),
+                        err
+                    );
+                }
+            }
+        }
+
+        success_url.ok_or(StorageError::AllMirrorsFailed)
+    }
+
+    async fn download_fragment(
+        &self,
+        fragment: &WeightFragment,
+        output_path: &Path,
+    ) -> Result<(), StorageError> {
+        ensure_running()?;
+        println!(
+            "downloading fragment from {}: model={}, fragment={}",
+            self.backend_type(),
+            fragment.model_id,
+            fragment.fragment_index
+        );
+
+        for (index, _) in self.mirror_urls.iter().enumerate() {
+            ensure_running()?;
+            let url = self.fragment_url(fragment, index);
+            let response = match self.client.get(&url).send().await {
+                Ok(response) => response,
+                Err(err) => {
+                    eprintln!(
+                        "storage operation failed: backend={}, error={}",
+                        self.backend_type(),
+                        err
+                    );
+                    continue;
+                }
+            };
+
+            if !response.status().is_success() {
+                continue;
+            }
+
+            if let Some(parent) = output_path.parent() {
+                fs::create_dir_all(parent).await?;
+            }
+            let mut output = fs::File::create(output_path).await?;
+            let mut stream = response.bytes_stream();
+            while let Some(chunk) = stream.next().await {
+                ensure_running()?;
+                match chunk {
+                    Ok(chunk) => {
+                        output.write_all(&chunk).await?;
+                    }
+                    Err(err) => {
+                        eprintln!(
+                            "storage operation failed: backend={}, error={}",
+                            self.backend_type(),
+                            err
+                        );
+                        let _ = fs::remove_file(output_path).await;
+                        continue;
+                    }
+                }
+            }
+            output.flush().await?;
+            output.sync_all().await?;
+            return Ok(());
+        }
+
+        Err(StorageError::AllMirrorsFailed)
     }
 }

@@ -22,11 +22,14 @@ use model::{
     LocalStorage, ModelError, ModelRegistry, ModelShard, ShardLocation, StorageBackend,
     StorageError,
 };
-use sha2::{Digest, Sha256};
+use model::registry::{WeightFragment, FragmentLocation};
+use sha2::Sha256;
+use sha3::{Digest as Sha3Digest, Sha3_256};
 
 use crate::events::NetworkEvent;
 use crate::metrics::SharedNetworkMetrics;
 use crate::model_stream::{ModelShardRequest, ModelShardResponse};
+use crate::fragment_stream::{ModelFragmentRequest, ModelFragmentResponse};
 use crate::protocol::NetworkMessage;
 use crate::reputation::{FailureReason, PeerReputationManager};
 
@@ -113,6 +116,12 @@ pub struct DownloadProgress {
 pub struct ModelShardRequestEnvelope {
     pub peer: PeerId,
     pub request: ModelShardRequest,
+}
+
+#[derive(Clone, Debug)]
+pub struct FragmentRequestEnvelope {
+    pub peer: PeerId,
+    pub request: ModelFragmentRequest,
 }
 
 #[derive(Clone)]
@@ -507,6 +516,221 @@ impl ModelSyncManager {
             .get(peer)
             .map(|entry| entry.score)
             .unwrap_or(0.5)
+    }
+
+    // Fragment handling methods
+
+    pub async fn upload_fragment(
+        &self,
+        fragment: &WeightFragment,
+        data_path: &std::path::Path,
+    ) -> Result<(), ModelSyncError> {
+        ensure_running()?;
+        // Upload to local storage first
+        let location_uri = self.local_storage
+            .upload_fragment(fragment, data_path)
+            .await
+            .map_err(|e| ModelSyncError::Storage(e.to_string()))?;
+
+        // Register location with K=3 redundancy
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|_| ModelSyncError::Storage("invalid system time".to_string()))?
+            .as_secs() as i64;
+
+        let location = FragmentLocation {
+            node_id: self.local_node_id.clone(),
+            backend_type: self.local_storage.backend_type().to_string(),
+            location_uri,
+            vram_allocated_mb: None,
+            last_verified: timestamp,
+            is_healthy: true,
+        };
+
+        self.registry.register_fragment_location(
+            &fragment.model_id,
+            fragment.fragment_index,
+            location,
+        )?;
+
+        // Announce fragment availability
+        let message = NetworkMessage::ModelFragmentAnnouncement {
+            model_id: fragment.model_id.clone(),
+            fragment_index: fragment.fragment_index,
+            node_id: self.local_node_id.clone(),
+        };
+        self.publish_tx
+            .send(message)
+            .await
+            .map_err(|_| ModelSyncError::ChannelClosed)?;
+
+        Ok(())
+    }
+
+    pub async fn download_fragment(
+        &self,
+        model_id: &str,
+        fragment_index: u32,
+        output_path: &std::path::Path,
+    ) -> Result<(), ModelSyncError> {
+        ensure_running()?;
+        let fragment = self.registry.get_fragment(model_id, fragment_index)?;
+
+        // Try to download from available locations
+        let locations = self.registry.get_fragment_locations(model_id, fragment_index)?;
+
+        for location in locations {
+            if !location.is_healthy {
+                continue;
+            }
+
+            // Download based on backend type
+            match location.backend_type.as_str() {
+                "local" => {
+                    if let Err(e) = self.local_storage.download_fragment(&fragment, output_path).await {
+                        eprintln!("failed to download fragment from local storage: {}", e);
+                        continue;
+                    }
+                }
+                _ => {
+                    // For other backends, we'd need additional storage backends
+                    continue;
+                }
+            }
+
+            // Verify hash after download (decompress if needed and verify)
+            let data = tokio::fs::read(output_path).await.map_err(StorageError::from)?;
+            let data_to_verify = if fragment.is_compressed {
+                match zstd::decode_all(data.as_slice()) {
+                    Ok(decompressed) => decompressed,
+                    Err(e) => {
+                        eprintln!("decompression failed for fragment {}: {}", fragment_index, e);
+                        continue;
+                    }
+                }
+            } else {
+                data
+            };
+
+            // Compute SHA3-256 hash
+            let mut hasher = Sha3_256::new();
+            hasher.update(&data_to_verify);
+            let actual_hash = hasher.finalize();
+            let mut computed_hash = [0u8; 32];
+            computed_hash.copy_from_slice(&actual_hash);
+
+            if computed_hash != fragment.hash {
+                eprintln!(
+                    "fragment integrity check failed: fragment={}, expected={}, actual={}",
+                    fragment_index,
+                    hex::encode(fragment.hash),
+                    hex::encode(computed_hash)
+                );
+                continue;
+            }
+
+            // Register local location
+            let timestamp = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_err(|_| ModelSyncError::Storage("invalid system time".to_string()))?
+                .as_secs() as i64;
+
+            let local_location = FragmentLocation {
+                node_id: self.local_node_id.clone(),
+                backend_type: self.local_storage.backend_type().to_string(),
+                location_uri: output_path.display().to_string(),
+                vram_allocated_mb: None,
+                last_verified: timestamp,
+                is_healthy: true,
+            };
+
+            self.registry.register_fragment_location(
+                model_id,
+                fragment_index,
+                local_location,
+            )?;
+
+            return Ok(());
+        }
+
+        Err(ModelSyncError::NoAvailablePeers(model_id.to_string(), fragment_index))
+    }
+
+    pub async fn handle_received_fragment(
+        &self,
+        _peer: PeerId,
+        response: ModelFragmentResponse,
+    ) -> Result<(), ModelSyncError> {
+        ensure_running()?;
+
+        // Verify SHA3-256 hash
+        let mut hasher = Sha3_256::new();
+        hasher.update(&response.data);
+        let actual_hash = hasher.finalize();
+        let mut computed_hash = [0u8; 32];
+        computed_hash.copy_from_slice(&actual_hash);
+
+        if computed_hash != response.hash {
+            return Err(ModelSyncError::Storage("fragment hash mismatch".to_string()));
+        }
+
+        // Store fragment locally
+        let fragment = WeightFragment {
+            model_id: response.model_id.clone(),
+            fragment_id: format!("{}_frag_{}", response.model_id, response.fragment_index),
+            fragment_index: response.fragment_index,
+            total_fragments: response.total_fragments,
+            hash: response.hash,
+            size_bytes: response.size,
+            compressed_size_bytes: None,
+            is_compressed: response.is_compressed,
+            layer_range: None,
+            locations: Vec::new(),
+        };
+
+        // Register fragment
+        self.registry.register_fragment(fragment)?;
+
+        // Add local location
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|_| ModelSyncError::Storage("invalid system time".to_string()))?
+            .as_secs() as i64;
+
+        let location = FragmentLocation {
+            node_id: self.local_node_id.clone(),
+            backend_type: self.local_storage.backend_type().to_string(),
+            location_uri: format!("memory://{}/{}", response.model_id, response.fragment_index),
+            vram_allocated_mb: None,
+            last_verified: timestamp,
+            is_healthy: true,
+        };
+
+        self.registry.register_fragment_location(
+            &response.model_id,
+            response.fragment_index,
+            location,
+        )?;
+
+        Ok(())
+    }
+
+    pub async fn replicate_fragment(
+        &self,
+        model_id: &str,
+        fragment_index: u32,
+    ) -> Result<(), ModelSyncError> {
+        ensure_running()?;
+        let message = NetworkMessage::ModelFragmentAnnouncement {
+            model_id: model_id.to_string(),
+            fragment_index,
+            node_id: self.local_node_id.clone(),
+        };
+        self.publish_tx
+            .send(message)
+            .await
+            .map_err(|_| ModelSyncError::ChannelClosed)?;
+        Ok(())
     }
 }
 

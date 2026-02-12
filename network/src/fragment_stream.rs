@@ -16,22 +16,6 @@ use libp2p::request_response;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ModelShardRequest {
-    pub model_id: String,
-    pub shard_index: u32,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ModelShardResponse {
-    pub model_id: String,
-    pub shard_index: u32,
-    pub total_shards: u32,
-    pub data: Vec<u8>,
-    pub hash: [u8; 32],
-    pub size: u64,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ModelFragmentRequest {
     pub model_id: String,
     pub fragment_index: u32,
@@ -49,16 +33,16 @@ pub struct ModelFragmentResponse {
 }
 
 #[derive(Clone, Default)]
-pub struct ModelStreamCodec;
+pub struct FragmentStreamCodec;
 
 const MAX_REQUEST_BYTES: u64 = 4 * 1024 * 1024;
 const MAX_RESPONSE_BYTES: u64 = 4_500_000_000;
 
 #[async_trait]
-impl request_response::Codec for ModelStreamCodec {
+impl request_response::Codec for FragmentStreamCodec {
     type Protocol = String;
-    type Request = ModelShardRequest;
-    type Response = ModelShardResponse;
+    type Request = ModelFragmentRequest;
+    type Response = ModelFragmentResponse;
 
     async fn read_request<T>(&mut self, _: &Self::Protocol, io: &mut T) -> io::Result<Self::Request>
     where
@@ -114,7 +98,7 @@ impl request_response::Codec for ModelStreamCodec {
 }
 
 pub fn protocol() -> String {
-    "/aigen/model-stream/1.0.0".to_string()
+    "/aigen/fragment-stream/1.0.0".to_string()
 }
 
 async fn read_frame<T>(io: &mut T, max_len: u64) -> io::Result<Vec<u8>>

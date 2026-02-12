@@ -44,6 +44,7 @@ tracing = { version = "0.1", default-features = false }
 tracing-core = "0.1"
 tracing-attributes = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "env-filter"] }
+zstd = "0.13"
 
 [profile.dev]
 opt-level = 1

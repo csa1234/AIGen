@@ -30,9 +30,22 @@ pub enum NetworkEvent {
         data: Vec<u8>,
         hash: [u8; 32],
     },
+    ModelFragmentReceived {
+        model_id: String,
+        fragment_index: u32,
+        data: Vec<u8>,
+        hash: [u8; 32],
+        size: u64,
+        is_compressed: bool,
+    },
     ModelQueryReceived {
         model_id: String,
         peer: PeerId,
+    },
+    VramCapabilityReceived {
+        node_id: String,
+        vram_free_gb: f32,
+        peer: Option<PeerId>,
     },
     ShutdownSignal,
     ReputationUpdate(PeerId, i32),

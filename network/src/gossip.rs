@@ -21,6 +21,7 @@ pub const TOPIC_TRANSACTIONS: &str = "/aigen/transactions/1.0.0";
 pub const TOPIC_POI_PROOFS: &str = "/aigen/poi-proofs/1.0.0";
 pub const TOPIC_MODEL_ANNOUNCEMENTS: &str = "/aigen/model-announcements/1.0.0";
 pub const TOPIC_SHUTDOWN: &str = "/aigen/shutdown/1.0.0";
+pub const TOPIC_VRAM_CAPABILITIES: &str = "/aigen/vram-capabilities/1.0.0";
 
 pub fn topic_blocks() -> Topic {
     Topic::new(TOPIC_BLOCKS)
@@ -40,6 +41,10 @@ pub fn topic_model_announcements() -> Topic {
 
 pub fn topic_shutdown() -> Topic {
     Topic::new(TOPIC_SHUTDOWN)
+}
+
+pub fn topic_vram_capabilities() -> Topic {
+    Topic::new(TOPIC_VRAM_CAPABILITIES)
 }
 
 #[derive(Default)]

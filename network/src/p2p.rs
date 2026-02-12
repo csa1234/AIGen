@@ -31,6 +31,7 @@ use libp2p::yamux;
 use libp2p::PeerId;
 use libp2p::Transport;
 use sha2::{Digest, Sha256};
+use sha3::{Digest as Sha3Digest, Sha3_256};
 use tokio::sync::{broadcast, mpsc};
 
 use crate::config::NetworkConfig;
@@ -38,9 +39,13 @@ use crate::events::NetworkEvent;
 use crate::events::TensorChunk;
 use crate::gossip::{
     topic_blocks, topic_model_announcements, topic_poi_proofs, topic_shutdown, topic_transactions,
-    TOPIC_MODEL_ANNOUNCEMENTS, TOPIC_SHUTDOWN,
+    topic_vram_capabilities, TOPIC_MODEL_ANNOUNCEMENTS, TOPIC_SHUTDOWN, TOPIC_VRAM_CAPABILITIES,
 };
 use crate::metrics::{NetworkMetrics, SharedNetworkMetrics};
+use crate::fragment_stream::{
+    protocol as fragment_stream_protocol, ModelFragmentRequest, ModelFragmentResponse,
+    FragmentStreamCodec,
+};
 use crate::model_stream::{
     protocol as model_stream_protocol, ModelShardRequest, ModelShardResponse, ModelStreamCodec,
 };
@@ -63,6 +68,7 @@ pub struct P2PBehaviour {
     pub gossipsub: gossipsub::Behaviour,
     pub request_response: request_response::Behaviour<TensorStreamCodec>,
     pub model_stream: request_response::Behaviour<ModelStreamCodec>,
+    pub fragment_stream: request_response::Behaviour<FragmentStreamCodec>,
     pub identify: identify::Behaviour,
     pub ping: ping::Behaviour,
 }
@@ -73,6 +79,7 @@ pub enum P2PBehaviourEvent {
     Gossipsub(gossipsub::Event),
     RequestResponse(request_response::Event<TensorRequest, TensorResponse>),
     ModelStream(request_response::Event<ModelShardRequest, ModelShardResponse>),
+    FragmentStream(request_response::Event<ModelFragmentRequest, ModelFragmentResponse>),
     Identify(identify::Event),
     Ping(ping::Event),
 }
@@ -98,6 +105,12 @@ impl From<request_response::Event<TensorRequest, TensorResponse>> for P2PBehavio
 impl From<request_response::Event<ModelShardRequest, ModelShardResponse>> for P2PBehaviourEvent {
     fn from(event: request_response::Event<ModelShardRequest, ModelShardResponse>) -> Self {
         Self::ModelStream(event)
+    }
+}
+
+impl From<request_response::Event<ModelFragmentRequest, ModelFragmentResponse>> for P2PBehaviourEvent {
+    fn from(event: request_response::Event<ModelFragmentRequest, ModelFragmentResponse>) -> Self {
+        Self::FragmentStream(event)
     }
 }
 
@@ -129,7 +142,10 @@ pub struct P2PNode {
     proof_store: Arc<std::sync::Mutex<std::collections::HashMap<[u8; 32], Vec<u8>>>>,
     #[allow(clippy::type_complexity)]
     model_shard_store: Arc<std::sync::Mutex<std::collections::HashMap<(String, u32), Vec<u8>>>>,
+    #[allow(clippy::type_complexity)]
+    model_fragment_store: Arc<std::sync::Mutex<std::collections::HashMap<(String, u32), Vec<u8>>>>,
     model_shard_counts: Arc<std::sync::Mutex<HashMap<String, u32>>>,
+    model_fragment_counts: Arc<std::sync::Mutex<HashMap<String, u32>>>,
 }
 
 impl ShutdownBroadcaster for P2PNode {
@@ -223,11 +239,20 @@ impl P2PNode {
         let model_stream =
             request_response::Behaviour::<ModelStreamCodec>::new(model_protocols, model_rr_config);
 
+        let fragment_protocols = std::iter::once((
+            fragment_stream_protocol(),
+            request_response::ProtocolSupport::Full,
+        ));
+        let fragment_rr_config = request_response::Config::default();
+        let fragment_stream =
+            request_response::Behaviour::<FragmentStreamCodec>::new(fragment_protocols, fragment_rr_config);
+
         let behaviour = P2PBehaviour {
             kademlia,
             gossipsub,
             request_response,
             model_stream,
+            fragment_stream,
             identify,
             ping,
         };
@@ -293,6 +318,7 @@ impl P2PNode {
                     .gossipsub
                     .subscribe(&topic_model_announcements());
                 let _ = swarm.behaviour_mut().gossipsub.subscribe(&topic_shutdown());
+                let _ = swarm.behaviour_mut().gossipsub.subscribe(&topic_vram_capabilities());
             }
         }
 
@@ -322,7 +348,11 @@ impl P2PNode {
                 model_shard_store: Arc::new(
                     std::sync::Mutex::new(std::collections::HashMap::new()),
                 ),
+                model_fragment_store: Arc::new(
+                    std::sync::Mutex::new(std::collections::HashMap::new()),
+                ),
                 model_shard_counts: Arc::new(std::sync::Mutex::new(HashMap::new())),
+                model_fragment_counts: Arc::new(std::sync::Mutex::new(HashMap::new())),
             },
             event_rx,
         ))
@@ -340,10 +370,32 @@ impl P2PNode {
         }
     }
 
-    pub fn insert_local_model_metadata(&mut self, model_id: String, total_shards: u32) {
-        if let Ok(mut store) = self.model_shard_counts.lock() {
-            store.insert(model_id, total_shards);
+    pub fn insert_local_fragment(&mut self, model_id: String, fragment_index: u32, data: Vec<u8>) {
+        if let Ok(mut store) = self.model_fragment_store.lock() {
+            store.insert((model_id, fragment_index), data);
         }
+    }
+
+    pub fn insert_local_fragment_metadata(&mut self, model_id: String, total_fragments: u32) {
+        if let Ok(mut store) = self.model_fragment_counts.lock() {
+            store.insert(model_id, total_fragments);
+        }
+    }
+
+    pub fn request_model_fragment(
+        &mut self,
+        peer: PeerId,
+        model_id: String,
+        fragment_index: u32,
+    ) -> request_response::OutboundRequestId {
+        let req = ModelFragmentRequest {
+            model_id,
+            fragment_index,
+        };
+        self.swarm
+            .behaviour_mut()
+            .fragment_stream
+            .send_request(&peer, req)
     }
 
     pub fn metrics(&self) -> SharedNetworkMetrics {
@@ -586,6 +638,24 @@ impl P2PNode {
                     return;
                 }
 
+                if message.topic.as_str() == TOPIC_VRAM_CAPABILITIES {
+                    match NetworkMessage::deserialize(&message.data) {
+                        Ok(NetworkMessage::VramCapabilityAnnouncement { node_id, vram_free_gb, .. }) => {
+                            let event = NetworkEvent::VramCapabilityReceived {
+                                node_id,
+                                vram_free_gb,
+                                peer: source,
+                            };
+                            let _ = self.event_tx.send(event).await;
+                            if let Some(peer) = source {
+                                self.reputation_manager.record_success(peer);
+                            }
+                        }
+                        _ => { /* handle malformed */ }
+                    }
+                    return;
+                }
+
                 match NetworkMessage::deserialize(&message.data) {
                     Ok(msg) => {
                         let _ = self.event_tx.send(NetworkEvent::MessageReceived(msg)).await;
@@ -791,6 +861,103 @@ impl P2PNode {
                 }
                 _ => {}
             },
+            SwarmEvent::Behaviour(P2PBehaviourEvent::FragmentStream(fs_event)) => match fs_event {
+                request_response::Event::Message { peer, message } => {
+                    if self.reputation_manager.is_banned(&peer) {
+                        return;
+                    }
+
+                    match message {
+                        request_response::Message::Request {
+                            request, channel, ..
+                        } => {
+                            let fragment_data = self.model_fragment_store.lock().ok().and_then(|s| {
+                                s.get(&(request.model_id.clone(), request.fragment_index))
+                                    .cloned()
+                            });
+                            let total_fragments = self
+                                .model_fragment_counts
+                                .lock()
+                                .ok()
+                                .and_then(|s| s.get(&request.model_id).copied());
+
+                            if let (Some(data), Some(total_fragments)) = (fragment_data, total_fragments) {
+                                // Compute SHA3-256 hash on the data (which may be compressed)
+                                let hash = compute_fragment_hash(&data);
+                                let response = ModelFragmentResponse {
+                                    model_id: request.model_id,
+                                    fragment_index: request.fragment_index,
+                                    total_fragments,
+                                    data: data.clone(),
+                                    hash,
+                                    size: data.len() as u64,
+                                    is_compressed: false, // Store tracks compression, response doesn't modify
+                                };
+                                let _ = self
+                                    .swarm
+                                    .behaviour_mut()
+                                    .fragment_stream
+                                    .send_response(channel, response);
+                                self.reputation_manager.record_success(peer);
+                            }
+                        }
+                        request_response::Message::Response { response, .. } => {
+                            // Verify SHA3-256 hash on received fragment data
+                            let actual_hash = compute_fragment_hash(&response.data);
+                            if actual_hash != response.hash {
+                                let was_banned = self.reputation_manager.is_banned(&peer);
+                                self.reputation_manager
+                                    .record_failure(peer, FailureReason::ModelHashMismatch);
+                                if !was_banned && self.reputation_manager.is_banned(&peer) {
+                                    self.metrics.inc_reputation_bans();
+                                }
+                                self.metrics.inc_model_transfer_failures();
+                                return;
+                            }
+
+                            let ModelFragmentResponse {
+                                model_id,
+                                fragment_index,
+                                data,
+                                hash,
+                                size,
+                                is_compressed,
+                                ..
+                            } = response;
+                            let event = NetworkEvent::ModelFragmentReceived {
+                                model_id,
+                                fragment_index,
+                                data,
+                                hash,
+                                size,
+                                is_compressed,
+                            };
+                            let _ = self.event_tx.send(event).await;
+                            self.reputation_manager.record_success(peer);
+                            self.metrics.add_model_bytes_received(size);
+                        }
+                    }
+                }
+                request_response::Event::OutboundFailure { peer, .. } => {
+                    let was_banned = self.reputation_manager.is_banned(&peer);
+                    self.reputation_manager
+                        .record_failure(peer, FailureReason::ModelTransferTimeout);
+                    if !was_banned && self.reputation_manager.is_banned(&peer) {
+                        self.metrics.inc_reputation_bans();
+                    }
+                    self.metrics.inc_model_transfer_failures();
+                }
+                request_response::Event::InboundFailure { peer, .. } => {
+                    let was_banned = self.reputation_manager.is_banned(&peer);
+                    self.reputation_manager
+                        .record_failure(peer, FailureReason::InvalidModelShard);
+                    if !was_banned && self.reputation_manager.is_banned(&peer) {
+                        self.metrics.inc_reputation_bans();
+                    }
+                    self.metrics.inc_model_transfer_failures();
+                }
+                _ => {}
+            },
             SwarmEvent::Behaviour(P2PBehaviourEvent::Identify(_)) => {}
             SwarmEvent::Behaviour(P2PBehaviourEvent::Ping(_)) => {}
             _ => {}
@@ -800,6 +967,16 @@ impl P2PNode {
 
 fn compute_shard_hash(data: &[u8]) -> [u8; 32] {
     let mut hasher = Sha256::new();
+    hasher.update(data);
+    let digest = hasher.finalize();
+    let mut hash = [0u8; 32];
+    hash.copy_from_slice(&digest);
+    hash
+}
+
+fn compute_fragment_hash(data: &[u8]) -> [u8; 32] {
+    use sha3::{Digest, Sha3_256};
+    let mut hasher = Sha3_256::new();
     hasher.update(data);
     let digest = hasher.finalize();
     let mut hash = [0u8; 32];
