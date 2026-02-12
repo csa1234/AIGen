@@ -31,7 +31,6 @@ use libp2p::yamux;
 use libp2p::PeerId;
 use libp2p::Transport;
 use sha2::{Digest, Sha256};
-use sha3::{Digest as Sha3Digest, Sha3_256};
 use tokio::sync::{broadcast, mpsc};
 
 use crate::config::NetworkConfig;
@@ -640,11 +639,23 @@ impl P2PNode {
 
                 if message.topic.as_str() == TOPIC_VRAM_CAPABILITIES {
                     match NetworkMessage::deserialize(&message.data) {
-                        Ok(NetworkMessage::VramCapabilityAnnouncement { node_id, vram_free_gb, .. }) => {
+                        Ok(NetworkMessage::VramCapabilityAnnouncement {
+                            node_id,
+                            vram_total_gb,
+                            vram_free_gb,
+                            vram_allocated_gb,
+                            capabilities,
+                            timestamp,
+                            ..
+                        }) => {
                             let event = NetworkEvent::VramCapabilityReceived {
                                 node_id,
-                                vram_free_gb,
                                 peer: source,
+                                vram_total_gb,
+                                vram_free_gb,
+                                vram_allocated_gb,
+                                capabilities,
+                                timestamp,
                             };
                             let _ = self.event_tx.send(event).await;
                             if let Some(peer) = source {

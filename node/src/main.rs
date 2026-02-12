@@ -562,6 +562,36 @@ async fn run_node(
         cfg.node_id.clone(),
     ));
 
+    // Initialize DCS
+    let dcs_state = Arc::new(distributed_compute::state::GlobalState::new());
+    let dcs_router = distributed_compute::routing::RouteSelector::new(dcs_state.clone());
+    let local_validator_address = cfg.node.validator_address.clone().unwrap_or_else(|| cfg.node_id.clone());
+    let dcs = Arc::new(distributed_compute::scheduler::DynamicScheduler::new(
+        dcs_state.clone(),
+        dcs_router,
+        consensus.lock().await.validator_registry.clone(),
+        publish_tx.clone(),
+        cfg.node_id.clone(),
+        local_validator_address,
+        model_registry.clone(),
+    ));
+
+    // Spawn DCS leader election task
+    tokio::spawn({
+        let dcs = dcs.clone();
+        async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(60));
+            loop {
+                interval.tick().await;
+                if let Ok(is_leader) = dcs.elect_leader().await {
+                    if is_leader {
+                        println!("elected as DCS leader");
+                    }
+                }
+            }
+        }
+    });
+
     // networking tasks are spawned below; defer core model loading until after they start
 
     let discount_tracker = model::VolumeDiscountTracker::new(model::VolumeDiscountTracker::default_tiers());
@@ -594,6 +624,8 @@ async fn run_node(
                 batch_queue.clone(),
                 inference_engine.clone(),
                 cfg.rpc.clone(),
+                Some(dcs.clone()),
+                Some(dcs_state.clone()),
             )
             .await?,
         )
@@ -668,6 +700,7 @@ async fn run_node(
         let blockchain = blockchain.clone();
         let consensus = consensus.clone();
         let model_sync = model_sync.clone();
+        let dcs_state = dcs_state.clone();
         let mut local_shutdown_rx = local_shutdown_rx;
         let block_broadcast_tx = block_broadcast_tx.clone();
         let tx_broadcast_tx = tx_broadcast_tx.clone();
@@ -785,9 +818,26 @@ async fn run_node(
                                     eprintln!("failed to handle model query: {}", err);
                                 }
                             }
-                            NetworkEvent::VramCapabilityReceived { node_id, vram_free_gb, .. } => {
+                            NetworkEvent::VramCapabilityReceived {
+                                node_id,
+                                peer,
+                                vram_total_gb,
+                                vram_free_gb,
+                                vram_allocated_gb,
+                                capabilities,
+                                timestamp,
+                            } => {
                                 // Track peer capabilities for future DCS use
                                 println!("peer vram capability: node={}, free={}GB", node_id, vram_free_gb);
+                                dcs_state.update_node_from_announcement(
+                                    node_id,
+                                    peer,
+                                    vram_total_gb,
+                                    vram_free_gb,
+                                    vram_allocated_gb,
+                                    capabilities,
+                                    blockchain_core::Timestamp(timestamp),
+                                );
                             }
                             _ => {}
                         }

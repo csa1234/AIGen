@@ -21,8 +21,12 @@ use tracing::info;
 
 use crate::rpc::types::{
     BalanceResponse, BlockResponse, ChainInfoResponse, HealthResponse, NodeInfoResponse, RpcError,
-    SubmitTransactionResponse, TransactionResponse,
+    SubmitTransactionResponse, TransactionResponse, DcsStateResponse, SubmitInferenceRequest, TaskPlanResponse, TaskStatusResponse,
 };
+use distributed_compute::scheduler::DynamicScheduler;
+use distributed_compute::state::GlobalState;
+use distributed_compute::task::InferenceTask;
+use uuid::Uuid;
 
 #[rpc(server)]
 pub trait PublicRpc {
@@ -56,6 +60,15 @@ pub trait PublicRpc {
         &self,
         limit: Option<usize>,
     ) -> Result<Vec<TransactionResponse>, RpcError>;
+
+    #[method(name = "getDcsState")]
+    async fn get_dcs_state(&self) -> Result<DcsStateResponse, RpcError>;
+
+    #[method(name = "submitInferenceTask")]
+    async fn submit_inference_task(&self, request: SubmitInferenceRequest) -> Result<TaskPlanResponse, RpcError>;
+
+    #[method(name = "getTaskStatus")]
+    async fn get_task_status(&self, task_id: String) -> Result<TaskStatusResponse, RpcError>;
 }
 
 #[derive(Clone)]
@@ -64,6 +77,8 @@ pub struct RpcMethods {
     pub tx_broadcast: tokio::sync::broadcast::Sender<blockchain_core::Transaction>,
     pub network_metrics: network::metrics::SharedNetworkMetrics,
     pub start_time: std::sync::Arc<std::time::Instant>,
+    pub dcs: Option<Arc<DynamicScheduler>>,
+    pub dcs_state: Option<Arc<GlobalState>>,
 }
 
 impl RpcMethods {
@@ -71,12 +86,16 @@ impl RpcMethods {
         blockchain: Arc<Mutex<Blockchain>>,
         tx_broadcast: tokio::sync::broadcast::Sender<blockchain_core::Transaction>,
         network_metrics: network::metrics::SharedNetworkMetrics,
+        dcs: Option<Arc<DynamicScheduler>>,
+        dcs_state: Option<Arc<GlobalState>>,
     ) -> Self {
         Self {
             blockchain,
             tx_broadcast,
             network_metrics,
             start_time: std::sync::Arc::new(std::time::Instant::now()),
+            dcs,
+            dcs_state,
         }
     }
 }
@@ -258,5 +277,58 @@ impl PublicRpcServer for RpcMethods {
         let bc = self.blockchain.lock().await;
         let txs = bc.get_pending_transactions(limit);
         Ok(txs.iter().map(TransactionResponse::from_tx).collect())
+    }
+
+    async fn get_dcs_state(&self) -> Result<DcsStateResponse, RpcError> {
+        if let (Some(dcs), Some(state)) = (&self.dcs, &self.dcs_state) {
+            let is_leader = dcs.is_leader().await;
+            let leader_id = if is_leader { Some("local".to_string()) } else { None };
+            let active_nodes = state.nodes.len() as u32;
+            let known_fragments = state.fragments.len() as u32;
+            
+            Ok(DcsStateResponse {
+                is_leader,
+                leader_id,
+                active_nodes,
+                known_fragments,
+            })
+        } else {
+            Err(RpcError::Internal("DCS not initialized".to_string()))
+        }
+    }
+
+    async fn submit_inference_task(&self, request: SubmitInferenceRequest) -> Result<TaskPlanResponse, RpcError> {
+        let dcs = self.dcs.as_ref().ok_or(RpcError::Internal("DCS not initialized".to_string()))?;
+        
+        let task = InferenceTask {
+            inference_id: Uuid::new_v4(),
+            model_id: request.model_id,
+            prompt: request.prompt,
+            max_tokens: request.max_tokens,
+            user_id: request.user_id,
+        };
+        
+        let plan = dcs.schedule_inference(task).await
+            .map_err(|e| RpcError::Internal(e.to_string()))?;
+            
+        Ok(TaskPlanResponse {
+            inference_id: plan.inference_id.to_string(),
+            task_count: plan.tasks.len() as u32,
+            pipeline_order: plan.pipeline_order,
+            status: "scheduled".to_string(),
+        })
+    }
+
+    async fn get_task_status(&self, task_id: String) -> Result<TaskStatusResponse, RpcError> {
+        let state = self.dcs_state.as_ref().ok_or(RpcError::Internal("DCS not initialized".to_string()))?;
+        let uuid = Uuid::parse_str(&task_id).map_err(|e| RpcError::InvalidParams(e.to_string()))?;
+        
+        let task = state.active_tasks.get(&uuid).ok_or(RpcError::InvalidParams("task not found".to_string()))?;
+        
+        Ok(TaskStatusResponse {
+            task_id: task.task_id.to_string(),
+            status: format!("{:?}", task.status),
+            assigned_node: task.assigned_node.clone(),
+        })
     }
 }

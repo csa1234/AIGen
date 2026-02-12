@@ -753,3 +753,35 @@ pub fn batch_priority_to_string(priority: model::BatchPriority) -> String {
         model::BatchPriority::Economy => "Economy".to_string(),
     }
 }
+
+// DCS Types
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DcsStateResponse {
+    pub is_leader: bool,
+    pub leader_id: Option<String>,
+    pub active_nodes: u32,
+    pub known_fragments: u32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SubmitInferenceRequest {
+    pub model_id: String,
+    pub prompt: String,
+    pub max_tokens: u32,
+    pub user_id: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TaskPlanResponse {
+    pub inference_id: String,
+    pub task_count: u32,
+    pub pipeline_order: Vec<String>,
+    pub status: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TaskStatusResponse {
+    pub task_id: String,
+    pub status: String,
+    pub assigned_node: String,
+}

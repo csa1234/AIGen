@@ -44,8 +44,12 @@ pub enum NetworkEvent {
     },
     VramCapabilityReceived {
         node_id: String,
-        vram_free_gb: f32,
         peer: Option<PeerId>,
+        vram_total_gb: f32,
+        vram_free_gb: f32,
+        vram_allocated_gb: f32,
+        capabilities: crate::protocol::NodeCapabilities,
+        timestamp: i64,
     },
     ShutdownSignal,
     ReputationUpdate(PeerId, i32),

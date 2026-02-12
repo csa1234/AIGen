@@ -1,0 +1,20 @@
+[package]
+name = "distributed-compute"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio = { version = "1.32", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+dashmap = "5.5"
+parking_lot = "0.12"
+thiserror = "1.0"
+tracing = "0.1"
+uuid = { version = "1.4", features = ["v4", "serde"] }
+libp2p = { workspace = true }
+blockchain-core = { path = "../blockchain-core" }
+consensus = { path = "../consensus" }
+network = { path = "../network" }
+model = { path = "../model" }
+genesis = { path = "../genesis" }

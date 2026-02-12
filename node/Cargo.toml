@@ -33,6 +33,7 @@ genesis = { path = "../genesis" }
 blockchain-core = { path = "../blockchain-core" }
 consensus = { path = "../consensus" }
 network = { path = "../network" }
+distributed-compute = { path = "../distributed-compute" }
 model = { path = "../model" }
 ed25519-dalek = { workspace = true }
 rand = { workspace = true }

@@ -26,6 +26,8 @@ use crate::rpc::ceo::{CeoRpcMethods, CeoRpcServer};
 use crate::rpc::methods::{PublicRpcServer, RpcMethods};
 use crate::rpc::subscriptions::{RpcSubscriptions, SubscriptionsRpcServer};
 use crate::rpc::model::{ModelRpcMethods, ModelRpcServer};
+use distributed_compute::scheduler::DynamicScheduler;
+use distributed_compute::state::GlobalState;
 
 pub async fn start_rpc_server(
     blockchain: Arc<Mutex<Blockchain>>,
@@ -38,6 +40,8 @@ pub async fn start_rpc_server(
     batch_queue: Arc<model::BatchQueue>,
     inference_engine: Arc<model::InferenceEngine>,
     config: RpcConfig,
+    dcs: Option<Arc<DynamicScheduler>>,
+    dcs_state: Option<Arc<GlobalState>>,
 ) -> Result<ServerHandle> {
     let cors = build_cors_layer(&config);
 
@@ -63,7 +67,7 @@ pub async fn start_rpc_server(
         println!("  ⚠️  Binding to localhost only - not accessible from other machines");
     }
 
-    let public = RpcMethods::new(blockchain.clone(), tx_broadcast, network_metrics.clone());
+    let public = RpcMethods::new(blockchain.clone(), tx_broadcast, network_metrics.clone(), dcs, dcs_state);
     let ceo = CeoRpcMethods::new(
         blockchain.clone(),
         model_registry.clone(),

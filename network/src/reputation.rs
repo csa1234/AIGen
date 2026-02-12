@@ -23,6 +23,7 @@ pub enum FailureReason {
     InvalidModelShard,
     ModelTransferTimeout,
     ModelHashMismatch,
+    InvalidResult,
 }
 
 #[derive(Clone, Debug)]
@@ -89,6 +90,7 @@ impl PeerReputationManager {
             FailureReason::InvalidModelShard => 0.3,
             FailureReason::ModelTransferTimeout => 0.05,
             FailureReason::ModelHashMismatch => 0.4,
+            FailureReason::InvalidResult => 0.3,
         };
 
         let now = Instant::now();

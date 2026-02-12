@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 use crate::shutdown_propagation::NetworkError;
 
 use crate::events::TensorChunk;
+use uuid::Uuid;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct NodeCapabilities {
@@ -84,6 +85,23 @@ pub enum NetworkMessage {
     },
     Ping,
     Pong,
+    ComputeTask {
+        task_id: Uuid,
+        inference_id: Uuid,
+        model_id: String,
+        layer_range: (u32, u32),
+        required_fragments: Vec<String>,
+        assigned_node: String,
+    },
+    TaskResult {
+        task_id: Uuid,
+        output_activation: Vec<u8>,
+        poi_proof: PoIProof,
+    },
+    TaskFailure {
+        task_id: Uuid,
+        error: String,
+    },
 }
 
 impl NetworkMessage {
@@ -104,6 +122,9 @@ impl NetworkMessage {
             NetworkMessage::Transaction(_) => 50,
             NetworkMessage::TensorRequest { .. } => 150,
             NetworkMessage::TensorResponse(_) => 150,
+            NetworkMessage::ComputeTask { .. } => 150,
+            NetworkMessage::TaskResult { .. } => 150,
+            NetworkMessage::TaskFailure { .. } => 150,
             NetworkMessage::Ping | NetworkMessage::Pong => 10,
         }
     }
