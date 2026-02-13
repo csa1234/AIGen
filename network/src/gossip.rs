@@ -25,6 +25,20 @@ pub const TOPIC_VRAM_CAPABILITIES: &str = "/aigen/vram-capabilities/1.0.0";
 pub const TOPIC_HEARTBEAT: &str = "/aigen/heartbeat/1.0.0";
 pub const TOPIC_CHECKPOINT: &str = "/aigen/checkpoint/1.0.0";
 pub const TOPIC_FAILOVER: &str = "/aigen/failover/1.0.0";
+pub const TOPIC_BLOCK_PREFIX: &str = "/aigen/block/";
+
+/// Generate topic for a specific block ID
+pub fn topic_block(block_id: u32) -> Topic {
+    Topic::new(format!("{}{}/1.0.0", TOPIC_BLOCK_PREFIX, block_id))
+}
+
+/// Parse block ID from topic string
+pub fn parse_block_id(topic: &str) -> Option<u32> {
+    topic
+        .strip_prefix(TOPIC_BLOCK_PREFIX)
+        .and_then(|s| s.split('/').next())
+        .and_then(|s| s.parse::<u32>().ok())
+}
 
 pub fn topic_blocks() -> Topic {
     Topic::new(TOPIC_BLOCKS)
@@ -165,5 +179,51 @@ impl GossipManager {
     /// Get local peer ID
     pub fn local_peer_id(&self) -> libp2p::PeerId {
         self.local_peer_id
+    }
+
+    /// Subscribe to a specific block topic
+    pub fn subscribe_block(
+        &self,
+        gossipsub: &mut libp2p::gossipsub::Behaviour,
+        block_id: u32,
+    ) -> Result<(), libp2p::gossipsub::SubscriptionError> {
+        let topic = topic_block(block_id);
+        gossipsub.subscribe(&topic)
+    }
+
+    /// Subscribe to multiple block topics
+    pub fn subscribe_blocks(
+        &self,
+        gossipsub: &mut libp2p::gossipsub::Behaviour,
+        block_ids: &[u32],
+    ) -> Result<(), libp2p::gossipsub::SubscriptionError> {
+        for &block_id in block_ids {
+            self.subscribe_block(gossipsub, block_id)?;
+        }
+        Ok(())
+    }
+
+    /// Unsubscribe from a block topic
+    pub fn unsubscribe_block(
+        &self,
+        gossipsub: &mut libp2p::gossipsub::Behaviour,
+        block_id: u32,
+    ) -> bool {
+        let topic = topic_block(block_id);
+        gossipsub.unsubscribe(&topic)
+    }
+
+    /// Unsubscribe from multiple block topics
+    pub fn unsubscribe_blocks(
+        &self,
+        gossipsub: &mut libp2p::gossipsub::Behaviour,
+        block_ids: &[u32],
+    ) -> bool {
+        for &block_id in block_ids {
+            if !self.unsubscribe_block(gossipsub, block_id) {
+                return false;
+            }
+        }
+        true
     }
 }

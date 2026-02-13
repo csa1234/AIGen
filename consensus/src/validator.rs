@@ -61,18 +61,29 @@ impl ValidatorRegistry {
         address: String,
         stake: Amount,
         pubkey: String,
+        chain_state: &blockchain_core::state::ChainState,
     ) -> Result<(), ConsensusError> {
         if is_shutdown() {
             return Err(ConsensusError::ShutdownActive);
         }
 
-        if stake.value() < Validator::MIN_STAKE {
+        // Verify stake exists in chain state
+        let stake_state = chain_state.get_stake(&address)
+            .ok_or(ConsensusError::RegistryError)?;
+
+        if stake_state.staked_amount.value() < Validator::MIN_STAKE {
             return Err(ConsensusError::RegistryError);
+        }
+
+        // Ensure role is compatible (Inference or Both)
+        match stake_state.role {
+            blockchain_core::state::StakeRole::Inference | blockchain_core::state::StakeRole::Both => {},
+            _ => return Err(ConsensusError::RegistryError),
         }
 
         let v = Validator {
             address: address.clone(),
-            staked_amount: stake,
+            staked_amount: stake_state.staked_amount,
             slashed_amount: Amount::ZERO,
             last_validation_block: BlockHeight::GENESIS,
             is_active: true,
@@ -362,5 +373,59 @@ pub fn execute_slashing(
     };
     let slash_amt = Amount::new(stake.value().saturating_mul(pct) / 100);
     registry.slash_validator(miner_address, slash_amt, reason)?;
+    Ok(slash_amt)
+}
+
+/// Slash validator for PoI verification failure
+pub fn slash_for_poi_failure(
+    registry: &ValidatorRegistry,
+    chain_state: &blockchain_core::state::ChainState,
+    validator_address: &str,
+) -> Result<Amount, ConsensusError> {
+    if is_shutdown() {
+        return Err(ConsensusError::ShutdownActive);
+    }
+
+    let stake_state = chain_state.get_stake(validator_address)
+        .ok_or(ConsensusError::RegistryError)?;
+
+    // Slash 10% for PoI failure
+    let slash_amt = Amount::new(stake_state.staked_amount.value().saturating_mul(10) / 100);
+
+    // Apply slash to chain state
+    chain_state.apply_stake_slash(validator_address, slash_amt, "PoI verification failure")
+        .map_err(|_| ConsensusError::RegistryError)?;
+
+    // Update validator registry
+    registry.slash_validator(validator_address, slash_amt, SlashReason::InvalidProof)?;
+
+    Ok(slash_amt)
+}
+
+/// Slash validator for missed heartbeats
+pub fn slash_for_missed_heartbeats(
+    registry: &ValidatorRegistry,
+    chain_state: &blockchain_core::state::ChainState,
+    validator_address: &str,
+    missed_count: u32,
+) -> Result<Amount, ConsensusError> {
+    if is_shutdown() {
+        return Err(ConsensusError::ShutdownActive);
+    }
+
+    let stake_state = chain_state.get_stake(validator_address)
+        .ok_or(ConsensusError::RegistryError)?;
+
+    // Slash 5% per hour of downtime (3 heartbeats = 1.5s, scale accordingly)
+    let slash_pct = (missed_count as u64).min(20); // Cap at 20%
+    let slash_amt = Amount::new(stake_state.staked_amount.value().saturating_mul(slash_pct) / 100);
+
+    // Apply slash to chain state
+    chain_state.apply_stake_slash(validator_address, slash_amt, &format!("Missed {} heartbeats", missed_count))
+        .map_err(|_| ConsensusError::RegistryError)?;
+
+    // Update validator registry
+    registry.slash_validator(validator_address, slash_amt, SlashReason::NoResponse)?;
+
     Ok(slash_amt)
 }

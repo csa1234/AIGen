@@ -22,6 +22,28 @@ use network::config::NetworkConfig;
 use network::node_types::{NodeConfig, NodeType};
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct DistributedInferenceConfig {
+    pub enabled: bool,
+    pub block_id: Option<u32>,
+    pub total_blocks: u32,
+    pub pipeline_config_path: Option<PathBuf>,
+    pub coordinator_mode: bool, // true if this node initiates inference
+}
+
+impl Default for DistributedInferenceConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            block_id: None,
+            total_blocks: 1,
+            pipeline_config_path: None,
+            coordinator_mode: false,
+        }
+    }
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct NodeConfiguration {
     pub node_id: String,
     pub data_dir: PathBuf,
@@ -37,6 +59,8 @@ pub struct NodeConfiguration {
     pub rpc: RpcConfig,
     #[serde(default)]
     pub keypair_path: PathBuf,
+    #[serde(default)]
+    pub distributed: DistributedInferenceConfig,
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -343,6 +367,23 @@ impl NodeConfiguration {
                     self.model.worker_mode = role.to_lowercase() == "worker";
                 }
 
+                // Distributed inference CLI args
+                if args.distributed {
+                    self.distributed.enabled = true;
+                }
+                if let Some(block_id) = args.block_id {
+                    self.distributed.block_id = Some(block_id);
+                }
+                if let Some(total_blocks) = args.total_blocks {
+                    self.distributed.total_blocks = total_blocks;
+                }
+                if let Some(ref path) = args.pipeline_config {
+                    self.distributed.pipeline_config_path = Some(path.clone());
+                }
+                if args.coordinator {
+                    self.distributed.coordinator_mode = true;
+                }
+
                 self.keypair_path = crate::keypair::default_keypair_path(&self.data_dir);
             }
             _ => {}
@@ -482,6 +523,35 @@ impl NodeConfiguration {
             )
         })?;
 
+        // Validate distributed inference configuration
+        if self.distributed.enabled {
+            if self.distributed.block_id.is_none() {
+                return Err(anyhow!(
+                    "distributed.block_id: required when distributed mode is enabled"
+                ));
+            }
+            if self.distributed.pipeline_config_path.is_none() {
+                return Err(anyhow!(
+                    "distributed.pipeline_config_path: required when distributed mode is enabled"
+                ));
+            }
+            let block_id = self.distributed.block_id.unwrap();
+            if block_id >= self.distributed.total_blocks {
+                return Err(anyhow!(
+                    "distributed.block_id: must be less than total_blocks"
+                ));
+            }
+            // Verify pipeline config file exists and is readable
+            if let Some(ref path) = self.distributed.pipeline_config_path {
+                if !path.exists() {
+                    return Err(anyhow!(
+                        "distributed.pipeline_config_path: file does not exist: {}",
+                        path.display()
+                    ));
+                }
+            }
+        }
+
         Ok(())
     }
 
@@ -514,6 +584,7 @@ impl Default for NodeConfiguration {
             },
             rpc: RpcConfig::default(),
             keypair_path: crate::keypair::default_keypair_path(&data_dir),
+            distributed: DistributedInferenceConfig::default(),
         }
     }
 }

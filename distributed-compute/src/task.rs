@@ -40,6 +40,9 @@ pub struct ComputeTask {
     // Tensor parallelism fields
     pub tensor_shard_index: u32,
     pub total_tensor_shards: u32,
+    // NEW: Fields for Phase 6
+    pub rejected_nodes: Vec<String>, // Nodes rejected due to insufficient stake
+    pub target_fragment_size_bytes: u64, // Adaptive fragment size hint
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -72,6 +75,9 @@ pub fn decompose_inference(
             status: TaskStatus::Pending,
             tensor_shard_index: index as u32,
             total_tensor_shards: manifest.fragments.len() as u32,
+            // NEW: Initialize Phase 6 fields
+            rejected_nodes: Vec::new(),
+            target_fragment_size_bytes: crate::state::DEFAULT_FRAGMENT_SIZE_BYTES,
         };
         tasks.push(task);
         
@@ -88,6 +94,8 @@ pub fn decompose_inference(
             fragment_index: fragment.fragment_index,
             size_bytes: fragment.size_bytes,
             replicas,
+            // NEW: Set adaptive fragment size
+            target_fragment_size_bytes: crate::state::DEFAULT_FRAGMENT_SIZE_BYTES,
         };
         state.fragments.insert(fragment.fragment_id.clone(), fragment_location);
     }

@@ -9,9 +9,109 @@
 // Contact: Cesar Saguier Antebi
 
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{anyhow, Context, Result};
 use libp2p::identity::Keypair;
+use serde::{Serialize, Deserialize};
+
+/// Authentication token for pipeline replica join/registration
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PipelineAuthToken {
+    pub node_id: String,
+    pub block_id: u32,
+    pub timestamp: u64,
+    pub public_key: Vec<u8>,
+    pub signature: Vec<u8>,
+}
+
+impl PipelineAuthToken {
+    /// Token expiry time in seconds (5 minutes)
+    pub const EXPIRY_SECONDS: u64 = 300;
+    
+    /// Create a new token (without signature - used for signing)
+    fn new_unsigned(node_id: String, block_id: u32, public_key: Vec<u8>) -> Self {
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        
+        Self {
+            node_id,
+            block_id,
+            timestamp,
+            public_key,
+            signature: Vec::new(),
+        }
+    }
+    
+    /// Serialize token data for signing (excludes signature)
+    fn signable_bytes(&self) -> Vec<u8> {
+        let data = (
+            &self.node_id,
+            self.block_id,
+            self.timestamp,
+            &self.public_key,
+        );
+        serde_json::to_vec(&data).unwrap_or_default()
+    }
+    
+    /// Check if token is expired
+    pub fn is_expired(&self) -> bool {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        now.saturating_sub(self.timestamp) > Self::EXPIRY_SECONDS
+    }
+}
+
+/// Generate a pipeline authentication token using Ed25519
+pub fn generate_pipeline_auth_token(
+    keypair: &Keypair,
+    node_id: String,
+    block_id: u32,
+) -> Result<PipelineAuthToken> {
+    // Extract public key
+    let public_key = keypair.public().encode_protobuf();
+    
+    // Create unsigned token
+    let mut token = PipelineAuthToken::new_unsigned(node_id, block_id, public_key);
+    
+    // Sign the token data
+    let signable = token.signable_bytes();
+    let signature = keypair
+        .sign(&signable)
+        .map_err(|e| anyhow!("failed to sign pipeline auth token: {}", e))?;
+    
+    token.signature = signature;
+    
+    Ok(token)
+}
+
+/// Verify a pipeline authentication token using Ed25519
+pub fn verify_pipeline_auth_token(token: &PipelineAuthToken) -> Result<()> {
+    // Check expiry
+    if token.is_expired() {
+        return Err(anyhow!("pipeline auth token has expired"));
+    }
+    
+    // Reconstruct public key from protobuf encoding
+    let public_key = libp2p::identity::PublicKey::from_protobuf_encoding(&token.public_key)
+        .map_err(|e| anyhow!("failed to decode public key: {}", e))?;
+    
+    // Create unsigned token copy for verification
+    let mut unsigned = token.clone();
+    unsigned.signature = Vec::new();
+    let signable = unsigned.signable_bytes();
+    
+    // Verify signature
+    if !public_key.verify(&signable, &token.signature) {
+        return Err(anyhow!("pipeline auth token signature verification failed"));
+    }
+    
+    Ok(())
+}
 
 pub fn generate_keypair() -> Keypair {
     Keypair::generate_ed25519()

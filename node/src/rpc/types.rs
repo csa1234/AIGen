@@ -763,6 +763,60 @@ pub struct DcsStateResponse {
     pub known_fragments: u32,
 }
 
+// Orchestrator Types
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct OrchestratorStateResponse {
+    pub is_leader: bool,
+    pub leader_node_id: Option<String>,
+    pub total_blocks: u32,
+    pub total_replicas: u32,
+    pub healthy_replicas: u32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct BlockAssignmentsResponse {
+    pub model_id: String,
+    pub blocks: Vec<BlockAssignmentInfo>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct BlockAssignmentInfo {
+    pub block_id: u32,
+    pub layer_range: (u32, u32),
+    pub replicas: Vec<ReplicaInfo>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ReplicaInfo {
+    pub node_id: String,
+    pub status: String, // "healthy" | "degraded" | "dead"
+    pub load_score: f32,
+    pub last_heartbeat: i64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ReplicaHealthResponse {
+    pub node_id: String,
+    pub block_id: u32,
+    pub status: String,
+    pub consecutive_misses: u32,
+    pub last_seen: i64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PipelineInferenceRequest {
+    pub model_id: String,
+    pub prompt: String,
+    pub max_tokens: u32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PipelineInferenceResponse {
+    pub inference_id: String,
+    pub pipeline_route: Vec<String>, // node_ids in order
+    pub estimated_latency_ms: u64,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SubmitInferenceRequest {
     pub model_id: String,
@@ -784,4 +838,141 @@ pub struct TaskStatusResponse {
     pub task_id: String,
     pub status: String,
     pub assigned_node: String,
+}
+
+// Reward RPC Types
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct NodeEarningsResponse {
+    pub node_id: String,
+    pub total_earned: u64,
+    pub compute_rewards: u64,
+    pub storage_rewards: u64,
+    pub tasks_completed: u64,
+    pub fragments_hosted: u32,
+    pub last_reward_timestamp: i64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TaskRewardResponse {
+    pub task_id: String,
+    pub reward_amount: u64,
+    pub status: String, // "pending", "verified", "paid"
+    pub proof_verified: bool,
+    pub compute_time_ms: u64,
+    pub fragment_count: u32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PendingReward {
+    pub amount: u64,
+    pub reason: String, // "compute_task" or "storage_hosting"
+    pub timestamp: i64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PendingRewardsResponse {
+    pub node_id: String,
+    pub pending_rewards: Vec<PendingReward>,
+    pub total_pending: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct StorageRewardEstimateResponse {
+    pub node_id: String,
+    pub estimated_hourly_reward: u64,
+    pub vram_allocated_gb: f32,
+    pub stake_weight: f32,
+    pub fragments_hosted: u32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RewardHistoryEntry {
+    pub amount: u64,
+    pub reward_type: String, // "compute" or "storage"
+    pub timestamp: i64,
+    pub task_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RewardHistoryResponse {
+    pub node_id: String,
+    pub rewards: Vec<RewardHistoryEntry>,
+    pub total_count: u32,
+}
+
+// NEW: VRAM Pool and Metrics RPC Types
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct VramPoolStatsResponse {
+    pub total_vram_gb: f32,
+    pub allocated_vram_gb: f32,
+    pub active_nodes: u32,
+    pub total_fragments: u32,
+    pub avg_replicas: f32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct NodeMetricsResponse {
+    pub node_id: String,
+    pub vram_total_gb: f32,
+    pub vram_free_gb: f32,
+    pub vram_allocated_gb: f32,
+    pub fragments_hosted: u32,
+    pub stake: u64,
+    pub total_earned: u64,
+    pub status: String,
+    pub load_score: f32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RewardLeaderboardEntry {
+    pub node_id: String,
+    pub total_earned: u64,
+    pub compute_rewards: u64,
+    pub storage_rewards: u64,
+    pub tasks_completed: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RewardLeaderboardResponse {
+    pub entries: Vec<RewardLeaderboardEntry>,
+    pub total_count: u32,
+}
+
+// NEW: Distributed Inference RPC Types
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DistributedInferenceStatsResponse {
+    pub active_pipelines: u32,
+    pub total_inferences_completed: u64,
+    pub avg_pipeline_latency_ms: f64,
+    pub avg_throughput_tasks_per_sec: f64,
+    pub avg_compression_ratio: f64,
+    pub total_blocks: u32,
+    pub healthy_blocks: u32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ActivePipelineResponse {
+    pub inference_id: String,
+    pub model_id: String,
+    pub pipeline_route: Vec<String>, // node IDs
+    pub current_block: u32,
+    pub elapsed_ms: u64,
+    pub estimated_remaining_ms: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct BlockLatencyMetrics {
+    pub block_id: u32,
+    pub avg_compute_time_ms: f64,
+    pub avg_transfer_time_ms: f64,
+    pub tasks_completed: u64,
+    pub tasks_failed: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CompressionStatsResponse {
+    pub total_tensors_compressed: u64,
+    pub avg_compression_ratio: f64,
+    pub total_bytes_saved: u64,
+    pub quantization_enabled: bool,
 }

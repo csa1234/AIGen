@@ -92,6 +92,30 @@
             </svg>
             Governance
         </button>
+        <button class="tab-btn" data-tab="vram">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="4" y="4" width="16" height="16" rx="2" ry="2"/>
+                <rect x="9" y="9" width="6" height="6"/>
+                <line x1="9" y1="1" x2="9" y2="4"/>
+                <line x1="15" y1="1" x2="15" y2="4"/>
+                <line x1="9" y1="20" x2="9" y2="23"/>
+                <line x1="15" y1="20" x2="15" y2="23"/>
+                <line x1="20" y1="9" x2="23" y2="9"/>
+                <line x1="20" y1="14" x2="23" y2="14"/>
+                <line x1="1" y1="9" x2="4" y2="9"/>
+                <line x1="1" y1="14" x2="4" y2="14"/>
+            </svg>
+            VRAM Pool
+        </button>
+        <button class="tab-btn" data-tab="distributed-inference">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+                <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+                <line x1="12" y1="2" x2="12" y2="22"/>
+                <line x1="2" y1="12" x2="22" y2="12"/>
+            </svg>
+            Distributed Inference
+        </button>
     </nav>
 
     <!-- Main Content -->
@@ -395,6 +419,162 @@
                     </div>
                     <button type="submit" class="btn btn-danger">Submit Shutdown</button>
                 </form>
+            </div>
+        </section>
+
+        <!-- VRAM Pool Tab -->
+        <section id="vramTab" class="tab-content">
+            <div class="section">
+                <h2>VRAM Pool Overview</h2>
+                <div class="vram-overview">
+                    <div class="stat-card" id="vramPoolStats">
+                        <h3>Global VRAM Pool</h3>
+                        <div class="stat-content">
+                            <p>Loading...</p>
+                        </div>
+                    </div>
+                    <div class="stat-card" id="activeNodesCount">
+                        <h3>Active Nodes</h3>
+                        <div class="stat-content">
+                            <p>Loading...</p>
+                        </div>
+                    </div>
+                    <div class="stat-card" id="fragmentDistribution">
+                        <h3>Fragment Distribution</h3>
+                        <div class="stat-content">
+                            <p>Loading...</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="section">
+                <h3>Network Topology</h3>
+                <div class="topology-container">
+                    <canvas id="topologyCanvas" width="800" height="400"></canvas>
+                </div>
+            </div>
+
+            <div class="section">
+                <h3>Node Details</h3>
+                <div class="table-container">
+                    <table class="data-table" id="vramNodesTable">
+                        <thead>
+                            <tr>
+                                <th>Node ID</th>
+                                <th>VRAM Total</th>
+                                <th>VRAM Free</th>
+                                <th>Fragments Hosted</th>
+                                <th>Stake</th>
+                                <th>Rewards Earned</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody id="vramNodesTableBody">
+                            <tr><td colspan="7" class="loading-cell">Loading nodes...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div class="section">
+                <h3>Reward Leaderboard</h3>
+                <div class="table-container">
+                    <table class="data-table" id="rewardLeaderboardTable">
+                        <thead>
+                            <tr>
+                                <th>Rank</th>
+                                <th>Node ID</th>
+                                <th>Total Earned</th>
+                                <th>Compute Rewards</th>
+                                <th>Storage Rewards</th>
+                                <th>Tasks Completed</th>
+                            </tr>
+                        </thead>
+                        <tbody id="rewardLeaderboardBody">
+                            <tr><td colspan="6" class="loading-cell">Loading leaderboard...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
+        <!-- Distributed Inference Tab -->
+        <section id="distributed-inferenceTab" class="tab-content">
+            <div class="stats-grid" id="distributedInferenceStats">
+                <div class="stat-card" id="activePipelinesCard">
+                    <h3>Active Pipelines</h3>
+                    <div class="stat-value">-</div>
+                </div>
+                <div class="stat-card" id="pipelineLatencyCard">
+                    <h3>Avg Pipeline Latency</h3>
+                    <div class="stat-value">-</div>
+                    <div class="stat-unit">ms</div>
+                </div>
+                <div class="stat-card" id="throughputCard">
+                    <h3>Throughput</h3>
+                    <div class="stat-value">-</div>
+                    <div class="stat-unit">tasks/sec</div>
+                </div>
+                <div class="stat-card" id="compressionRatioCard">
+                    <h3>Compression Ratio</h3>
+                    <div class="stat-value">-</div>
+                    <div class="stat-unit">x</div>
+                </div>
+            </div>
+
+            <div class="section">
+                <h3>Active Pipelines</h3>
+                <div class="refresh-controls">
+                    <label>Auto-refresh:</label>
+                    <select id="distributedInferenceRefreshInterval">
+                        <option value="2" selected>2 seconds</option>
+                        <option value="5">5 seconds</option>
+                        <option value="10">10 seconds</option>
+                        <option value="0">Manual</option>
+                    </select>
+                </div>
+                <div class="table-container">
+                    <table class="data-table" id="activePipelinesTable">
+                        <thead>
+                            <tr>
+                                <th>Inference ID</th>
+                                <th>Model</th>
+                                <th>Route (nodes)</th>
+                                <th>Current Block</th>
+                                <th>Progress</th>
+                                <th>Elapsed</th>
+                                <th>Est. Remaining</th>
+                            </tr>
+                        </thead>
+                        <tbody id="activePipelinesTableBody">
+                            <tr><td colspan="7" class="loading-cell">Loading pipelines...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div class="section">
+                <h3>Per-Block Latency</h3>
+                <div class="chart-container">
+                    <canvas id="blockLatencyChart" width="800" height="400"></canvas>
+                </div>
+            </div>
+
+            <div class="section">
+                <h3>Pipeline Topology</h3>
+                <div class="topology-container">
+                    <canvas id="pipelineTopologyCanvas" width="800" height="600"></canvas>
+                </div>
+            </div>
+
+            <div class="section">
+                <h3>Compression Statistics</h3>
+                <div class="stat-card" id="compressionStatsCard">
+                    <div class="stat-content">
+                        <p>Loading...</p>
+                    </div>
+                </div>
             </div>
         </section>
     </main>

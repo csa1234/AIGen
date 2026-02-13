@@ -107,7 +107,9 @@ pub enum NetworkMessage {
     TaskResult {
         task_id: Uuid,
         output_activation: Vec<u8>,
-        poi_proof: PoIProof,
+        poi_proof: consensus::PoIProof,
+        compute_time_ms: u64,
+        fragment_ids: Vec<String>,
     },
     TaskFailure {
         task_id: Uuid,
@@ -121,6 +123,12 @@ pub enum NetworkMessage {
         data: Vec<u8>, // compressed activation data
         compression_level: i32,
         checkpoint_hash: [u8; 32],
+        shape: Vec<i64>, // Tensor shape for reconstruction
+        layer_range: (u32, u32), // Layer range for reconstruction
+        // NEW: Quantization metadata for 8-bit compression
+        quantization_min: f32,
+        quantization_max: f32,
+        is_quantized: bool,
     },
     /// Heartbeat message sent every 500ms by active nodes
     Heartbeat {
@@ -128,6 +136,14 @@ pub enum NetworkMessage {
         timestamp: i64,
         active_tasks: Vec<Uuid>, // Currently executing task IDs
         load_score: f32,
+    },
+    /// Replica join request with authentication token
+    ReplicaJoinRequest {
+        node_id: String,
+        block_id: u32,
+        peer_id: Vec<u8>, // Serialized PeerId
+        capabilities: NodeCapabilities,
+        auth_token: Vec<u8>, // Serialized PipelineAuthToken
     },
     /// Checkpoint message for intermediate state persistence
     Checkpoint {
@@ -145,6 +161,12 @@ pub enum NetworkMessage {
         new_node: String,
         checkpoint_ref: Option<CheckpointRef>,
     },
+    /// Bid announcement for market-based task assignment
+    BidAnnouncement {
+        node_id: String,
+        bid_price_per_task: u64,
+        valid_until: i64,
+    },
     /// Failover notification to resume from checkpoint
     Failover {
         task_id: Uuid,
@@ -153,6 +175,8 @@ pub enum NetworkMessage {
         replacement_node: String,
         resume_from_checkpoint: [u8; 32],
     },
+    /// Pipeline inference messages for block-based distributed execution
+    PipelineInference(Vec<u8>), // Serialized PipelineMessage from distributed-inference crate
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -170,6 +194,7 @@ impl NetworkMessage {
             NetworkMessage::Checkpoint { .. } => 200,
             NetworkMessage::Failover { .. } => 190,
             NetworkMessage::Heartbeat { .. } => 180,
+            NetworkMessage::ReplicaJoinRequest { .. } => 175, // High priority for join requests
             NetworkMessage::Block(_) => 100,
             NetworkMessage::VramCapabilityAnnouncement { .. } => 90,
             NetworkMessage::ModelAnnouncement { .. } => 80,
@@ -188,7 +213,9 @@ impl NetworkMessage {
             NetworkMessage::TaskFailure { .. } => 150,
             NetworkMessage::ActivationChunk { .. } => 140,
             NetworkMessage::ReassignFragment { .. } => 160,
+            NetworkMessage::BidAnnouncement { .. } => 85, // Medium priority for bids
             NetworkMessage::Ping | NetworkMessage::Pong => 10,
+            NetworkMessage::PipelineInference(_) => 150, // High priority for pipeline messages
         }
     }
 
@@ -198,5 +225,18 @@ impl NetworkMessage {
 
     pub fn deserialize(bytes: &[u8]) -> Result<Self, NetworkError> {
         serde_json::from_slice(bytes).map_err(|e| NetworkError::Serialization(e.to_string()))
+    }
+
+    /// Create a PipelineInference message from distributed-inference PipelineMessage
+    pub fn from_pipeline_message(msg: &[u8]) -> Self {
+        NetworkMessage::PipelineInference(msg.to_vec())
+    }
+
+    /// Extract pipeline message bytes
+    pub fn as_pipeline_message(&self) -> Option<&[u8]> {
+        match self {
+            NetworkMessage::PipelineInference(bytes) => Some(bytes),
+            _ => None,
+        }
     }
 }

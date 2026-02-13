@@ -303,6 +303,12 @@ class AdminDashboard {
             this.startAutoRefresh(parseInt(document.getElementById('refreshInterval').value));
         } else if (tabName === 'governance') {
             this.loadGovernanceProposals();
+        } else if (tabName === 'vram') {
+            this.loadVramPoolData();
+            this.startAutoRefresh(30); // Auto-refresh every 30 seconds
+        } else if (tabName === 'distributed-inference') {
+            this.loadDistributedInferenceData();
+            this.startDistributedInferenceAutoRefresh(parseInt(document.getElementById('distributedInferenceRefreshInterval').value));
         }
     }
 
@@ -1167,6 +1173,378 @@ class AdminDashboard {
         }).catch(() => {
             this.showNotification('Failed to copy to clipboard', 'error');
         });
+    }
+
+    // NEW: VRAM Pool Dashboard Methods
+    async loadVramPoolData() {
+        try {
+            const [poolStats, nodeMetrics, rewardHistory] = await Promise.all([
+                this.rpcClient.getVramPoolStats(),
+                this.rpcClient.getNodeMetrics(),
+                this.rpcClient.getRewardLeaderboard(100)
+            ]);
+            
+            this.renderVramPoolStats(poolStats);
+            this.renderVramNodesTable(nodeMetrics);
+            this.renderRewardLeaderboard(rewardHistory);
+            this.renderTopologyGraph(nodeMetrics);
+        } catch (error) {
+            console.error('Failed to load VRAM pool data:', error);
+            this.showNotification('Failed to load VRAM pool data', 'error');
+        }
+    }
+
+    renderVramPoolStats(data) {
+        const vramPoolStats = document.getElementById('vramPoolStats');
+        const activeNodesCount = document.getElementById('activeNodesCount');
+        const fragmentDistribution = document.getElementById('fragmentDistribution');
+        
+        if (!data) {
+            vramPoolStats.innerHTML = '<p>No data available</p>';
+            return;
+        }
+        
+        const totalVram = data.total_vram_gb || 0;
+        const allocatedVram = data.allocated_vram_gb || 0;
+        const freeVram = totalVram - allocatedVram;
+        const utilization = totalVram > 0 ? ((allocatedVram / totalVram) * 100).toFixed(1) : 0;
+        
+        vramPoolStats.innerHTML = `
+            <div class="stat-content">
+                <div class="stat-row">
+                    <span>Total VRAM:</span>
+                    <span class="stat-value">${totalVram.toFixed(2)} GB</span>
+                </div>
+                <div class="stat-row">
+                    <span>Allocated:</span>
+                    <span class="stat-value">${allocatedVram.toFixed(2)} GB (${utilization}%)</span>
+                </div>
+                <div class="stat-row">
+                    <span>Free:</span>
+                    <span class="stat-value">${freeVram.toFixed(2)} GB</span>
+                </div>
+            </div>
+        `;
+        
+        activeNodesCount.innerHTML = `
+            <div class="stat-content">
+                <div class="big-number">${data.active_nodes || 0}</div>
+                <div class="stat-label">nodes online</div>
+            </div>
+        `;
+        
+        fragmentDistribution.innerHTML = `
+            <div class="stat-content">
+                <div class="stat-row">
+                    <span>Total Fragments:</span>
+                    <span class="stat-value">${data.total_fragments || 0}</span>
+                </div>
+                <div class="stat-row">
+                    <span>Avg Replicas:</span>
+                    <span class="stat-value">${(data.avg_replicas || 0).toFixed(1)}</span>
+                </div>
+            </div>
+        `;
+    }
+
+    renderVramNodesTable(nodes) {
+        const tbody = document.getElementById('vramNodesTableBody');
+        
+        if (!nodes || nodes.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="7" class="loading-cell">No nodes available</td></tr>';
+            return;
+        }
+        
+        tbody.innerHTML = nodes.map(node => `
+            <tr>
+                <td><code class="hash">${this.formatHash(node.node_id)}</code></td>
+                <td>${(node.vram_total_gb || 0).toFixed(2)} GB</td>
+                <td>${(node.vram_free_gb || 0).toFixed(2)} GB</td>
+                <td>${node.fragments_hosted || 0}</td>
+                <td>${this.formatAmount(node.stake || 0)} AIGEN</td>
+                <td>${this.formatAmount(node.total_earned || 0)} AIGEN</td>
+                <td><span class="status-badge status-${node.status || 'offline'}">${node.status || 'offline'}</span></td>
+            </tr>
+        `).join('');
+    }
+
+    renderRewardLeaderboard(rewards) {
+        const tbody = document.getElementById('rewardLeaderboardBody');
+        
+        if (!rewards || rewards.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="6" class="loading-cell">No rewards data available</td></tr>';
+            return;
+        }
+        
+        tbody.innerHTML = rewards.map((entry, i) => `
+            <tr>
+                <td>${i + 1}</td>
+                <td><code class="hash">${this.formatHash(entry.node_id)}</code></td>
+                <td>${this.formatAmount(entry.total_earned || 0)} AIGEN</td>
+                <td>${this.formatAmount(entry.compute_rewards || 0)} AIGEN</td>
+                <td>${this.formatAmount(entry.storage_rewards || 0)} AIGEN</td>
+                <td>${entry.tasks_completed || 0}</td>
+            </tr>
+        `).join('');
+    }
+
+    renderTopologyGraph(nodes) {
+        const canvas = document.getElementById('topologyCanvas');
+        if (!canvas || !nodes || nodes.length === 0) return;
+        
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        
+        // Simple force-directed-like visualization
+        const centerX = canvas.width / 2;
+        const centerY = canvas.height / 2;
+        const radius = Math.min(centerX, centerY) * 0.7;
+        
+        nodes.forEach((node, i) => {
+            const angle = (i / nodes.length) * 2 * Math.PI;
+            const x = centerX + Math.cos(angle) * radius;
+            const y = centerY + Math.sin(angle) * radius;
+            
+            // Draw node circle sized by VRAM
+            const nodeRadius = 10 + (node.vram_total_gb || 0) / 10;
+            
+            // Color by load score (green = low, red = high)
+            const loadScore = node.load_score || 0;
+            const hue = 120 - (loadScore * 120); // 120 (green) to 0 (red)
+            
+            ctx.beginPath();
+            ctx.arc(x, y, nodeRadius, 0, 2 * Math.PI);
+            ctx.fillStyle = `hsl(${hue}, 70%, 50%)`;
+            ctx.fill();
+            ctx.strokeStyle = '#333';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+            
+            // Draw label
+            ctx.fillStyle = '#fff';
+            ctx.font = '10px monospace';
+            ctx.textAlign = 'center';
+            ctx.fillText(node.node_id.substring(0, 8), x, y + nodeRadius + 12);
+        });
+    }
+
+    // NEW: Distributed Inference Dashboard Methods
+    async loadDistributedInferenceData() {
+        try {
+            const [stats, activePipelines, blockMetrics, compressionStats] = await Promise.all([
+                this.rpcClient.getDistributedInferenceStats(),
+                this.rpcClient.getActivePipelines(50),
+                this.rpcClient.getBlockLatencyMetrics(),
+                this.rpcClient.getCompressionStats()
+            ]);
+            
+            this.renderDistributedInferenceStats(stats);
+            this.renderActivePipelinesTable(activePipelines);
+            this.renderBlockLatencyChart(blockMetrics);
+            this.renderCompressionStatsCard(compressionStats);
+        } catch (error) {
+            console.error('Failed to load distributed inference data:', error);
+            this.showNotification('Failed to load distributed inference data', 'error');
+        }
+    }
+
+    renderDistributedInferenceStats(stats) {
+        const activePipelinesCard = document.getElementById('activePipelinesCard');
+        const pipelineLatencyCard = document.getElementById('pipelineLatencyCard');
+        const throughputCard = document.getElementById('throughputCard');
+        const compressionRatioCard = document.getElementById('compressionRatioCard');
+        
+        if (activePipelinesCard) {
+            activePipelinesCard.innerHTML = `
+                <h3>Active Pipelines</h3>
+                <div class="stat-value">${stats?.active_pipelines || 0}</div>
+                <div class="stat-label">${stats?.total_inferences_completed || 0} completed</div>
+            `;
+        }
+        
+        if (pipelineLatencyCard) {
+            const latency = stats?.avg_pipeline_latency_ms || 0;
+            pipelineLatencyCard.innerHTML = `
+                <h3>Avg Pipeline Latency</h3>
+                <div class="stat-value">${latency.toFixed(0)}</div>
+                <div class="stat-unit">ms</div>
+            `;
+        }
+        
+        if (throughputCard) {
+            const throughput = stats?.avg_throughput_tasks_per_sec || 0;
+            throughputCard.innerHTML = `
+                <h3>Throughput</h3>
+                <div class="stat-value">${throughput.toFixed(2)}</div>
+                <div class="stat-unit">tasks/sec</div>
+            `;
+        }
+        
+        if (compressionRatioCard) {
+            const ratio = stats?.avg_compression_ratio || 1.0;
+            compressionRatioCard.innerHTML = `
+                <h3>Compression Ratio</h3>
+                <div class="stat-value">${ratio.toFixed(2)}</div>
+                <div class="stat-unit">x</div>
+            `;
+        }
+    }
+
+    renderActivePipelinesTable(pipelines) {
+        const tbody = document.getElementById('activePipelinesTableBody');
+        
+        if (!pipelines || pipelines.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="7" class="loading-cell">No active pipelines</td></tr>';
+            return;
+        }
+        
+        tbody.innerHTML = pipelines.map(pipeline => {
+            const routeStr = pipeline.pipeline_route ? pipeline.pipeline_route.join(' → ') : '-';
+            const progress = pipeline.pipeline_route && pipeline.pipeline_route.length > 0
+                ? Math.round(((pipeline.current_block + 1) / pipeline.pipeline_route.length) * 100)
+                : 0;
+            
+            return `
+                <tr>
+                    <td><code class="hash">${this.formatHash(pipeline.inference_id)}</code></td>
+                    <td>${pipeline.model_id || '-'}</td>
+                    <td><span class="route-path">${routeStr}</span></td>
+                    <td>${pipeline.current_block !== undefined ? pipeline.current_block : '-'}</td>
+                    <td>
+                        <div class="progress-bar">
+                            <div class="progress-fill" style="width: ${progress}%"></div>
+                        </div>
+                        <span class="progress-text">${progress}%</span>
+                    </td>
+                    <td>${this.formatDuration(pipeline.elapsed_ms)}</td>
+                    <td>${this.formatDuration(pipeline.estimated_remaining_ms)}</td>
+                </tr>
+            `;
+        }).join('');
+    }
+
+    renderBlockLatencyChart(metrics) {
+        const canvas = document.getElementById('blockLatencyChart');
+        if (!canvas) return;
+        
+        // Use Chart.js if available, otherwise skip
+        if (typeof Chart === 'undefined' || !metrics || metrics.length === 0) return;
+        
+        const ctx = canvas.getContext('2d');
+        
+        // Destroy existing chart if any
+        if (canvas._chart) {
+            canvas._chart.destroy();
+        }
+        
+        const labels = metrics.map(m => `Block ${m.block_id}`);
+        const computeData = metrics.map(m => m.avg_compute_time_ms || 0);
+        const transferData = metrics.map(m => m.avg_transfer_time_ms || 0);
+        
+        canvas._chart = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: labels,
+                datasets: [
+                    {
+                        label: 'Compute Time (ms)',
+                        data: computeData,
+                        backgroundColor: 'rgba(54, 162, 235, 0.8)',
+                        borderColor: 'rgba(54, 162, 235, 1)',
+                        borderWidth: 1
+                    },
+                    {
+                        label: 'Transfer Time (ms)',
+                        data: transferData,
+                        backgroundColor: 'rgba(255, 99, 132, 0.8)',
+                        borderColor: 'rgba(255, 99, 132, 1)',
+                        borderWidth: 1
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        title: {
+                            display: true,
+                            text: 'Time (ms)'
+                        }
+                    }
+                },
+                plugins: {
+                    title: {
+                        display: true,
+                        text: 'Per-Block Latency Breakdown'
+                    }
+                }
+            }
+        });
+    }
+
+    renderCompressionStatsCard(stats) {
+        const card = document.getElementById('compressionStatsCard');
+        if (!card) return;
+        
+        if (!stats) {
+            card.innerHTML = '<div class="stat-content"><p>No compression data available</p></div>';
+            return;
+        }
+        
+        const ratio = stats.avg_compression_ratio || 1.0;
+        const bytesSaved = stats.total_bytes_saved || 0;
+        const tensorsCompressed = stats.total_tensors_compressed || 0;
+        const quantizationStatus = stats.quantization_enabled ? 'Enabled' : 'Disabled';
+        
+        card.innerHTML = `
+            <div class="stat-content">
+                <div class="stat-row">
+                    <span>Avg Compression:</span>
+                    <span class="stat-value">${ratio.toFixed(2)}x</span>
+                </div>
+                <div class="stat-row">
+                    <span>Bytes Saved:</span>
+                    <span class="stat-value">${this.formatBytes(bytesSaved)}</span>
+                </div>
+                <div class="stat-row">
+                    <span>Tensors Compressed:</span>
+                    <span class="stat-value">${tensorsCompressed.toLocaleString()}</span>
+                </div>
+                <div class="stat-row">
+                    <span>8-bit Quantization:</span>
+                    <span class="stat-value">${quantizationStatus}</span>
+                </div>
+            </div>
+        `;
+    }
+
+    formatDuration(ms) {
+        if (!ms || ms === 0) return '-';
+        if (ms < 1000) return `${ms}ms`;
+        if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
+        return `${(ms / 60000).toFixed(1)}m`;
+    }
+
+    startDistributedInferenceAutoRefresh(intervalSeconds) {
+        // Store interval ID for cleanup
+        if (this.distributedInferenceRefreshInterval) {
+            clearInterval(this.distributedInferenceRefreshInterval);
+        }
+        
+        if (intervalSeconds > 0) {
+            this.distributedInferenceRefreshInterval = setInterval(() => {
+                this.loadDistributedInferenceData();
+            }, intervalSeconds * 1000);
+        }
+    }
+
+    stopDistributedInferenceAutoRefresh() {
+        if (this.distributedInferenceRefreshInterval) {
+            clearInterval(this.distributedInferenceRefreshInterval);
+            this.distributedInferenceRefreshInterval = null;
+        }
     }
 }
 

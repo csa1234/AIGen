@@ -7,6 +7,7 @@ license.workspace = true
 
 [dependencies]
 blockchain-core = { path = "../blockchain-core" }
+consensus = { path = "../consensus" }
 genesis = { path = "../genesis" }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }

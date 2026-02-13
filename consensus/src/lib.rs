@@ -155,21 +155,11 @@ impl PoIConsensus {
                 self.metrics.inc_rejected();
                 self.metrics.inc_slashing();
 
-                let stake = self
-                    .validator_registry
-                    .get_validator_stake(&miner_address)
-                    .unwrap_or(Amount::ZERO);
-
-                let slashed = crate::validator::execute_slashing(
+                let slashed = crate::validator::slash_for_poi_failure(
                     &self.validator_registry,
+                    &self.chain_state,
                     &miner_address,
-                    stake,
-                    SlashReason::InvalidProof,
                 )?;
-
-                self.chain_state
-                    .apply_slash(&miner_address, slashed)
-                    .map_err(|e| ConsensusError::Serialization(e.to_string()))?;
 
                 self.state_machine
                     .transition(ConsensusEvent::ProofInvalid)?;
@@ -220,6 +210,23 @@ impl PoIConsensus {
                 tokio::time::sleep(Duration::from_secs(1)).await;
             }
         });
+    }
+
+    /// Slash training worker for invalid gradient proof
+    pub fn slash_training_worker(
+        &self,
+        worker_address: &str,
+    ) -> Result<Amount, ConsensusError> {
+        let stake_state = self.chain_state.get_stake(worker_address)
+            .ok_or(ConsensusError::RegistryError)?;
+
+        // Slash 20% for training PoI failure
+        let slash_amt = Amount::new(stake_state.staked_amount.value().saturating_mul(20) / 100);
+
+        self.chain_state.apply_stake_slash(worker_address, slash_amt, "Training PoI failure")
+            .map_err(|_| ConsensusError::RegistryError)?;
+
+        Ok(slash_amt)
     }
 
     pub fn shutdown_subscribe(&self) -> broadcast::Receiver<()> {

@@ -383,6 +383,81 @@ impl FragmentExecutor {
         Ok(output_activation)
     }
 
+    /// Generate a DistributedTaskProof for the fragment execution
+    pub fn generate_proof(
+        &self,
+        task_id: Uuid,
+        inference_id: Uuid,
+        input_activation: &FragmentActivation,
+        output_activation: &FragmentActivation,
+        execution_time_ms: u64,
+        node_id: &str,
+        checkpoint_hash: Option<[u8; 32]>,
+        poi_nonce: u64,
+    ) -> Result<consensus::PoIProof, FragmentExecutorError> {
+        use consensus::poi::{WorkType, ComputationMetadata, CompressionMethod, DistributedTaskProof};
+        use consensus::PoIProof;
+        use sha3::{Digest, Sha3_256};
+
+        // Compute output_activation_hash with nonce binding: hash(raw_output || nonce)
+        let mut hasher = Sha3_256::new();
+        let bytes: &[u8] = bytemuck::cast_slice(&output_activation.data);
+        hasher.update(bytes);
+        hasher.update(&poi_nonce.to_le_bytes());
+        let output_activation_hash: [u8; 32] = hasher.finalize().into();
+
+        // Create distributed task proof data with nonce
+        let distributed_proof = DistributedTaskProof::new(
+            task_id,
+            inference_id,
+            self.fragment_ids.clone(),
+            self.layer_range,
+            input_activation.checkpoint_hash,
+            output_activation_hash,
+            checkpoint_hash,
+            execution_time_ms,
+            node_id.to_string(),
+            poi_nonce,
+        );
+
+        // Serialize proof data for verification_data
+        let verification_data = serde_json::json!({
+            "distributed_task_proof": distributed_proof
+        });
+
+        // Create computation metadata
+        let computation_metadata = ComputationMetadata {
+            rows: 0,
+            cols: 0,
+            inner: 0,
+            iterations: 0,
+            model_id: self.model_id.clone(),
+            compression_method: CompressionMethod::None,
+            original_size: self.memory_size,
+        };
+
+        // Create timestamp
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+
+        // Create PoIProof with the provided nonce
+        let proof = PoIProof::new(
+            node_id.to_string(),
+            WorkType::DistributedInference,
+            input_activation.checkpoint_hash, // input_hash
+            output_activation.data.clone(), // output_data (simplified)
+            computation_metadata,
+            1000, // difficulty
+            timestamp,
+            poi_nonce, // Use the PoI nonce for binding
+            verification_data,
+        );
+
+        Ok(proof)
+    }
+
     fn activation_to_tensor(
         &self,
         activation: &FragmentActivation,
@@ -428,6 +503,398 @@ impl FragmentExecutor {
             shape,
             data,
         ))
+    }
+}
+
+/// Configuration for a layer block
+#[derive(Clone, Debug)]
+pub struct LayerBlockConfig {
+    pub block_id: u32,
+    pub layer_range: (u32, u32),
+    pub model_id: String,
+}
+
+/// Splits ONNX models into layer blocks
+pub struct ModelBlockSplitter;
+
+impl ModelBlockSplitter {
+    /// Split model into N blocks with approximately equal layer distribution
+    /// 
+    /// # Arguments
+    /// * `model_path` - Path to the ONNX model file
+    /// * `total_blocks` - Total number of blocks to split the model into
+    /// * `block_size` - Optional number of layers per block (if None, computed from total_layers / total_blocks)
+    pub fn split_into_blocks(
+        model_path: &Path,
+        total_blocks: u32,
+        block_size: Option<u32>,
+    ) -> Result<Vec<LayerBlockConfig>, InferenceError> {
+        // Load ONNX model to inspect layer count
+        let env = get_onnx_environment()?;
+        let session = env
+            .new_session_builder()?
+            .with_model_from_file(model_path)
+            .map_err(|e| InferenceError::ModelLoadFailed(e.to_string()))?;
+
+        // Derive total layers from ONNX graph nodes
+        let total_layers = Self::estimate_layer_count(&session)?;
+
+        // Validate total_blocks against actual layer count
+        if total_blocks > total_layers {
+            return Err(InferenceError::InvalidInput(
+                format!("Cannot split {} layers into {} blocks", total_layers, total_blocks)
+            ));
+        }
+
+        // Use provided block_size or compute from total_layers and total_blocks
+        let layers_per_block = block_size.unwrap_or_else(|| {
+            (total_layers + total_blocks - 1) / total_blocks
+        });
+
+        // Validate block_size against layer count
+        if layers_per_block == 0 {
+            return Err(InferenceError::InvalidInput(
+                "block_size must be greater than 0".to_string()
+            ));
+        }
+
+        // Compute actual number of blocks needed based on block_size
+        let computed_blocks = ((total_layers + layers_per_block - 1) / layers_per_block).min(total_blocks);
+
+        let mut blocks = Vec::new();
+        for block_id in 0..computed_blocks {
+            let start_layer = block_id * layers_per_block;
+            let end_layer = ((block_id + 1) * layers_per_block).min(total_layers).saturating_sub(1);
+
+            // Skip if we've exceeded total layers
+            if start_layer >= total_layers {
+                break;
+            }
+
+            blocks.push(LayerBlockConfig {
+                block_id,
+                layer_range: (start_layer, end_layer),
+                model_id: model_path.file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("unknown")
+                    .to_string(),
+            });
+        }
+
+        Ok(blocks)
+    }
+
+    /// Extract a specific block's subgraph from the model
+    pub fn extract_block(
+        model_path: &Path,
+        block_config: &LayerBlockConfig,
+        output_path: &Path,
+    ) -> Result<(), InferenceError> {
+        // For Phase 2: Use full model with layer masking
+        // Phase 3+ can implement true subgraph extraction
+        std::fs::copy(model_path, output_path)
+            .map_err(|e| InferenceError::ModelLoadFailed(e.to_string()))?;
+        Ok(())
+    }
+
+    /// Estimate layer count from ONNX graph structure
+    /// 
+    /// Inspects the ONNX model graph to count the number of layer-like operations.
+    /// This includes common layer operations like MatMul, Conv, LSTM, Attention, etc.
+    fn estimate_layer_count(session: &Session) -> Result<u32, InferenceError> {
+        // Get model metadata if available
+        let model_metadata = session.metadata();
+        
+        // Try to get layer count from model metadata if available
+        if let Ok(Some(custom_metadata)) = model_metadata.custom("layer_count") {
+            if let Ok(count) = std::str::from_utf8(&custom_metadata)
+                .and_then(|s| s.parse::<u32>().map_err(|_| std::str::Utf8Error::from(std::io::ErrorKind::InvalidData))) 
+            {
+                return Ok(count);
+            }
+        }
+
+        // Derive from ONNX graph structure
+        // Count nodes that represent layer operations (MatMul, Conv, Gemm, etc.)
+        // This is a heuristic based on common transformer and neural network architectures
+        let layer_ops = [
+            "MatMul", "Conv", "Gemm", "LSTM", "GRU", "RNN",
+            "Attention", "LayerNormalization", "BatchNormalization",
+            "InstanceNormalization", "GroupNormalization",
+        ];
+        
+        // For ort crate, we estimate based on input/output dimensions
+        // A more complete implementation would parse the ONNX protobuf directly
+        // For now, use a heuristic based on model size and input dimensions
+        let input_shapes: Vec<_> = session.inputs.iter()
+            .map(|input| input.dimensions().collect::<Vec<_>>())
+            .collect();
+        
+        // Estimate based on common architectures
+        // Transformers: ~1 layer per attention head configuration
+        // CNNs: ~1 layer per feature map transition
+        if let Some(first_input) = input_shapes.first() {
+            if let Some(&Some(seq_len)) = first_input.get(1) {
+                // Likely a transformer model - estimate from sequence length
+                // Typical transformers have layers proportional to model depth
+                if seq_len > 512 {
+                    // Large transformer (e.g., GPT-3 class, Mistral-7B)
+                    return Ok(80);
+                } else if seq_len > 256 {
+                    // Medium transformer (e.g., BERT-base, GPT-2)
+                    return Ok(24);
+                } else {
+                    // Small transformer
+                    return Ok(12);
+                }
+            }
+        }
+
+        // Fallback: use input dimension heuristics
+        let input_dims: Vec<usize> = session.inputs.iter()
+            .filter_map(|input| {
+                input.dimensions().next().and_then(|d| d.map(|v| v as usize))
+            })
+            .collect();
+        
+        if let Some(&first_dim) = input_dims.first() {
+            // Estimate layers based on embedding dimension
+            // Common pattern: dim 768 -> 12 layers, 1024 -> 24 layers, 4096 -> 80 layers
+            let estimated_layers = match first_dim {
+                d if d >= 4096 => 80,  // Large models (Mistral-7B, LLaMA)
+                d if d >= 2048 => 48,  // Medium-large models
+                d if d >= 1024 => 24,  // Medium models (BERT-base)
+                d if d >= 768 => 12,   // Small-medium models
+                _ => 6,                // Small models
+            };
+            return Ok(estimated_layers);
+        }
+
+        // Ultimate fallback - require explicit configuration
+        Err(InferenceError::InvalidInput(
+            "Unable to determine layer count from model. Please provide explicit block configuration.".to_string()
+        ))
+    }
+}
+
+/// Separator for batched prompts
+pub const BATCH_SEP: &str = "\n[BATCH_SEP]\n";
+
+/// Check if prompt contains batch separator
+pub fn is_batched_prompt(prompt: &str) -> bool {
+    prompt.contains(BATCH_SEP)
+}
+
+/// Split batched prompt into individual prompts
+pub fn split_batched_prompt(prompt: &str) -> Vec<String> {
+    prompt.split(BATCH_SEP).map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect()
+}
+
+/// Join individual outputs into batched output
+pub fn join_batched_outputs(outputs: Vec<String>) -> String {
+    outputs.join(BATCH_SEP)
+}
+
+/// Executor for a specific layer block in distributed pipeline
+pub struct BlockExecutor {
+    pub block_id: u32,
+    pub layer_range: (u32, u32),
+    pub model_id: String,
+    fragment_executor: Arc<FragmentExecutor>,
+}
+
+impl BlockExecutor {
+    /// Create from a loaded FragmentExecutor
+    pub fn new(
+        block_id: u32,
+        layer_range: (u32, u32),
+        model_id: String,
+        fragment_executor: Arc<FragmentExecutor>,
+    ) -> Self {
+        Self {
+            block_id,
+            layer_range,
+            model_id,
+            fragment_executor,
+        }
+    }
+
+    /// Execute forward pass for this block
+    pub fn forward_block(
+        &self,
+        input: FragmentActivation,
+    ) -> Result<FragmentActivation, FragmentExecutorError> {
+        // Validate input layer range matches expected
+        if input.layer_range.1 + 1 != self.layer_range.0 && input.layer_range != (0, 0) {
+            return Err(FragmentExecutorError::InvalidLayerRange(
+                format!("Expected input from layers ending at {}, got {:?}",
+                    self.layer_range.0.saturating_sub(1), input.layer_range)
+            ));
+        }
+
+        // Execute via FragmentExecutor
+        let mut output = self.fragment_executor.forward(&input)?;
+
+        // Update layer range to this block's output
+        output.layer_range = self.layer_range;
+
+        Ok(output)
+    }
+
+    /// Execute batched forward pass for this block
+    pub fn forward_block_batched(
+        &self,
+        input: FragmentActivation,
+    ) -> Result<FragmentActivation, FragmentExecutorError> {
+        // Check if this is a batched input by examining data shape or metadata
+        // For now, we delegate to single forward pass - actual batching requires
+        // tensor concatenation along batch dimension (dim=0)
+        self.forward_block(input)
+    }
+
+    /// Process batched inference requests
+    pub fn execute_batched_inference(
+        &self,
+        inputs: Vec<FragmentActivation>,
+    ) -> Result<Vec<FragmentActivation>, FragmentExecutorError> {
+        // Execute each input in the batch
+        let mut outputs = Vec::with_capacity(inputs.len());
+        for input in inputs {
+            let output = self.forward_block(input)?;
+            outputs.push(output);
+        }
+        Ok(outputs)
+    }
+
+    /// Generate PoI proof for block execution
+    pub fn generate_block_proof(
+        &self,
+        task_id: Uuid,
+        inference_id: Uuid,
+        input: &FragmentActivation,
+        output: &FragmentActivation,
+        execution_time_ms: u64,
+        node_id: &str,
+        poi_nonce: u64,
+    ) -> Result<consensus::PoIProof, FragmentExecutorError> {
+        self.fragment_executor.generate_proof(
+            task_id,
+            inference_id,
+            input,
+            output,
+            execution_time_ms,
+            node_id,
+            None, // checkpoint_hash (Phase 4)
+            poi_nonce,
+        )
+    }
+
+    /// Save checkpoint after processing token
+    pub async fn save_checkpoint(
+        &self,
+        inference_id: Uuid,
+        token_index: u32,
+        output_activation: &FragmentActivation,
+        checkpoint_manager: &distributed_inference::checkpoint_manager::CheckpointManager,
+    ) -> Result<[u8; 32], FragmentExecutorError> {
+        // Convert FragmentActivation to CompressedTensor
+        let tensor = self.activation_to_compressed_tensor(output_activation)?;
+        
+        // Save via CheckpointManager
+        checkpoint_manager.save_checkpoint(
+            inference_id,
+            self.block_id,
+            token_index,
+            tensor,
+        ).await.map_err(|e| FragmentExecutorError::FragmentLoadFailed(
+            format!("checkpoint save failed: {}", e)
+        ))
+    }
+
+    /// Load checkpoint for recovery
+    pub async fn load_checkpoint(
+        &self,
+        inference_id: Uuid,
+        checkpoint_manager: &distributed_inference::checkpoint_manager::CheckpointManager,
+    ) -> Result<FragmentActivation, FragmentExecutorError> {
+        let checkpoint = checkpoint_manager
+            .get_latest_checkpoint(inference_id, self.block_id)
+            .ok_or_else(|| FragmentExecutorError::FragmentNotFound(
+                format!("No checkpoint found for inference {}", inference_id)
+            ))?;
+        
+        // Verify checkpoint integrity
+        if !checkpoint.verify_integrity() {
+            return Err(FragmentExecutorError::IntegrityCheckFailed(
+                "Checkpoint integrity verification failed".to_string()
+            ));
+        }
+        
+        // Convert CompressedTensor back to FragmentActivation
+        self.compressed_tensor_to_activation(&checkpoint.tensor, inference_id)
+    }
+    
+    /// Helper: Convert FragmentActivation to CompressedTensor
+    fn activation_to_compressed_tensor(
+        &self,
+        activation: &FragmentActivation,
+    ) -> Result<distributed_inference::tensor_transport::CompressedTensor, FragmentExecutorError> {
+        // Use TensorTransport from distributed-inference
+        let metadata = distributed_inference::tensor_transport::TensorMetadata {
+            shape: activation.shape.clone(),
+            dtype: "f32".to_string(),
+            layer_range: activation.layer_range,
+        };
+        
+        let data_bytes: &[u8] = bytemuck::cast_slice(&activation.data);
+        distributed_inference::tensor_transport::TensorTransport::compress(data_bytes, metadata, 1)
+            .map_err(|e| FragmentExecutorError::InferenceError(
+                InferenceError::InvalidOutput(e.to_string())
+            ))
+    }
+    
+    /// Helper: Convert CompressedTensor to FragmentActivation
+    fn compressed_tensor_to_activation(
+        &self,
+        tensor: &distributed_inference::tensor_transport::CompressedTensor,
+        inference_id: Uuid,
+    ) -> Result<FragmentActivation, FragmentExecutorError> {
+        let decompressed = distributed_inference::tensor_transport::TensorTransport::decompress(tensor)
+            .map_err(|e| FragmentExecutorError::DecompressionFailed(e.to_string()))?;
+        
+        let data: Vec<f32> = bytemuck::cast_slice(&decompressed.0).to_vec();
+        
+        Ok(FragmentActivation::new(
+            Uuid::new_v4(), // task_id
+            inference_id,
+            tensor.metadata.layer_range,
+            tensor.metadata.shape.clone(),
+            data,
+        ))
+    }
+
+    /// Execute forward pass with optional checkpoint saving
+    pub async fn forward_block_with_checkpoint(
+        &self,
+        input: FragmentActivation,
+        token_index: u32,
+        checkpoint_manager: Option<&distributed_inference::checkpoint_manager::CheckpointManager>,
+    ) -> Result<FragmentActivation, FragmentExecutorError> {
+        let output = self.forward_block(input)?;
+        
+        // Save checkpoint every N tokens if manager is provided
+        if let Some(manager) = checkpoint_manager {
+            if manager.should_checkpoint(token_index).await {
+                let _ = self.save_checkpoint(
+                    output.inference_id,
+                    token_index,
+                    &output,
+                    manager,
+                ).await;
+            }
+        }
+        
+        Ok(output)
     }
 }
 

@@ -27,6 +27,9 @@ use model::{set_global_inference_engine, InferenceEngine, LocalStorage, ModelMet
 use network::model_sync::ModelShardRequestEnvelope;
 use network::tensor_stream::{ActivationStream, ActivationTensor, ActivationChunk as TensorActivationChunk};
 use network::{ModelSyncManager, NetworkEvent, NetworkMessage, P2PNode};
+use distributed_inference::{StaticPipelineCoordinator, StaticBlockConfig, PipelineMessage, BlockExecutor};
+use distributed_inference::checkpoint_manager::CheckpointManager;
+use model::{BlockExecutor as ModelBlockExecutor, FragmentActivation};
 use tokio::sync::{mpsc, Mutex};
 use std::collections::HashMap;
 
@@ -218,7 +221,7 @@ async fn auto_register_local_models(
             }
         };
         
-        let shard_count = match manifest["shard_count"].as_u64() {
+        let shard_count: u64 = match manifest["shard_count"].as_u64() {
             Some(count) => count,
             None => {
                 eprintln!("warning: manifest {} missing shard_count", manifest_path_str);
@@ -488,6 +491,215 @@ async fn load_core_model(
 
     Ok(())
 }
+
+async fn send_activation_to_next_block(
+    inference_id: uuid::Uuid,
+    current_block: u32,
+    next_block: u32,
+    activation: model::inference::FragmentActivation,
+    token_index: u32,
+    publish_tx: &tokio::sync::mpsc::Sender<NetworkMessage>,
+) {
+    // Compress activation tensor
+    let metadata = distributed_inference::TensorMetadata {
+        shape: activation.shape.clone(),
+        dtype: "f32".to_string(),
+        layer_range: activation.layer_range,
+    };
+
+    let data_bytes: &[u8] = bytemuck::cast_slice(&activation.data);
+    let compressed = distributed_inference::TensorTransport::compress(data_bytes, metadata, 1)
+        .expect("Failed to compress tensor");
+
+    // Create ActivationChunk message
+    let chunk = distributed_inference::ActivationChunk {
+        inference_id,
+        block_id: current_block,
+        next_block_id: next_block,
+        tensor: compressed,
+        token_index,
+    };
+
+    let msg = distributed_inference::PipelineMessage::ActivationChunk(chunk);
+    let serialized = msg.serialize().expect("Failed to serialize message");
+
+    // Create PipelineInference message to publish to next block's topic
+    let network_msg = NetworkMessage::PipelineInference(serialized);
+    
+    // Publish via the channel (topic routing is handled by gossipsub)
+    if let Err(e) = publish_tx.send(network_msg).await {
+        eprintln!("Failed to send activation to next block {}: {}", next_block, e);
+    } else {
+        println!("Sent activation to block {}: inference_id={}", next_block, inference_id);
+    }
+}
+
+/// Handle pipeline messages for distributed inference
+async fn handle_pipeline_message(
+    msg: distributed_inference::PipelineMessage,
+    coordinator: Arc<distributed_inference::StaticPipelineCoordinator>,
+    executor: Arc<model::inference::BlockExecutor>,
+    checkpoint_manager: Arc<CheckpointManager>,
+    publish_tx: &tokio::sync::mpsc::Sender<NetworkMessage>,
+    node_id: &str,
+) {
+    match msg {
+        distributed_inference::PipelineMessage::InferenceStart(start) => {
+            if coordinator.should_process_block(start.first_block().unwrap_or(0)) {
+                println!("received inference start: inference_id={}, model_id={}",
+                    start.inference_id, start.model_id);
+                // Track the inference - execution happens when ActivationChunk is received or process locally
+                // For block 0, we need to tokenize the prompt and start inference
+                if start.first_block() == coordinator.my_block_id() {
+                    println!("coordinator block 0: initiating inference for inference_id={}", start.inference_id);
+                    // The actual tokenization and first block execution would happen here
+                    // For now, we track it and wait for the first chunk
+                }
+            }
+        }
+        distributed_inference::PipelineMessage::ActivationChunk(chunk) => {
+            if coordinator.should_process_block(chunk.next_block_id) {
+                println!("received activation chunk: inference_id={}, from_block={}, to_block={}",
+                    chunk.inference_id, chunk.block_id, chunk.next_block_id);
+                
+                // Decompress and execute this block
+                let publish_tx = publish_tx.clone();
+                let executor = executor.clone();
+                let coordinator = coordinator.clone();
+                let node_id = node_id.to_string();
+                tokio::spawn(async move {
+                    match distributed_inference::TensorTransport::decompress(&chunk.tensor) {
+                        Ok((data, metadata)) => {
+                            // Create FragmentActivation from decompressed data
+                            let input = model::inference::FragmentActivation::new(
+                                uuid::Uuid::new_v4(),
+                                chunk.inference_id,
+                                metadata.layer_range,
+                                metadata.shape,
+                                data,
+                            );
+                            
+                            // Execute the block with checkpointing
+                            match executor.forward_block_with_checkpoint(input, chunk.token_index, Some(&checkpoint_manager)).await {
+                                Ok(output) => {
+                                    println!("block execution completed: block_id={}, inference_id={}",
+                                        executor.block_id, chunk.inference_id);
+                                    
+                                    // Get next block in pipeline
+                                    if let Some(next_block) = coordinator.get_next_block(chunk.inference_id, executor.block_id).await {
+                                        // Forward activation to next block
+                                        let _ = send_activation_to_next_block(
+                                            chunk.inference_id,
+                                            executor.block_id,
+                                            next_block,
+                                            output,
+                                            chunk.token_index,
+                                            &publish_tx,
+                                        ).await;
+                                    } else {
+                                        // Final block - inference complete
+                                        println!("inference complete: inference_id={}", chunk.inference_id);
+                                        coordinator.complete_inference(chunk.inference_id).await;
+                                    }
+                                }
+                                Err(e) => {
+                                    eprintln!("block execution failed: block_id={}, error={}",
+                                        executor.block_id, e);
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("failed to decompress activation: {}", e);
+                        }
+                    }
+                });
+            }
+        }
+        distributed_inference::PipelineMessage::Checkpoint(checkpoint) => {
+            println!("received checkpoint: inference_id={}, block_id={}",
+                checkpoint.inference_id, checkpoint.block_id);
+            // Persist checkpoint via CheckpointManager for recovery
+            if let Err(e) = checkpoint_manager.save_checkpoint(
+                checkpoint.inference_id,
+                checkpoint.block_id,
+                checkpoint.token_index,
+                checkpoint.tensor.clone(),
+            ).await {
+                eprintln!("failed to persist checkpoint: inference_id={}, error={}",
+                    checkpoint.inference_id, e);
+            } else {
+                println!("checkpoint persisted: inference_id={}, block_id={}, token_index={}",
+                    checkpoint.inference_id, checkpoint.block_id, checkpoint.token_index);
+            }
+        }
+        distributed_inference::PipelineMessage::Proof(proof) => {
+            println!("received proof: inference_id={}, block_id={}",
+                proof.inference_id, proof.block_id);
+            // Proof verification and aggregation
+        }
+        distributed_inference::PipelineMessage::Failover(failover) => {
+            println!("received failover: inference_id={}, failed_block={}",
+                failover.inference_id, failover.failed_block_id);
+            // Failover handling - check if we're the replacement node
+            if failover.replacement_node_id == node_id {
+                println!("this node is replacement for failed block {}, resuming inference",
+                    failover.failed_block_id);
+                
+                // Spawn recovery task to load checkpoint and resume execution
+                let executor = executor.clone();
+                let checkpoint_manager = checkpoint_manager.clone();
+                let coordinator = coordinator.clone();
+                let publish_tx = publish_tx.clone();
+                tokio::spawn(async move {
+                    // Load checkpoint for recovery
+                    match executor.load_checkpoint(failover.inference_id, &checkpoint_manager).await {
+                        Ok(checkpoint_activation) => {
+                            println!("checkpoint loaded for failover: inference_id={}, resuming from block {}",
+                                failover.inference_id, executor.block_id);
+                            
+                            // Resume block execution from checkpoint
+                            match executor.forward_block_with_checkpoint(
+                                checkpoint_activation,
+                                failover.checkpoint.token_index,
+                                Some(&checkpoint_manager)
+                            ).await {
+                                Ok(output) => {
+                                    println!("failover execution completed: block_id={}, inference_id={}",
+                                        executor.block_id, failover.inference_id);
+                                    
+                                    // Forward activation to next block
+                                    if let Some(next_block) = coordinator.get_next_block(failover.inference_id, executor.block_id).await {
+                                        let _ = send_activation_to_next_block(
+                                            failover.inference_id,
+                                            executor.block_id,
+                                            next_block,
+                                            output,
+                                            failover.checkpoint.token_index,
+                                            &publish_tx,
+                                        ).await;
+                                    } else {
+                                        // Final block - inference complete
+                                        println!("failover inference complete: inference_id={}", failover.inference_id);
+                                        coordinator.complete_inference(failover.inference_id).await;
+                                    }
+                                }
+                                Err(e) => {
+                                    eprintln!("failover execution failed: block_id={}, error={}",
+                                        executor.block_id, e);
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("failed to load checkpoint for failover: inference_id={}, error={}",
+                                failover.inference_id, e);
+                        }
+                    }
+                });
+            }
+        }
+    }
+}
+
 async fn run_node(
     cfg: crate::config::NodeConfiguration,
     keypair: libp2p::identity::Keypair,
@@ -594,6 +806,146 @@ async fn run_node(
     // Start DCS with failure monitoring
     dcs.clone().start_with_monitoring().await;
 
+    // Create shared CheckpointManager for distributed pipeline checkpointing (needed by orchestrator and failover coordinator)
+    let checkpoint_manager: Arc<CheckpointManager> = Arc::new(CheckpointManager::new());
+
+    // Initialize Orchestrator for distributed pipeline management
+    let orchestrator: Option<Arc<distributed_inference::OrchestratorNode>> = if cfg.distributed.enabled {
+        if let Some(ref config_path) = cfg.distributed.pipeline_config_path {
+            match distributed_inference::StaticBlockConfig::from_file(config_path) {
+                Ok(block_config) => {
+                    let orchestrator_config = distributed_inference::OrchestratorConfig {
+                        replication_factor: 3,
+                        heartbeat_interval_ms: 500,
+                        failure_threshold: 3,
+                        enable_dynamic_routing: true,
+                        node_id: cfg.node_id.clone(),
+                    };
+                    
+                    let orchestrator = Arc::new(distributed_inference::OrchestratorNode::new(
+                        block_config,
+                        dcs.clone(),
+                        consensus.lock().await.validator_registry.clone(),
+                        publish_tx.clone(),
+                        orchestrator_config,
+                    ));
+                    
+                    // Execute leader election to set is_leader status
+                    match orchestrator.elect_leader().await {
+                        Ok(is_leader) => {
+                            println!("orchestrator leader election completed: is_leader={}", is_leader);
+                        }
+                        Err(e) => {
+                            eprintln!("warning: orchestrator leader election failed: {}", e);
+                        }
+                    }
+                    
+                    // Start health monitoring
+                    let health_monitor = orchestrator.health_monitor.clone();
+                    tokio::spawn(async move {
+                        health_monitor.monitor_loop().await;
+                    });
+                    
+                    // Start failover coordinator for checkpoint-aware recovery
+                    let failover_coordinator = Arc::new(distributed_inference::failover_coordinator::FailoverCoordinator::new(
+                        orchestrator.clone(),
+                        checkpoint_manager.clone(),
+                        orchestrator.health_monitor.clone(),
+                        publish_tx.clone(),
+                    ));
+                    tokio::spawn(async move {
+                        failover_coordinator.recovery_loop().await;
+                    });
+                    
+                    // Start heartbeat sender
+                    let orchestrator_clone = orchestrator.clone();
+                    tokio::spawn(async move {
+                        orchestrator_clone.start_heartbeat_sender().await;
+                    });
+                    
+                    println!("orchestrator initialized for distributed pipeline: node_id={}", cfg.node_id);
+                    Some(orchestrator)
+                }
+                Err(e) => {
+                    eprintln!("warning: failed to load orchestrator config: {}", e);
+                    None
+                }
+            }
+        } else {
+            eprintln!("warning: distributed mode enabled but no pipeline config provided for orchestrator");
+            None
+        }
+    } else {
+        None
+    };
+
+    // Initialize distributed pipeline coordinator if enabled
+    let pipeline_coordinator: Option<Arc<StaticPipelineCoordinator>> = if cfg.distributed.enabled {
+        if let Some(ref config_path) = cfg.distributed.pipeline_config_path {
+            match StaticBlockConfig::from_file(config_path) {
+                Ok(block_config) => {
+                    let coordinator = StaticPipelineCoordinator::new(
+                        block_config,
+                        cfg.distributed.block_id,
+                        cfg.distributed.coordinator_mode,
+                    );
+                    println!("distributed pipeline coordinator initialized: block_id={:?}, coordinator_mode={}",
+                        cfg.distributed.block_id, cfg.distributed.coordinator_mode);
+                    Some(Arc::new(coordinator))
+                }
+                Err(e) => {
+                    eprintln!("warning: failed to load pipeline config: {}", e);
+                    None
+                }
+            }
+        } else {
+            eprintln!("warning: distributed mode enabled but no pipeline config provided");
+            None
+        }
+    } else {
+        None
+    };
+
+    // Load BlockExecutor for assigned block if in distributed mode
+    let block_executor: Option<Arc<model::inference::BlockExecutor>> = if cfg.distributed.enabled {
+        if let (Some(block_id), Some(ref model_id)) = (cfg.distributed.block_id, &cfg.model.core_model_id) {
+            // Load the model and create fragment executor for this block
+            match inference_engine.cache().load_fragment_executor(model_id, block_id).await {
+                Ok(executor) => {
+                    let layer_range = ((block_id * 10), ((block_id + 1) * 10 - 1)); // Simplified layer range
+                    let block_exec = model::inference::BlockExecutor::new(
+                        block_id,
+                        layer_range,
+                        model_id.clone(),
+                        executor,
+                    );
+                    println!("block executor loaded: block_id={}, layer_range={:?}", block_id, layer_range);
+                    Some(Arc::new(block_exec))
+                }
+                Err(e) => {
+                    eprintln!("warning: failed to load block executor for block {}: {}", block_id, e);
+                    None
+                }
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    // Subscribe to block's pubsub topic if in distributed mode
+    if let Some(block_id) = cfg.distributed.block_id {
+        match p2p_node.subscribe_to_block(block_id) {
+            Ok(()) => {
+                println!("subscribed to block topic: block_id={}", block_id);
+            }
+            Err(e) => {
+                eprintln!("warning: failed to subscribe to block topic {}: {}", block_id, e);
+            }
+        }
+    }
+
     // networking tasks are spawned below; defer core model loading until after they start
 
     let discount_tracker = model::VolumeDiscountTracker::new(model::VolumeDiscountTracker::default_tiers());
@@ -628,6 +980,7 @@ async fn run_node(
                 cfg.rpc.clone(),
                 Some(dcs.clone()),
                 Some(dcs_state.clone()),
+                orchestrator.clone(),
             )
             .await?,
         )
@@ -707,11 +1060,29 @@ async fn run_node(
         let consensus = consensus.clone();
         let model_sync = model_sync.clone();
         let dcs_state = dcs_state.clone();
+        let pipeline_coordinator = pipeline_coordinator.clone();
+        let block_executor = block_executor.clone();
         let mut local_shutdown_rx = local_shutdown_rx;
         let block_broadcast_tx = block_broadcast_tx.clone();
         let tx_broadcast_tx = tx_broadcast_tx.clone();
         // Create ActivationStream for receiving/sending activations
         let activation_stream = ActivationStream::new(1000);
+        
+        // Spawn task to forward activation chunks to the network
+        let activation_forwarder_stream = activation_stream.clone();
+        let publish_tx_for_activations = publish_tx.clone();
+        let _activation_forwarder = tokio::spawn(async move {
+            let forward_result = activation_forwarder_stream
+                .forward_to_network(|msg| async {
+                    publish_tx_for_activations.send(msg).await
+                        .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+                })
+                .await;
+            if let Err(e) = forward_result {
+                eprintln!("activation forwarder failed: {}", e);
+            }
+        });
+        
         // Map to store chunks for reconstruction: (task_id, chunk_index) -> chunk
         let pending_chunks: Arc<Mutex<HashMap<uuid::Uuid, Vec<TensorActivationChunk>>>> = 
             Arc::new(Mutex::new(HashMap::new()));
@@ -734,6 +1105,22 @@ async fn run_node(
                                 println!("peer discovered: peer_id={}", peer_id);
                             }
                             NetworkEvent::MessageReceived(msg) => {
+                                // Handle PipelineMessage variants for distributed inference
+                                if let Some(pipeline_bytes) = msg.as_pipeline_message() {
+                                    if let Ok(pipeline_msg) = distributed_inference::PipelineMessage::deserialize(pipeline_bytes) {
+                                        if let (Some(ref coordinator), Some(ref executor)) = (&pipeline_coordinator, &block_executor) {
+                                            handle_pipeline_message(
+                                                pipeline_msg,
+                                                coordinator.clone(),
+                                                executor.clone(),
+                                                checkpoint_manager.clone(),
+                                                &publish_tx_clone,
+                                                &cfg_node_id,
+                                            ).await;
+                                        }
+                                    }
+                                }
+                                
                                 match msg {
                                     NetworkMessage::Block(block) => {
                                         let hashes: Vec<blockchain_core::TxHash> = block
@@ -964,6 +1351,8 @@ async fn run_node(
                                         data,
                                         compression_level,
                                         checkpoint_hash,
+                                        shape,
+                                        layer_range,
                                     } => {
                                         println!("received activation chunk: task_id={}, chunk={}/{}", task_id, chunk_index + 1, total_chunks);
                                         
@@ -980,8 +1369,8 @@ async fn run_node(
                                                 data,
                                                 compression_level,
                                                 checkpoint_hash,
-                                                shape: vec![], // Will be filled during reconstruction
-                                                layer_range: (0, 0),
+                                                shape,
+                                                layer_range,
                                             };
                                             
                                             let entry = chunks_map.entry(task_id).or_insert_with(Vec::new);
@@ -1030,6 +1419,17 @@ async fn run_node(
                                             active_tasks.clone(),
                                             load_score,
                                         ).await;
+                                        
+                                        // Update orchestrator's health monitor for replica health tracking
+                                        if let Some(ref orchestrator) = orchestrator {
+                                            let heartbeat_msg = NetworkMessage::Heartbeat {
+                                                node_id: node_id.clone(),
+                                                timestamp,
+                                                active_tasks: active_tasks.clone(),
+                                                load_score,
+                                            };
+                                            let _ = orchestrator.health_monitor.handle_heartbeat(&heartbeat_msg);
+                                        }
                                         
                                         // Update GlobalState
                                         if let Some(mut node) = dcs_state.nodes.get_mut(&node_id) {
@@ -1094,6 +1494,34 @@ async fn run_node(
                                                     }
                                                 }
                                             });
+                                        }
+                                    }
+                                    NetworkMessage::ReplicaJoinRequest {
+                                        node_id,
+                                        block_id,
+                                        peer_id,
+                                        capabilities,
+                                        auth_token,
+                                    } => {
+                                        // Only the leader processes replica join requests
+                                        if let Some(ref orchestrator) = orchestrator {
+                                            if orchestrator.is_leader().await {
+                                                match orchestrator.handle_replica_join_request(
+                                                    node_id.clone(),
+                                                    block_id,
+                                                    peer_id,
+                                                    capabilities,
+                                                    auth_token,
+                                                ).await {
+                                                    Ok(()) => {
+                                                        println!("replica registered: node_id={}, block_id={}", node_id, block_id);
+                                                    }
+                                                    Err(e) => {
+                                                        eprintln!("replica registration failed: node_id={}, block_id={}, error={}", 
+                                                            node_id, block_id, e);
+                                                    }
+                                                }
+                                            }
                                         }
                                     }
                                     _ => {}

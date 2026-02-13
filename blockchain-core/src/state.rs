@@ -9,7 +9,7 @@
 // Contact: Cesar Saguier Antebi
 
 use crate::crypto::hash_data;
-use crate::transaction::Transaction;
+use crate::transaction::{Transaction, RewardTx, RewardType};
 use crate::types::{Address, Amount, Balance, BlockchainError, Nonce};
 use genesis::CEO_WALLET;
 use parking_lot::RwLock;
@@ -85,6 +85,25 @@ pub struct GovernanceVote {
     pub timestamp: i64,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct StakeState {
+    pub staker_address: String,
+    pub staked_amount: Amount,
+    pub staked_since: i64, // timestamp
+    pub pending_unstake: Amount, // amount queued for unstake
+    pub unstake_available_at: Option<i64>, // timestamp when unstake completes
+    pub role: StakeRole, // Inference | Training | Both
+    pub total_rewards_claimed: Amount,
+    pub last_slash_timestamp: Option<i64>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub enum StakeRole {
+    Inference,  // MIN_STAKE_INFERENCE = 1000
+    Training,   // MIN_STAKE_TRAINING = 5000
+    Both,       // MIN_STAKE_TRAINING = 5000
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ChainStateSnapshot {
     pub accounts: BTreeMap<Address, AccountState>,
@@ -92,6 +111,7 @@ pub struct ChainStateSnapshot {
     pub batch_jobs: BTreeMap<String, BatchJobState>,
     pub model_proposals: BTreeMap<String, ModelUpgradeProposalState>,
     pub governance_votes: Vec<GovernanceVote>,
+    pub stakes: BTreeMap<Address, StakeState>,
 }
 
 #[derive(Debug, Default)]
@@ -101,6 +121,7 @@ pub struct ChainState {
     batch_jobs: RwLock<BTreeMap<String, BatchJobState>>,
     model_proposals: RwLock<BTreeMap<String, ModelUpgradeProposalState>>,
     governance_votes: RwLock<Vec<GovernanceVote>>,
+    stakes: RwLock<BTreeMap<Address, StakeState>>,
     validator_reward_address: RwLock<Address>,
 }
 
@@ -111,6 +132,7 @@ impl Clone for ChainState {
         let batch_jobs = self.batch_jobs.read().clone();
         let model_proposals = self.model_proposals.read().clone();
         let governance_votes = self.governance_votes.read().clone();
+        let stakes = self.stakes.read().clone();
         let validator_reward_address = self.validator_reward_address.read().clone();
         ChainState {
             accounts: RwLock::new(accounts),
@@ -118,6 +140,7 @@ impl Clone for ChainState {
             batch_jobs: RwLock::new(batch_jobs),
             model_proposals: RwLock::new(model_proposals),
             governance_votes: RwLock::new(governance_votes),
+            stakes: RwLock::new(stakes),
             validator_reward_address: RwLock::new(validator_reward_address),
         }
     }
@@ -131,6 +154,7 @@ impl ChainState {
             batch_jobs: RwLock::new(BTreeMap::new()),
             model_proposals: RwLock::new(BTreeMap::new()),
             governance_votes: RwLock::new(Vec::new()),
+            stakes: RwLock::new(BTreeMap::new()),
             validator_reward_address: RwLock::new(CEO_WALLET.to_string()),
         }
     }
@@ -142,6 +166,7 @@ impl ChainState {
             batch_jobs: self.batch_jobs.read().clone(),
             model_proposals: self.model_proposals.read().clone(),
             governance_votes: self.governance_votes.read().clone(),
+            stakes: self.stakes.read().clone(),
         }
     }
 
@@ -151,6 +176,7 @@ impl ChainState {
         *self.batch_jobs.write() = snapshot.batch_jobs;
         *self.model_proposals.write() = snapshot.model_proposals;
         *self.governance_votes.write() = snapshot.governance_votes;
+        *self.stakes.write() = snapshot.stakes;
     }
 
     pub fn set_validator_reward_address(&self, address: Address) {
@@ -406,6 +432,22 @@ impl ChainState {
         Ok(())
     }
 
+    /// Apply a reward transaction - mints tokens to recipient
+    pub fn apply_reward_transaction(&self, reward_tx: &RewardTx) -> Result<(), BlockchainError> {
+        // Validate the reward transaction
+        reward_tx.validate()?;
+
+        // Verify CEO authorization
+        if !reward_tx.is_authorized() {
+            return Err(BlockchainError::InvalidSignature);
+        }
+
+        // Mint tokens to recipient (no fee for reward txs)
+        self.mint_tokens(&reward_tx.recipient, reward_tx.amount)?;
+
+        Ok(())
+    }
+
     pub fn calculate_state_root(&self) -> StateRoot {
         let accounts = self.accounts.read();
         let subscriptions = self.subscriptions.read();
@@ -481,5 +523,156 @@ impl ChainState {
             .filter(|v| v.proposal_id == proposal_id)
             .cloned()
             .collect()
+    }
+
+    // Stake management
+    pub fn get_stake(&self, address: &str) -> Option<StakeState> {
+        self.stakes.read().get(address).cloned()
+    }
+
+    pub fn get_staked_amount(&self, address: &str) -> Amount {
+        self.stakes.read()
+            .get(address)
+            .map(|s| s.staked_amount)
+            .unwrap_or(Amount::ZERO)
+    }
+
+    pub fn set_stake(&self, address: Address, stake: StakeState) {
+        self.stakes.write().insert(address, stake);
+    }
+
+    pub fn list_all_stakes(&self) -> Vec<(Address, StakeState)> {
+        self.stakes.read()
+            .iter()
+            .map(|(addr, stake)| (addr.clone(), stake.clone()))
+            .collect()
+    }
+
+    pub fn list_stakes_by_role(&self, role: &StakeRole) -> Vec<(Address, StakeState)> {
+        self.stakes.read()
+            .iter()
+            .filter(|(_, s)| &s.role == role || matches!(s.role, StakeRole::Both))
+            .map(|(addr, stake)| (addr.clone(), stake.clone()))
+            .collect()
+    }
+
+    pub fn apply_stake_slash(&self, address: &str, slash_amount: Amount, reason: &str) -> Result<(), BlockchainError> {
+        let mut stakes = self.stakes.write();
+        let stake = stakes.get_mut(address)
+            .ok_or(BlockchainError::InvalidTransaction)?;
+
+        let current = stake.staked_amount.value();
+        let slash = slash_amount.value().min(current);
+        stake.staked_amount = Amount::new(current.saturating_sub(slash));
+        stake.last_slash_timestamp = Some(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs() as i64
+        );
+
+        // Apply slash: 40% burn, 60% to CEO
+        self.apply_slash(address, Amount::new(slash))?;
+
+        eprintln!("Slashed {} AIGEN from {} (reason: {})", slash, address, reason);
+        Ok(())
+    }
+
+    /// Apply a stake transaction - locks tokens and creates/updates stake state
+    pub fn apply_stake_transaction(&self, stake_tx: &crate::transaction::StakeTx) -> Result<(), BlockchainError> {
+        stake_tx.validate()?;
+
+        // Check minimum stake requirements
+        let min_stake = match stake_tx.role {
+            StakeRole::Inference => 1_000,
+            StakeRole::Training | StakeRole::Both => 5_000,
+        };
+
+        if stake_tx.amount.value() < min_stake {
+            return Err(BlockchainError::InvalidAmount);
+        }
+
+        // Deduct from balance
+        let balance = self.get_balance(&stake_tx.staker);
+        if balance.amount().value() < stake_tx.amount.value() {
+            return Err(BlockchainError::InsufficientBalance);
+        }
+
+        self.burn_tokens(&stake_tx.staker, stake_tx.amount)?;
+
+        // Create or update stake state
+        let mut stakes = self.stakes.write();
+        let stake_state = stakes.entry(stake_tx.staker.clone()).or_insert_with(|| {
+            StakeState {
+                staker_address: stake_tx.staker.clone(),
+                staked_amount: Amount::ZERO,
+                staked_since: stake_tx.timestamp.value(),
+                pending_unstake: Amount::ZERO,
+                unstake_available_at: None,
+                role: stake_tx.role.clone(),
+                total_rewards_claimed: Amount::ZERO,
+                last_slash_timestamp: None,
+            }
+        });
+
+        stake_state.staked_amount = stake_state.staked_amount.safe_add(stake_tx.amount)?;
+        stake_state.role = stake_tx.role.clone(); // Update role if changed
+
+        Ok(())
+    }
+
+    /// Apply an unstake transaction - initiates unstaking with cooldown
+    pub fn apply_unstake_transaction(&self, unstake_tx: &crate::transaction::UnstakeTx) -> Result<(), BlockchainError> {
+        unstake_tx.validate()?;
+
+        let mut stakes = self.stakes.write();
+        let stake_state = stakes.get_mut(&unstake_tx.staker)
+            .ok_or(BlockchainError::InvalidTransaction)?;
+
+        // Check sufficient staked amount
+        if stake_state.staked_amount.value() < unstake_tx.amount.value() {
+            return Err(BlockchainError::InsufficientBalance);
+        }
+
+        // Move to pending unstake
+        stake_state.staked_amount = stake_state.staked_amount.safe_sub(unstake_tx.amount)?;
+        stake_state.pending_unstake = stake_state.pending_unstake.safe_add(unstake_tx.amount)?;
+        stake_state.unstake_available_at = Some(
+            unstake_tx.timestamp.value() + crate::transaction::UnstakeTx::UNSTAKE_COOLDOWN_SECS
+        );
+
+        Ok(())
+    }
+
+    /// Apply a claim stake transaction - returns unstaked tokens after cooldown
+    pub fn apply_claim_stake_transaction(&self, claim_tx: &crate::transaction::ClaimStakeTx) -> Result<(), BlockchainError> {
+        claim_tx.validate()?;
+
+        let mut stakes = self.stakes.write();
+        let stake_state = stakes.get_mut(&claim_tx.staker)
+            .ok_or(BlockchainError::InvalidTransaction)?;
+
+        // Check cooldown period
+        if let Some(available_at) = stake_state.unstake_available_at {
+            if claim_tx.timestamp.value() < available_at {
+                return Err(BlockchainError::InvalidTransaction);
+            }
+        } else {
+            return Err(BlockchainError::InvalidTransaction);
+        }
+
+        // Return tokens to balance
+        let claim_amount = stake_state.pending_unstake;
+        stake_state.pending_unstake = Amount::ZERO;
+        stake_state.unstake_available_at = None;
+
+        self.mint_tokens(&claim_tx.staker, claim_amount)?;
+
+        // Remove stake state if fully unstaked
+        if stake_state.staked_amount.is_zero() {
+            stakes.remove(&claim_tx.staker);
+        }
+
+        Ok(())
     }
 }

@@ -381,6 +381,12 @@ pub enum BlockchainError {
     InvalidSignature,
     #[error("duplicate nonce")]
     DuplicateNonce,
+    #[error("insufficient stake")]
+    InsufficientStake,
+    #[error("stake cooldown not elapsed")]
+    StakeCooldownActive,
+    #[error("no pending unstake")]
+    NoPendingUnstake,
     #[error("serialization error: {0}")]
     SerializationError(String),
 }

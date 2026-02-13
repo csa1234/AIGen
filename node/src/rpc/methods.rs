@@ -22,6 +22,15 @@ use tracing::info;
 use crate::rpc::types::{
     BalanceResponse, BlockResponse, ChainInfoResponse, HealthResponse, NodeInfoResponse, RpcError,
     SubmitTransactionResponse, TransactionResponse, DcsStateResponse, SubmitInferenceRequest, TaskPlanResponse, TaskStatusResponse,
+    NodeEarningsResponse, TaskRewardResponse, PendingRewardsResponse, StorageRewardEstimateResponse, RewardHistoryResponse,
+    PendingReward, RewardHistoryEntry,
+    // NEW: VRAM Pool types
+    VramPoolStatsResponse, NodeMetricsResponse, RewardLeaderboardEntry, RewardLeaderboardResponse,
+    // NEW: Orchestrator types
+    OrchestratorStateResponse, BlockAssignmentsResponse, BlockAssignmentInfo, ReplicaInfo,
+    ReplicaHealthResponse, PipelineInferenceRequest, PipelineInferenceResponse,
+    // NEW: Distributed Inference types
+    DistributedInferenceStatsResponse, ActivePipelineResponse, BlockLatencyMetrics, CompressionStatsResponse,
 };
 use distributed_compute::scheduler::DynamicScheduler;
 use distributed_compute::state::GlobalState;
@@ -69,6 +78,32 @@ pub trait PublicRpc {
 
     #[method(name = "getTaskStatus")]
     async fn get_task_status(&self, task_id: String) -> Result<TaskStatusResponse, RpcError>;
+
+    // Orchestrator Methods
+    #[method(name = "getOrchestratorState")]
+    async fn get_orchestrator_state(&self) -> Result<OrchestratorStateResponse, RpcError>;
+
+    #[method(name = "getBlockAssignments")]
+    async fn get_block_assignments(&self, model_id: Option<String>) -> Result<BlockAssignmentsResponse, RpcError>;
+
+    #[method(name = "getReplicaHealth")]
+    async fn get_replica_health(&self, block_id: Option<u32>) -> Result<Vec<ReplicaHealthResponse>, RpcError>;
+
+    #[method(name = "submitPipelineInference")]
+    async fn submit_pipeline_inference(&self, request: PipelineInferenceRequest) -> Result<PipelineInferenceResponse, RpcError>;
+
+    // NEW: Distributed Inference Metrics Methods
+    #[method(name = "getDistributedInferenceStats")]
+    async fn get_distributed_inference_stats(&self) -> Result<DistributedInferenceStatsResponse, RpcError>;
+
+    #[method(name = "getActivePipelines")]
+    async fn get_active_pipelines(&self, limit: Option<u32>) -> Result<Vec<ActivePipelineResponse>, RpcError>;
+
+    #[method(name = "getBlockLatencyMetrics")]
+    async fn get_block_latency_metrics(&self, block_id: Option<u32>) -> Result<Vec<BlockLatencyMetrics>, RpcError>;
+
+    #[method(name = "getCompressionStats")]
+    async fn get_compression_stats(&self) -> Result<CompressionStatsResponse, RpcError>;
 }
 
 #[derive(Clone)]
@@ -79,6 +114,7 @@ pub struct RpcMethods {
     pub start_time: std::sync::Arc<std::time::Instant>,
     pub dcs: Option<Arc<DynamicScheduler>>,
     pub dcs_state: Option<Arc<GlobalState>>,
+    pub orchestrator: Option<Arc<distributed_inference::OrchestratorNode>>,
 }
 
 impl RpcMethods {
@@ -88,6 +124,7 @@ impl RpcMethods {
         network_metrics: network::metrics::SharedNetworkMetrics,
         dcs: Option<Arc<DynamicScheduler>>,
         dcs_state: Option<Arc<GlobalState>>,
+        orchestrator: Option<Arc<distributed_inference::OrchestratorNode>>,
     ) -> Self {
         Self {
             blockchain,
@@ -96,6 +133,7 @@ impl RpcMethods {
             start_time: std::sync::Arc::new(std::time::Instant::now()),
             dcs,
             dcs_state,
+            orchestrator,
         }
     }
 }
@@ -329,6 +367,649 @@ impl PublicRpcServer for RpcMethods {
             task_id: task.task_id.to_string(),
             status: format!("{:?}", task.status),
             assigned_node: task.assigned_node.clone(),
+        })
+    }
+
+    // Orchestrator method implementations
+    async fn get_orchestrator_state(&self) -> Result<OrchestratorStateResponse, RpcError> {
+        let orchestrator = self.orchestrator.as_ref()
+            .ok_or(RpcError::Internal("Orchestrator not initialized".to_string()))?;
+        
+        let state = orchestrator.get_orchestrator_state().await;
+        
+        Ok(OrchestratorStateResponse {
+            is_leader: state.is_leader,
+            leader_node_id: state.leader_node_id,
+            total_blocks: state.total_blocks,
+            total_replicas: state.total_replicas,
+            healthy_replicas: state.healthy_replicas,
+        })
+    }
+
+    async fn get_block_assignments(&self, model_id: Option<String>) -> Result<BlockAssignmentsResponse, RpcError> {
+        let orchestrator = self.orchestrator.as_ref()
+            .ok_or(RpcError::Internal("Orchestrator not initialized".to_string()))?;
+        
+        let assignments = orchestrator.get_block_assignments().await;
+        
+        let mut blocks = Vec::new();
+        for (block_id, replicas) in assignments {
+            // Get layer range from block_assignment
+            let layer_range = orchestrator.block_assignment.read().await
+                .get_block(block_id)
+                .map(|b| b.layer_range)
+                .unwrap_or((0, 0));
+            
+            let replica_infos: Vec<ReplicaInfo> = replicas.into_iter().map(|r| {
+                // Get health status
+                let health = orchestrator.replica_manager.get_replica_health(&r.node_id);
+                let status = health.map(|h| h.status.to_string()).unwrap_or_else(|| "unknown".to_string());
+                
+                ReplicaInfo {
+                    node_id: r.node_id,
+                    status,
+                    load_score: r.load_score,
+                    last_heartbeat: r.last_heartbeat,
+                }
+            }).collect();
+            
+            blocks.push(BlockAssignmentInfo {
+                block_id,
+                layer_range,
+                replicas: replica_infos,
+            });
+        }
+        
+        // Sort by block_id
+        blocks.sort_by_key(|b| b.block_id);
+        
+        Ok(BlockAssignmentsResponse {
+            model_id: model_id.unwrap_or_else(|| "default".to_string()),
+            blocks,
+        })
+    }
+
+    async fn get_replica_health(&self, block_id: Option<u32>) -> Result<Vec<ReplicaHealthResponse>, RpcError> {
+        let orchestrator = self.orchestrator.as_ref()
+            .ok_or(RpcError::Internal("Orchestrator not initialized".to_string()))?;
+        
+        let health_statuses = orchestrator.get_replica_health(block_id);
+        
+        let responses: Vec<ReplicaHealthResponse> = health_statuses.into_iter().map(|h| {
+            // Get block_id for this replica
+            let block = orchestrator.replica_manager.get_block_for_node(&h.node_id).unwrap_or(0);
+            
+            ReplicaHealthResponse {
+                node_id: h.node_id,
+                block_id: block,
+                status: h.status.to_string(),
+                consecutive_misses: h.consecutive_misses,
+                last_seen: h.last_seen,
+            }
+        }).collect();
+        
+        Ok(responses)
+    }
+
+    async fn submit_pipeline_inference(&self, request: PipelineInferenceRequest) -> Result<PipelineInferenceResponse, RpcError> {
+        let orchestrator = self.orchestrator.as_ref()
+            .ok_or(RpcError::Internal("Orchestrator not initialized".to_string()))?;
+        
+        let plan = orchestrator.assign_inference_to_replicas(
+            request.model_id,
+            request.prompt,
+            request.max_tokens,
+        ).await.map_err(|e| RpcError::Internal(e.to_string()))?;
+        
+        let pipeline_route: Vec<String> = plan.pipeline_route.iter().map(|r| r.node_id.clone()).collect();
+        
+        Ok(PipelineInferenceResponse {
+            inference_id: plan.inference_id.to_string(),
+            pipeline_route,
+            estimated_latency_ms: plan.estimated_latency_ms,
+        })
+    }
+
+    // NEW: Distributed Inference Metrics Implementations
+    async fn get_distributed_inference_stats(&self) -> Result<DistributedInferenceStatsResponse, RpcError> {
+        let orchestrator = self.orchestrator.as_ref()
+            .ok_or(RpcError::Internal("Orchestrator not initialized".to_string()))?;
+
+        // Get global metrics from network metrics
+        let global_metrics = self.network_metrics.get_global_metrics();
+        
+        // Get checkpoint and failover stats
+        let checkpoint_stats = self.network_metrics.get_checkpoint_stats();
+        let failover_stats = self.network_metrics.get_failover_stats();
+        
+        // Count healthy replicas
+        let total_replicas = orchestrator.replica_manager.get_all_replicas().len();
+        let healthy_replicas = orchestrator.replica_manager.healthy_replica_count();
+        
+        // Get compression stats from tensor transport
+        let (_, _, avg_compression_ratio) = distributed_inference::tensor_transport::TensorTransport::get_compression_stats();
+        
+        Ok(DistributedInferenceStatsResponse {
+            active_pipelines: global_metrics.total_inferences as u32,
+            total_inferences_completed: global_metrics.total_tasks,
+            avg_pipeline_latency_ms: global_metrics.get_latency() as f64,
+            avg_throughput_tasks_per_sec: global_metrics.avg_throughput_tasks_per_sec.load(Ordering::Relaxed) as f64 / 100.0,
+            avg_compression_ratio,
+            total_blocks: total_replicas as u32,
+            healthy_blocks: healthy_replicas as u32,
+        })
+    }
+
+    async fn get_active_pipelines(&self, limit: Option<u32>) -> Result<Vec<ActivePipelineResponse>, RpcError> {
+        let orchestrator = self.orchestrator.as_ref()
+            .ok_or(RpcError::Internal("Orchestrator not initialized".to_string()))?;
+        
+        let limit = limit.unwrap_or(50).min(100) as usize;
+        
+        // Get active inferences from orchestrator
+        let active_inferences = orchestrator.get_active_inferences().await;
+        
+        let mut pipelines = Vec::new();
+        for inference in active_inferences.into_iter().take(limit) {
+            let elapsed_ms = inference.start_time.elapsed().as_millis() as u64;
+            
+            // Estimate remaining time based on pipeline progress
+            let total_blocks = inference.pipeline_route.len() as u32;
+            let current_block_idx = inference.pipeline_route.iter()
+                .position(|&b| b == inference.current_block)
+                .unwrap_or(0) as u32;
+            let progress_pct = if total_blocks > 0 {
+                (current_block_idx + 1) as f32 / total_blocks as f32
+            } else {
+                0.0
+            };
+            
+            // Rough estimate: if we've taken elapsed_ms for (progress_pct) of the work,
+            // remaining should be proportional
+            let estimated_remaining_ms = if progress_pct > 0.0 {
+                ((elapsed_ms as f32 / progress_pct) - elapsed_ms as f32) as u64
+            } else {
+                elapsed_ms * total_blocks as u64 // Fallback: assume each block takes same time
+            };
+            
+            pipelines.push(ActivePipelineResponse {
+                inference_id: inference.inference_id.to_string(),
+                model_id: inference.model_id,
+                pipeline_route: inference.pipeline_route.iter()
+                    .filter_map(|block_id| {
+                        orchestrator.replica_manager.get_healthy_replicas(*block_id)
+                            .first()
+                            .map(|r| r.node_id.clone())
+                    })
+                    .collect(),
+                current_block: inference.current_block,
+                elapsed_ms,
+                estimated_remaining_ms,
+            });
+        }
+        
+        Ok(pipelines)
+    }
+
+    async fn get_block_latency_metrics(&self, block_id: Option<u32>) -> Result<Vec<BlockLatencyMetrics>, RpcError> {
+        // Get all node metrics from network metrics
+        let node_metrics = self.network_metrics.get_all_node_metrics();
+        
+        let mut metrics = Vec::new();
+        
+        if let Some(bid) = block_id {
+            // Get metrics for specific block
+            // Find nodes that are assigned to this block
+            let orchestrator = self.orchestrator.as_ref()
+                .ok_or(RpcError::Internal("Orchestrator not initialized".to_string()))?;
+            
+            let replicas = orchestrator.replica_manager.get_healthy_replicas(bid);
+            for replica in replicas {
+                if let Some(node_metric) = node_metrics.iter()
+                    .find(|m| m.node_id == replica.node_id) {
+                    let tasks_completed = node_metric.tasks_completed.load(Ordering::Relaxed);
+                    let tasks_failed = node_metric.tasks_failed.load(Ordering::Relaxed);
+                    let avg_compute_time = if tasks_completed > 0 {
+                        node_metric.total_compute_time_ms.load(Ordering::Relaxed) as f64 / tasks_completed as f64
+                    } else {
+                        0.0
+                    };
+                    
+                    metrics.push(BlockLatencyMetrics {
+                        block_id: bid,
+                        avg_compute_time_ms: avg_compute_time,
+                        avg_transfer_time_ms: node_metric.get_latency() as f64,
+                        tasks_completed,
+                        tasks_failed,
+                    });
+                }
+            }
+        } else {
+            // Get metrics for all blocks
+            // Aggregate by block assignment
+            let orchestrator = self.orchestrator.as_ref()
+                .ok_or(RpcError::Internal("Orchestrator not initialized".to_string()))?;
+            
+            // Get all block IDs
+            let all_replicas = orchestrator.replica_manager.get_all_replicas();
+            let block_ids: std::collections::HashSet<u32> = all_replicas.iter()
+                .map(|r| r.block_id)
+                .collect();
+            
+            for bid in block_ids {
+                let replicas = orchestrator.replica_manager.get_healthy_replicas(bid);
+                let mut total_compute_time = 0.0;
+                let mut total_transfer_time = 0.0;
+                let mut total_tasks_completed = 0u64;
+                let mut total_tasks_failed = 0u64;
+                let mut replica_count = 0u32;
+                
+                for replica in replicas {
+                    if let Some(node_metric) = node_metrics.iter()
+                        .find(|m| m.node_id == replica.node_id) {
+                        let tasks_completed = node_metric.tasks_completed.load(Ordering::Relaxed);
+                        let tasks_failed = node_metric.tasks_failed.load(Ordering::Relaxed);
+                        
+                        if tasks_completed > 0 {
+                            total_compute_time += node_metric.total_compute_time_ms.load(Ordering::Relaxed) as f64 / tasks_completed as f64;
+                        }
+                        total_transfer_time += node_metric.get_latency() as f64;
+                        total_tasks_completed += tasks_completed;
+                        total_tasks_failed += tasks_failed;
+                        replica_count += 1;
+                    }
+                }
+                
+                if replica_count > 0 {
+                    metrics.push(BlockLatencyMetrics {
+                        block_id: bid,
+                        avg_compute_time_ms: total_compute_time / replica_count as f64,
+                        avg_transfer_time_ms: total_transfer_time / replica_count as f64,
+                        tasks_completed: total_tasks_completed,
+                        tasks_failed: total_tasks_failed,
+                    });
+                }
+            }
+        }
+        
+        // Sort by block_id
+        metrics.sort_by_key(|m| m.block_id);
+        
+        Ok(metrics)
+    }
+
+    async fn get_compression_stats(&self) -> Result<CompressionStatsResponse, RpcError> {
+        let (total_tensors, bytes_saved, avg_ratio) = 
+            distributed_inference::tensor_transport::TensorTransport::get_compression_stats();
+        
+        Ok(CompressionStatsResponse {
+            total_tensors_compressed: total_tensors,
+            avg_compression_ratio: avg_ratio,
+            total_bytes_saved: bytes_saved,
+            quantization_enabled: true, // We have quantization enabled by default
+        })
+    }
+}
+
+#[rpc(server)]
+pub trait RewardRpc {
+    #[method(name = "reward_getNodeEarnings")]
+    async fn get_node_earnings(&self, node_id: String) -> Result<NodeEarningsResponse, RpcError>;
+    
+    #[method(name = "reward_getTaskReward")]
+    async fn get_task_reward(&self, task_id: String) -> Result<TaskRewardResponse, RpcError>;
+    
+    #[method(name = "reward_listPendingRewards")]
+    async fn list_pending_rewards(&self, node_id: String) -> Result<PendingRewardsResponse, RpcError>;
+    
+    #[method(name = "reward_getStorageRewardEstimate")]
+    async fn get_storage_reward_estimate(&self, node_id: String) -> Result<StorageRewardEstimateResponse, RpcError>;
+    
+    #[method(name = "reward_getRewardHistory")]
+    async fn get_reward_history(&self, node_id: String, limit: Option<u32>) -> Result<RewardHistoryResponse, RpcError>;
+    
+    // NEW: VRAM Pool and Metrics methods
+    #[method(name = "getVramPoolStats")]
+    async fn get_vram_pool_stats(&self) -> Result<VramPoolStatsResponse, RpcError>;
+    
+    #[method(name = "getNodeMetrics")]
+    async fn get_node_metrics(&self, node_id: Option<String>) -> Result<Vec<NodeMetricsResponse>, RpcError>;
+    
+    #[method(name = "getRewardLeaderboard")]
+    async fn get_reward_leaderboard(&self, limit: Option<u32>) -> Result<RewardLeaderboardResponse, RpcError>;
+}
+
+pub struct RewardRpcImpl {
+    pub dcs: Option<Arc<DynamicScheduler>>,
+    pub dcs_state: Option<Arc<GlobalState>>,
+}
+
+impl RewardRpcImpl {
+    pub fn new(
+        dcs: Option<Arc<DynamicScheduler>>,
+        dcs_state: Option<Arc<GlobalState>>,
+    ) -> Self {
+        Self { dcs, dcs_state }
+    }
+}
+
+#[async_trait]
+impl RewardRpcServer for RewardRpcImpl {
+    async fn get_node_earnings(&self, node_id: String) -> Result<NodeEarningsResponse, RpcError> {
+        let state = self.dcs_state.as_ref().ok_or(RpcError::Internal("DCS not initialized".to_string()))?;
+        
+        let record = state.get_node_earnings(&node_id);
+        
+        if let Some(r) = record {
+            Ok(NodeEarningsResponse {
+                node_id: r.node_id,
+                total_earned: r.total_earned.value(),
+                compute_rewards: r.compute_rewards.value(),
+                storage_rewards: r.storage_rewards.value(),
+                tasks_completed: r.tasks_completed,
+                fragments_hosted: r.fragments_hosted,
+                last_reward_timestamp: r.last_reward_timestamp,
+            })
+        } else {
+            // Return empty record for new nodes
+            Ok(NodeEarningsResponse {
+                node_id: node_id.clone(),
+                total_earned: 0,
+                compute_rewards: 0,
+                storage_rewards: 0,
+                tasks_completed: 0,
+                fragments_hosted: 0,
+                last_reward_timestamp: 0,
+            })
+        }
+    }
+    
+    async fn get_task_reward(&self, task_id: String) -> Result<TaskRewardResponse, RpcError> {
+        let state = self.dcs_state.as_ref().ok_or(RpcError::Internal("DCS not initialized".to_string()))?;
+        let uuid = Uuid::parse_str(&task_id).map_err(|e| RpcError::InvalidParams(e.to_string()))?;
+        
+        // Check if task exists in active tasks
+        if let Some(task) = state.active_tasks.get(&uuid) {
+            let status = match task.status {
+                distributed_compute::task::TaskStatus::Pending => "pending",
+                distributed_compute::task::TaskStatus::Running => "running",
+                distributed_compute::task::TaskStatus::Completed => "completed",
+                distributed_compute::task::TaskStatus::Failed => "failed",
+            };
+            
+            // Look up reward history for this task to get actual reward data
+            let mut reward_amount = 0u64;
+            let mut proof_verified = false;
+            let mut compute_time_ms = 0u64;
+            
+            // Search reward history for this task
+            for entry_ref in state.reward_history.iter() {
+                let history = entry_ref.value();
+                for reward_entry in history {
+                    if let Some(ref entry_task_id) = reward_entry.task_id {
+                        if entry_task_id == &task_id && reward_entry.reward_type == "compute" {
+                            reward_amount = reward_entry.amount.value();
+                            proof_verified = reward_entry.proof_verified;
+                            // Use timestamp as proxy for compute time if available
+                            if compute_time_ms == 0 {
+                                compute_time_ms = 1000; // Default placeholder
+                            }
+                        }
+                    }
+                }
+            }
+            
+            return Ok(TaskRewardResponse {
+                task_id: task.task_id.to_string(),
+                reward_amount,
+                status: status.to_string(),
+                proof_verified,
+                compute_time_ms,
+                fragment_count: task.required_fragments.len() as u32,
+            });
+        }
+        
+        // Task not found in active tasks - check if completed and has reward history
+        for entry_ref in state.reward_history.iter() {
+            let history = entry_ref.value();
+            for reward_entry in history {
+                if let Some(ref entry_task_id) = reward_entry.task_id {
+                    if entry_task_id == &task_id {
+                        return Ok(TaskRewardResponse {
+                            task_id: task_id.clone(),
+                            reward_amount: reward_entry.amount.value(),
+                            status: "completed".to_string(),
+                            proof_verified: reward_entry.proof_verified,
+                            compute_time_ms: 1000, // Placeholder - would come from proof
+                            fragment_count: 0, // Not stored in history
+                        });
+                    }
+                }
+            }
+        }
+        
+        Err(RpcError::InvalidParams("task not found".to_string()))
+    }
+    
+    async fn list_pending_rewards(&self, node_id: String) -> Result<PendingRewardsResponse, RpcError> {
+        let dcs = self.dcs.as_ref().ok_or(RpcError::Internal("DCS not initialized".to_string()))?;
+        
+        let pending = dcs.get_pending_reward(&node_id).await;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+        
+        let mut rewards = Vec::new();
+        if pending.value() > 0 {
+            rewards.push(PendingReward {
+                amount: pending.value(),
+                reason: "compute_task".to_string(),
+                timestamp: now,
+            });
+        }
+        
+        Ok(PendingRewardsResponse {
+            node_id: node_id.clone(),
+            pending_rewards: rewards,
+            total_pending: pending.value(),
+        })
+    }
+    
+    async fn get_storage_reward_estimate(&self, node_id: String) -> Result<StorageRewardEstimateResponse, RpcError> {
+        let state = self.dcs_state.as_ref().ok_or(RpcError::Internal("DCS not initialized".to_string()))?;
+        
+        // Get node info
+        let node = state.nodes.get(&node_id)
+            .ok_or(RpcError::InvalidParams("node not found".to_string()))?;
+        
+        // Calculate total stake pool
+        let total_stake: u64 = state.nodes.iter()
+            .map(|n| n.value().stake.value())
+            .sum();
+        
+        // Calculate total VRAM
+        let total_vram: f32 = state.nodes.iter()
+            .map(|n| n.value().vram_total_gb)
+            .sum();
+        
+        // Calculate VRAM allocated for this node
+        let vram_allocated = state.calculate_vram_allocated(&node_id);
+        
+        // Calculate stake weight
+        let stake_weight = if total_stake > 0 {
+            node.stake.value() as f32 / total_stake as f32
+        } else {
+            0.0
+        };
+        
+        // Calculate vram weight
+        let vram_weight = if total_vram > 0.0 {
+            vram_allocated / total_vram
+        } else {
+            0.0
+        };
+        
+        // Estimate hourly reward (10,000 AIGEN pool)
+        const HOURLY_STORAGE_POOL: f32 = 10_000.0;
+        let estimated_reward = (HOURLY_STORAGE_POOL * stake_weight * vram_weight) as u64;
+        
+        // Count fragments hosted
+        let fragments_hosted = state.fragments.iter()
+            .filter(|f| f.value().replicas.contains(&node_id))
+            .count() as u32;
+        
+        Ok(StorageRewardEstimateResponse {
+            node_id: node_id.clone(),
+            estimated_hourly_reward: estimated_reward,
+            vram_allocated_gb: vram_allocated,
+            stake_weight,
+            fragments_hosted,
+        })
+    }
+    
+    async fn get_reward_history(&self, node_id: String, limit: Option<u32>) -> Result<RewardHistoryResponse, RpcError> {
+        let state = self.dcs_state.as_ref().ok_or(RpcError::Internal("DCS not initialized".to_string()))?;
+        
+        // Get reward history from GlobalState (reads actual per-reward events)
+        let limit_val = limit.unwrap_or(100).min(1000) as usize;
+        let history_entries = state.get_reward_history(&node_id, limit_val);
+        
+        // Convert to RPC response type
+        let rewards: Vec<RewardHistoryEntry> = history_entries
+            .into_iter()
+            .map(|entry| RewardHistoryEntry {
+                amount: entry.amount.value(),
+                reward_type: entry.reward_type,
+                timestamp: entry.timestamp,
+                task_id: entry.task_id,
+            })
+            .collect();
+        
+        Ok(RewardHistoryResponse {
+            node_id: node_id.clone(),
+            rewards,
+            total_count: state.reward_history.get(&node_id).map(|h| h.len() as u32).unwrap_or(0),
+        })
+    }
+
+    /// Get VRAM pool statistics
+    async fn get_vram_pool_stats(&self) -> Result<VramPoolStatsResponse, RpcError> {
+        let state = self.dcs_state.as_ref().ok_or(RpcError::Internal("DCS not initialized".to_string()))?;
+        
+        // Calculate total VRAM and active nodes
+        let mut total_vram = 0.0f32;
+        let mut allocated_vram = 0.0f32;
+        let mut active_nodes = 0u32;
+        
+        for node in state.nodes.iter() {
+            let node = node.value();
+            total_vram += node.vram_total_gb;
+            allocated_vram += node.vram_allocated_gb;
+            active_nodes += 1;
+        }
+        
+        // Calculate total fragments and avg replicas
+        let total_fragments = state.fragments.len() as u32;
+        let total_replicas: usize = state.fragments.iter()
+            .map(|f| f.replicas.len())
+            .sum();
+        let avg_replicas = if total_fragments > 0 {
+            total_replicas as f32 / total_fragments as f32
+        } else {
+            0.0
+        };
+        
+        Ok(VramPoolStatsResponse {
+            total_vram_gb: total_vram,
+            allocated_vram_gb: allocated_vram,
+            active_nodes,
+            total_fragments,
+            avg_replicas,
+        })
+    }
+
+    /// Get node metrics
+    async fn get_node_metrics(&self, node_id: Option<String>) -> Result<Vec<NodeMetricsResponse>, RpcError> {
+        let state = self.dcs_state.as_ref().ok_or(RpcError::Internal("DCS not initialized".to_string()))?;
+        
+        let mut metrics = Vec::new();
+        
+        if let Some(id) = node_id {
+            // Get specific node metrics
+            if let Some(node) = state.nodes.get(&id) {
+                let reward_record = state.get_node_earnings(&id).unwrap_or_default();
+                let fragments_hosted = state.fragments.iter()
+                    .filter(|f| f.value().replicas.contains(&id))
+                    .count() as u32;
+                
+                metrics.push(NodeMetricsResponse {
+                    node_id: id,
+                    vram_total_gb: node.vram_total_gb,
+                    vram_free_gb: node.vram_free_gb,
+                    vram_allocated_gb: node.vram_allocated_gb,
+                    fragments_hosted,
+                    stake: node.stake.value(),
+                    total_earned: reward_record.total_earned.value(),
+                    status: if node.load_score < 0.5 { "healthy".to_string() } else { "busy".to_string() },
+                    load_score: node.load_score,
+                });
+            }
+        } else {
+            // Get all node metrics
+            for node_entry in state.nodes.iter() {
+                let node = node_entry.value();
+                let id = node.node_id.clone();
+                let reward_record = state.get_node_earnings(&id).unwrap_or_default();
+                let fragments_hosted = state.fragments.iter()
+                    .filter(|f| f.value().replicas.contains(&id))
+                    .count() as u32;
+                
+                metrics.push(NodeMetricsResponse {
+                    node_id: id,
+                    vram_total_gb: node.vram_total_gb,
+                    vram_free_gb: node.vram_free_gb,
+                    vram_allocated_gb: node.vram_allocated_gb,
+                    fragments_hosted,
+                    stake: node.stake.value(),
+                    total_earned: reward_record.total_earned.value(),
+                    status: if node.load_score < 0.5 { "healthy".to_string() } else { "busy".to_string() },
+                    load_score: node.load_score,
+                });
+            }
+        }
+        
+        Ok(metrics)
+    }
+
+    /// Get reward leaderboard
+    async fn get_reward_leaderboard(&self, limit: Option<u32>) -> Result<RewardLeaderboardResponse, RpcError> {
+        let state = self.dcs_state.as_ref().ok_or(RpcError::Internal("DCS not initialized".to_string()))?;
+        let limit = limit.unwrap_or(100) as usize;
+        
+        let mut entries: Vec<RewardLeaderboardEntry> = Vec::new();
+        
+        for reward_entry in state.node_rewards.iter() {
+            let record = reward_entry.value();
+            entries.push(RewardLeaderboardEntry {
+                node_id: record.node_id.clone(),
+                total_earned: record.total_earned.value(),
+                compute_rewards: record.compute_rewards.value(),
+                storage_rewards: record.storage_rewards.value(),
+                tasks_completed: record.tasks_completed,
+            });
+        }
+        
+        // Sort by total earned descending
+        entries.sort_by(|a, b| b.total_earned.cmp(&a.total_earned));
+        
+        // Apply limit
+        let total_count = entries.len() as u32;
+        entries.truncate(limit);
+        
+        Ok(RewardLeaderboardResponse {
+            entries,
+            total_count,
         })
     }
 }

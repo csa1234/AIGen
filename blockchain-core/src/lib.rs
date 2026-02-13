@@ -26,9 +26,9 @@ pub use crate::crypto::{
     wallet_address_from_pubkey,
 };
 pub use crate::state::{
-    AccountState, BatchJobState, ChainState, ChainStateSnapshot, StateRoot, SubscriptionState,
+    AccountState, BatchJobState, ChainState, ChainStateSnapshot, StateRoot, SubscriptionState, StakeState, StakeRole,
 };
-pub use crate::transaction::{Transaction, TransactionPool};
+pub use crate::transaction::{Transaction, TransactionPool, RewardTx, RewardType, StakeTx, UnstakeTx, ClaimStakeTx};
 pub use crate::types::{
     validate_address, Address, Amount, Balance, BlockHash, BlockHeight, BlockVersion,
     BlockchainError, ChainId, Fee, Nonce, Timestamp, TxHash,

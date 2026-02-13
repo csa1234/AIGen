@@ -1,0 +1,179 @@
+# Example configuration for distributed inference pipeline
+# Copy this file to config.toml and customize for your deployment
+
+[pipeline]
+# Total number of layer blocks to split the model into
+# For an 80-layer model, 8 blocks = 10 layers per block
+total_blocks = 8
+
+# Replication factor - each block is hosted on K nodes for fault tolerance
+# K=3 is recommended for production deployments
+replication_factor = 3
+
+[checkpoint]
+# Save checkpoint every N tokens (default: 10)
+checkpoint_interval = 10
+
+# Maximum checkpoints to keep per inference (default: 5)
+max_checkpoints_per_inference = 5
+
+# Storage backend: "memory", "disk", or "distributed"
+storage_backend = "memory"
+
+# Disk storage path (if backend = "disk")
+storage_path = "./checkpoints"
+
+[failover]
+# Heartbeat interval in milliseconds (default: 500)
+heartbeat_interval_ms = 500
+
+# Number of missed heartbeats before marking dead (default: 3)
+failure_threshold = 3
+
+# Enable automatic failover (default: true)
+enable_auto_failover = true
+
+# Model configuration
+[[blocks]]
+block_id = 0
+layer_range = [0, 9]
+model_id = "mistral-7b"
+estimated_vram_gb = 2.5
+
+[[blocks.replicas]]
+node_id = "node-a"
+priority = 1
+
+[[blocks.replicas]]
+node_id = "node-b"
+priority = 2
+
+[[blocks.replicas]]
+node_id = "node-c"
+priority = 3
+
+[[blocks]]
+block_id = 1
+layer_range = [10, 19]
+model_id = "mistral-7b"
+estimated_vram_gb = 2.5
+
+[[blocks.replicas]]
+node_id = "node-d"
+priority = 1
+
+[[blocks.replicas]]
+node_id = "node-e"
+priority = 2
+
+[[blocks.replicas]]
+node_id = "node-f"
+priority = 3
+
+[[blocks]]
+block_id = 2
+layer_range = [20, 29]
+model_id = "mistral-7b"
+estimated_vram_gb = 2.5
+
+[[blocks.replicas]]
+node_id = "node-g"
+priority = 1
+
+[[blocks.replicas]]
+node_id = "node-h"
+priority = 2
+
+[[blocks.replicas]]
+node_id = "node-i"
+priority = 3
+
+[[blocks]]
+block_id = 3
+layer_range = [30, 39]
+model_id = "mistral-7b"
+estimated_vram_gb = 2.5
+
+[[blocks.replicas]]
+node_id = "node-j"
+priority = 1
+
+[[blocks.replicas]]
+node_id = "node-k"
+priority = 2
+
+[[blocks.replicas]]
+node_id = "node-l"
+priority = 3
+
+[[blocks]]
+block_id = 4
+layer_range = [40, 49]
+model_id = "mistral-7b"
+estimated_vram_gb = 2.5
+
+[[blocks.replicas]]
+node_id = "node-m"
+priority = 1
+
+[[blocks.replicas]]
+node_id = "node-n"
+priority = 2
+
+[[blocks.replicas]]
+node_id = "node-o"
+priority = 3
+
+[[blocks]]
+block_id = 5
+layer_range = [50, 59]
+model_id = "mistral-7b"
+estimated_vram_gb = 2.5
+
+[[blocks.replicas]]
+node_id = "node-p"
+priority = 1
+
+[[blocks.replicas]]
+node_id = "node-q"
+priority = 2
+
+[[blocks.replicas]]
+node_id = "node-r"
+priority = 3
+
+[[blocks]]
+block_id = 6
+layer_range = [60, 69]
+model_id = "mistral-7b"
+estimated_vram_gb = 2.5
+
+[[blocks.replicas]]
+node_id = "node-s"
+priority = 1
+
+[[blocks.replicas]]
+node_id = "node-t"
+priority = 2
+
+[[blocks.replicas]]
+node_id = "node-u"
+priority = 3
+
+[[blocks]]
+block_id = 7
+layer_range = [70, 79]
+model_id = "mistral-7b"
+estimated_vram_gb = 2.5
+
+[[blocks.replicas]]
+node_id = "node-v"
+priority = 1
+
+[[blocks.replicas]]
+node_id = "node-w"
+priority = 2
+
+[[blocks.replicas]]
+node_id = "node-x"
+priority = 3

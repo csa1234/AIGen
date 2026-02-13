@@ -1,0 +1,29 @@
+[package]
+name = "distributed-inference"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "Layer-block pipeline parallelism for distributed AI inference"
+license.workspace = true
+
+[dependencies]
+bincode = { workspace = true }
+zstd = { workspace = true }
+serde = { workspace = true }
+tokio = { workspace = true }
+thiserror = { workspace = true }
+libp2p = { workspace = true }
+sha3 = { workspace = true }
+chrono = { workspace = true }
+uuid = { version = "1.7", features = ["v4", "serde"] }
+toml = { workspace = true }
+dashmap = "5.5"
+
+# Path dependencies
+blockchain-core = { path = "../blockchain-core" }
+consensus = { path = "../consensus" }
+network = { path = "../network" }
+model = { path = "../model" }
+
+[dev-dependencies]
+tokio-test = "0.4"

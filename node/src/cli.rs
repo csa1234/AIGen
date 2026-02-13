@@ -91,6 +91,26 @@ pub struct StartArgs {
     pub model: Option<String>,
     #[arg(long)]
     pub role: Option<String>,
+
+    /// Enable distributed inference mode
+    #[arg(long, default_value_t = false)]
+    pub distributed: bool,
+
+    /// Block ID this node will execute (0-indexed)
+    #[arg(long)]
+    pub block_id: Option<u32>,
+
+    /// Total number of blocks in the pipeline
+    #[arg(long)]
+    pub total_blocks: Option<u32>,
+
+    /// Path to pipeline configuration file (TOML)
+    #[arg(long)]
+    pub pipeline_config: Option<PathBuf>,
+
+    /// Run as pipeline coordinator (initiates inference requests)
+    #[arg(long, default_value_t = false)]
+    pub coordinator: bool,
 }
 
 #[derive(Parser, Debug, Clone)]

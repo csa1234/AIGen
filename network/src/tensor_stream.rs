@@ -26,6 +26,7 @@ use tokio::sync::{mpsc, Mutex, RwLock};
 use uuid::Uuid;
 
 use consensus::CompressionMethod;
+use crate::protocol::NetworkMessage;
 
 /// Default chunk size for activation streaming (4MB)
 pub const ACTIVATION_CHUNK_SIZE: usize = 4 * 1024 * 1024;
@@ -103,21 +104,64 @@ impl ActivationTensor {
     }
 }
 
-/// Compressed activation chunk for network transmission
+/// Compressed activation chunk for network transmission with optional quantization
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ActivationChunk {
     pub task_id: Uuid,
     pub inference_id: Uuid,
     pub chunk_index: u32,
     pub total_chunks: u32,
-    pub data: Vec<u8>, // compressed
+    pub data: Vec<u8>, // compressed (and optionally quantized)
     pub compression_level: i32,
     pub checkpoint_hash: [u8; 32],
     pub shape: Vec<i64>,
     pub layer_range: (u32, u32),
+    // NEW: Quantization metadata for 8-bit compression
+    pub quantization_min: f32,
+    pub quantization_max: f32,
+    pub is_quantized: bool,
 }
 
-/// Request to receive an activation tensor
+/// Quantize f32 data to u8 using linear scaling
+/// Returns (quantized_data, min, max) for dequantization
+pub fn quantize_f32_to_u8(data: &[f32]) -> (Vec<u8>, f32, f32) {
+    if data.is_empty() {
+        return (Vec::new(), 0.0, 0.0);
+    }
+
+    // Find min and max
+    let min = data.iter().cloned().fold(f32::INFINITY, f32::min);
+    let max = data.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+
+    // Handle edge case where all values are the same
+    if min == max {
+        return (vec![0u8; data.len()], min, max);
+    }
+
+    // Quantize: u8 = ((f32 - min) / (max - min)) * 255
+    let scale = 255.0 / (max - min);
+    let quantized: Vec<u8> = data
+        .iter()
+        .map(|&v| {
+            let normalized = (v - min) * scale;
+            normalized.clamp(0.0, 255.0) as u8
+        })
+        .collect();
+
+    (quantized, min, max)
+}
+
+/// Dequantize u8 data back to f32 using stored min/max
+pub fn dequantize_u8_to_f32(data: &[u8], min: f32, max: f32) -> Vec<f32> {
+    if data.is_empty() || min == max {
+        return vec![min; data.len()];
+    }
+
+    let scale = (max - min) / 255.0;
+    data.iter()
+        .map(|&v| (v as f32) * scale + min)
+        .collect()
+}
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ActivationRequest {
     pub task_id: Uuid,
@@ -202,14 +246,14 @@ pub fn activation_protocol() -> String {
     "/aigen/activation-stream/1.0.0".to_string()
 }
 
-/// Compress activation data using zstd
+/// Compress activation data using zstd (legacy, non-quantized)
 pub fn compress_activation(data: &[f32], level: i32) -> Result<Vec<u8>, ActivationStreamError> {
     let bytes: &[u8] = bytemuck::cast_slice(data);
     zstd::encode_all(bytes, level)
         .map_err(|e| ActivationStreamError::Compression(e.to_string()))
 }
 
-/// Decompress activation data
+/// Decompress activation data (legacy, non-quantized)
 pub fn decompress_activation(compressed: &[u8], expected_elements: usize) -> Result<Vec<f32>, ActivationStreamError> {
     let decompressed = zstd::decode_all(compressed)
         .map_err(|e| ActivationStreamError::Decompression(e.to_string()))?;
@@ -225,22 +269,57 @@ pub fn decompress_activation(compressed: &[u8], expected_elements: usize) -> Res
     Ok(floats.to_vec())
 }
 
-/// Split activation tensor into chunks for streaming
+/// Compress activation data using 8-bit quantization followed by zstd
+/// This provides ~75% bandwidth reduction (f32->u8 = 4x, plus compression)
+pub fn compress_activation_quantized(data: &[f32], level: i32) -> Result<(Vec<u8>, f32, f32), ActivationStreamError> {
+    // Step 1: Quantize f32 -> u8 (4x size reduction)
+    let (quantized, min, max) = quantize_f32_to_u8(data);
+
+    // Step 2: Apply zstd compression on u8 data
+    let compressed = zstd::encode_all(&quantized, level)
+        .map_err(|e| ActivationStreamError::Compression(e.to_string()))?;
+
+    Ok((compressed, min, max))
+}
+
+/// Decompress activation data with 8-bit quantization
+pub fn decompress_activation_quantized(
+    compressed: &[u8],
+    min: f32,
+    max: f32,
+    expected_elements: usize,
+) -> Result<Vec<f32>, ActivationStreamError> {
+    // Step 1: Decompress zstd
+    let decompressed = zstd::decode_all(compressed)
+        .map_err(|e| ActivationStreamError::Decompression(e.to_string()))?;
+
+    // Step 2: Verify size
+    if decompressed.len() != expected_elements {
+        return Err(ActivationStreamError::SizeMismatch {
+            expected: expected_elements,
+            actual: decompressed.len(),
+        });
+    }
+
+    // Step 3: Dequantize u8 -> f32
+    Ok(dequantize_u8_to_f32(&decompressed, min, max))
+}
+
+/// Split activation tensor into chunks for streaming using quantization + compression
 pub fn chunk_activation(
     activation: &ActivationTensor,
     chunk_size: usize,
     compression_level: i32,
 ) -> Result<Vec<ActivationChunk>, ActivationStreamError> {
-    let data_bytes: &[u8] = bytemuck::cast_slice(&activation.data);
-    let total_bytes = data_bytes.len();
-    let num_chunks = (total_bytes + chunk_size - 1) / chunk_size;
+    // Use quantized compression for better bandwidth efficiency
+    let (compressed, min, max) = compress_activation_quantized(&activation.data, compression_level)?;
+    let compressed_total = compressed.len();
+    let num_chunks = (compressed_total + chunk_size - 1) / chunk_size;
 
     if num_chunks > u32::MAX as usize {
         return Err(ActivationStreamError::TooManyChunks(num_chunks));
     }
 
-    let compressed = compress_activation(&activation.data, compression_level)?;
-    let compressed_total = compressed.len();
     let compressed_chunk_size = (compressed_total + num_chunks - 1) / num_chunks;
 
     let mut chunks = Vec::with_capacity(num_chunks);
@@ -260,13 +339,17 @@ pub fn chunk_activation(
             checkpoint_hash: activation.checkpoint_hash,
             shape: activation.shape.clone(),
             layer_range: activation.layer_range,
+            // NEW: Quantization metadata
+            quantization_min: min,
+            quantization_max: max,
+            is_quantized: true,
         });
     }
 
     Ok(chunks)
 }
 
-/// Reconstruct activation tensor from chunks
+/// Reconstruct activation tensor from chunks (supports both quantized and non-quantized)
 pub fn reconstruct_activation(chunks: &[ActivationChunk]) -> Result<ActivationTensor, ActivationStreamError> {
     if chunks.is_empty() {
         return Err(ActivationStreamError::NoChunks);
@@ -306,8 +389,12 @@ pub fn reconstruct_activation(chunks: &[ActivationChunk]) -> Result<ActivationTe
     let expected_elements: i64 = first.shape.iter().product();
     let expected_elements = expected_elements as usize;
 
-    // Decompress
-    let data = decompress_activation(&compressed, expected_elements)?;
+    // Decompress (with or without quantization)
+    let data = if first.is_quantized {
+        decompress_activation_quantized(&compressed, first.quantization_min, first.quantization_max, expected_elements)?
+    } else {
+        decompress_activation(&compressed, expected_elements)?
+    };
 
     // Verify integrity
     let computed_hash = ActivationTensor::compute_hash(&data);
@@ -427,6 +514,42 @@ impl ActivationStream {
     /// Enqueue an activation tensor directly (for reconstructed activations)
     pub async fn enqueue_activation(&self, activation: ActivationTensor) -> Result<(), ActivationStreamError> {
         self.completed_activations.write().await.insert(activation.task_id, activation);
+        Ok(())
+    }
+
+    /// Forward chunks from the internal receiver to a network publisher
+    /// This should be spawned as a task to continuously forward chunks
+    pub async fn forward_to_network<F, Fut>(&self, mut publish_fn: F) -> Result<(), ActivationStreamError>
+    where
+        F: FnMut(NetworkMessage) -> Fut,
+        Fut: std::future::Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>>,
+    {
+        let receiver = self.receiver.clone();
+        let mut rx = receiver.lock().await;
+        
+        while let Some(chunk) = rx.recv().await {
+            let network_msg = NetworkMessage::ActivationChunk {
+                task_id: chunk.task_id,
+                inference_id: chunk.inference_id,
+                chunk_index: chunk.chunk_index,
+                total_chunks: chunk.total_chunks,
+                data: chunk.data,
+                compression_level: chunk.compression_level,
+                checkpoint_hash: chunk.checkpoint_hash,
+                shape: chunk.shape,
+                layer_range: chunk.layer_range,
+                // NEW: Include quantization metadata in network message
+                quantization_min: chunk.quantization_min,
+                quantization_max: chunk.quantization_max,
+                is_quantized: chunk.is_quantized,
+            };
+            
+            if let Err(_e) = publish_fn(network_msg).await {
+                // Log error but continue processing other chunks
+                eprintln!("failed to forward activation chunk to network: task_id={}", chunk.task_id);
+            }
+        }
+        
         Ok(())
     }
 }

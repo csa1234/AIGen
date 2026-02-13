@@ -23,11 +23,12 @@ use tower_http::cors::{Any, AllowOrigin, CorsLayer};
 
 use crate::config::RpcConfig;
 use crate::rpc::ceo::{CeoRpcMethods, CeoRpcServer};
-use crate::rpc::methods::{PublicRpcServer, RpcMethods};
+use crate::rpc::methods::{PublicRpcServer, RpcMethods, RewardRpcServer, RewardRpcImpl};
 use crate::rpc::subscriptions::{RpcSubscriptions, SubscriptionsRpcServer};
 use crate::rpc::model::{ModelRpcMethods, ModelRpcServer};
 use distributed_compute::scheduler::DynamicScheduler;
 use distributed_compute::state::GlobalState;
+use distributed_inference::OrchestratorNode;
 
 pub async fn start_rpc_server(
     blockchain: Arc<Mutex<Blockchain>>,
@@ -42,6 +43,7 @@ pub async fn start_rpc_server(
     config: RpcConfig,
     dcs: Option<Arc<DynamicScheduler>>,
     dcs_state: Option<Arc<GlobalState>>,
+    orchestrator: Option<Arc<distributed_inference::OrchestratorNode>>,
 ) -> Result<ServerHandle> {
     let cors = build_cors_layer(&config);
 
@@ -67,7 +69,7 @@ pub async fn start_rpc_server(
         println!("  ⚠️  Binding to localhost only - not accessible from other machines");
     }
 
-    let public = RpcMethods::new(blockchain.clone(), tx_broadcast, network_metrics.clone(), dcs, dcs_state);
+    let public = RpcMethods::new(blockchain.clone(), tx_broadcast, network_metrics.clone(), dcs.clone(), dcs_state.clone(), orchestrator.clone());
     let ceo = CeoRpcMethods::new(
         blockchain.clone(),
         model_registry.clone(),
@@ -84,11 +86,13 @@ pub async fn start_rpc_server(
         batch_queue,
         inference_engine,
     );
+    let reward_rpc = RewardRpcImpl::new(dcs.clone(), dcs_state.clone());
 
     let mut module = public.into_rpc();
     module.merge(ceo.into_rpc())?;
     module.merge(subs.into_rpc())?;
     module.merge(model_rpc.into_rpc())?;
+    module.merge(reward_rpc.into_rpc())?;
 
     let handle = server.start(module);
 

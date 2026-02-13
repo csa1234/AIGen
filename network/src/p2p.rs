@@ -40,6 +40,8 @@ use crate::events::TensorChunk;
 use crate::gossip::{
     topic_blocks, topic_model_announcements, topic_poi_proofs, topic_shutdown, topic_transactions,
     topic_vram_capabilities, TOPIC_MODEL_ANNOUNCEMENTS, TOPIC_SHUTDOWN, TOPIC_VRAM_CAPABILITIES,
+    TOPIC_HEARTBEAT, TOPIC_CHECKPOINT, TOPIC_FAILOVER,
+    topic_heartbeat, topic_checkpoint, topic_failover,
 };
 use crate::metrics::{NetworkMetrics, SharedNetworkMetrics};
 use crate::fragment_stream::{
@@ -282,6 +284,9 @@ impl P2PNode {
                     .gossipsub
                     .subscribe(&topic_model_announcements());
                 let _ = swarm.behaviour_mut().gossipsub.subscribe(&topic_shutdown());
+                let _ = swarm.behaviour_mut().gossipsub.subscribe(&topic_heartbeat());
+                let _ = swarm.behaviour_mut().gossipsub.subscribe(&topic_checkpoint());
+                let _ = swarm.behaviour_mut().gossipsub.subscribe(&topic_failover());
             }
             NodeType::Validator => {
                 let _ = swarm.behaviour_mut().gossipsub.subscribe(&topic_blocks());
@@ -294,6 +299,9 @@ impl P2PNode {
                     .gossipsub
                     .subscribe(&topic_model_announcements());
                 let _ = swarm.behaviour_mut().gossipsub.subscribe(&topic_shutdown());
+                let _ = swarm.behaviour_mut().gossipsub.subscribe(&topic_heartbeat());
+                let _ = swarm.behaviour_mut().gossipsub.subscribe(&topic_checkpoint());
+                let _ = swarm.behaviour_mut().gossipsub.subscribe(&topic_failover());
             }
             NodeType::LightClient => {
                 let _ = swarm.behaviour_mut().gossipsub.subscribe(&topic_blocks());
@@ -319,6 +327,9 @@ impl P2PNode {
                     .subscribe(&topic_model_announcements());
                 let _ = swarm.behaviour_mut().gossipsub.subscribe(&topic_shutdown());
                 let _ = swarm.behaviour_mut().gossipsub.subscribe(&topic_vram_capabilities());
+                let _ = swarm.behaviour_mut().gossipsub.subscribe(&topic_heartbeat());
+                let _ = swarm.behaviour_mut().gossipsub.subscribe(&topic_checkpoint());
+                let _ = swarm.behaviour_mut().gossipsub.subscribe(&topic_failover());
             }
         }
 
@@ -421,6 +432,11 @@ impl P2PNode {
                 (topic_model_announcements(), false)
             }
             NetworkMessage::ModelQuery { .. } => (topic_model_announcements(), false),
+            NetworkMessage::Heartbeat { .. } => (topic_heartbeat(), false),
+            NetworkMessage::Checkpoint { .. } => (topic_checkpoint(), false),
+            NetworkMessage::Failover { .. } | NetworkMessage::ReassignFragment { .. } => {
+                (topic_failover(), false)
+            }
             _ => (topic_transactions(), false),
         };
 
@@ -553,6 +569,26 @@ impl P2PNode {
             .send_request(&peer, req)
     }
 
+    /// Subscribe to a specific block topic for distributed pipeline inference
+    pub fn subscribe_to_block(&mut self, block_id: u32) -> Result<(), gossipsub::SubscriptionError> {
+        let topic = crate::gossip::topic_block(block_id);
+        self.swarm.behaviour_mut().gossipsub.subscribe(&topic)
+    }
+
+    /// Subscribe to multiple block topics for distributed pipeline inference
+    pub fn subscribe_to_blocks(&mut self, block_ids: &[u32]) -> Result<(), gossipsub::SubscriptionError> {
+        for &block_id in block_ids {
+            self.subscribe_to_block(block_id)?;
+        }
+        Ok(())
+    }
+
+    /// Unsubscribe from a specific block topic
+    pub fn unsubscribe_from_block(&mut self, block_id: u32) -> bool {
+        let topic = crate::gossip::topic_block(block_id);
+        self.swarm.behaviour_mut().gossipsub.unsubscribe(&topic)
+    }
+
     async fn handle_swarm_event(&mut self, event: SwarmEvent<P2PBehaviourEvent>) {
         match event {
             SwarmEvent::ConnectionEstablished { .. } => {
@@ -659,6 +695,58 @@ impl P2PNode {
                                 timestamp,
                             };
                             let _ = self.event_tx.send(event).await;
+                            if let Some(peer) = source {
+                                self.reputation_manager.record_success(peer);
+                            }
+                        }
+                        _ => { /* handle malformed */ }
+                    }
+                    return;
+                }
+
+                if message.topic.as_str() == TOPIC_HEARTBEAT {
+                    match NetworkMessage::deserialize(&message.data) {
+                        Ok(NetworkMessage::Heartbeat { node_id, timestamp, active_tasks, load_score }) => {
+                            let event = NetworkEvent::HeartbeatReceived {
+                                node_id,
+                                timestamp,
+                                active_tasks,
+                                load_score,
+                            };
+                            let _ = self.event_tx.send(event).await;
+                            if let Some(peer) = source {
+                                self.reputation_manager.record_success(peer);
+                            }
+                        }
+                        _ => { /* handle malformed */ }
+                    }
+                    return;
+                }
+
+                if message.topic.as_str() == TOPIC_CHECKPOINT {
+                    match NetworkMessage::deserialize(&message.data) {
+                        Ok(NetworkMessage::Checkpoint { task_id, inference_id, checkpoint_hash, layer_range, timestamp }) => {
+                            let event = NetworkEvent::CheckpointReceived {
+                                task_id,
+                                inference_id,
+                                checkpoint_hash,
+                                layer_range,
+                                timestamp,
+                            };
+                            let _ = self.event_tx.send(event).await;
+                            if let Some(peer) = source {
+                                self.reputation_manager.record_success(peer);
+                            }
+                        }
+                        _ => { /* handle malformed */ }
+                    }
+                    return;
+                }
+
+                if message.topic.as_str() == TOPIC_FAILOVER {
+                    match NetworkMessage::deserialize(&message.data) {
+                        Ok(msg @ NetworkMessage::Failover { .. }) | Ok(msg @ NetworkMessage::ReassignFragment { .. }) => {
+                            let _ = self.event_tx.send(NetworkEvent::MessageReceived(msg)).await;
                             if let Some(peer) = source {
                                 self.reputation_manager.record_success(peer);
                             }

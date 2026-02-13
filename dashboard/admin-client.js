@@ -482,6 +482,35 @@ class AdminRPCClient {
         }
     }
 
+    async getVramPoolStats() {
+        return this.callHttp('getVramPoolStats', []);
+    }
+
+    async getNodeMetrics(nodeId = null) {
+        return this.callHttp('getNodeMetrics', [nodeId]);
+    }
+
+    async getRewardLeaderboard(limit = 100) {
+        return this.callHttp('getRewardLeaderboard', [limit]);
+    }
+
+    // NEW: Distributed Inference RPC Methods
+    async getDistributedInferenceStats() {
+        return this.callHttp('getDistributedInferenceStats', []);
+    }
+
+    async getActivePipelines(limit = 50) {
+        return this.callHttp('getActivePipelines', [limit]);
+    }
+
+    async getBlockLatencyMetrics(blockId = null) {
+        return this.callHttp('getBlockLatencyMetrics', [blockId]);
+    }
+
+    async getCompressionStats() {
+        return this.callHttp('getCompressionStats', []);
+    }
+
     parseRpcError(error) {
         const errorMap = {
             'CEO signature verification failed': 'Invalid CEO signature. Please ensure you are using the correct CEO wallet.',

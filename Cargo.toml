@@ -8,6 +8,7 @@ members = [
     "node",
     "scripts",
     "distributed-compute",
+    "distributed-inference",
 ]
 resolver = "2"
 

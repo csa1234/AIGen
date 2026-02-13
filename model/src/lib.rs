@@ -33,8 +33,9 @@ pub use batch::{
     BatchWorker, CompletionEstimate, QueueStats, VolumeDiscountTracker, CHAT_PRICE_PER_1K_TOKENS,
 };
 pub use inference::{
-    InferenceEngine, InferenceError, InferenceMetrics, InferenceOutput, InferenceStats,
-    InferenceTensor, LoadedModel, ModelCache, SharedInferenceMetrics,
+    BlockExecutor, InferenceEngine, InferenceError, InferenceMetrics, InferenceOutput,
+    InferenceStats, InferenceTensor, LayerBlockConfig, LoadedModel, ModelBlockSplitter, ModelCache,
+    SharedInferenceMetrics,
 };
 pub use registry::{ModelError, ModelMetadata, ModelRegistry, ModelShard, ShardLocation};
 pub use sharding::{combine_shards, split_model_file, verify_shard_integrity, ShardError};

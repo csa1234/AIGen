@@ -1,0 +1,43 @@
+# Example: 4-block pipeline for Mistral-7B (32 layers)
+total_blocks = 4
+replication_factor = 1  # Phase 2: single replica per block
+
+[[blocks]]
+block_id = 0
+layer_range = [0, 7]
+model_id = "mistral-7b"
+estimated_vram_gb = 2.0
+
+[[blocks.replicas]]
+node_id = "node-0"
+priority = 1
+
+[[blocks]]
+block_id = 1
+layer_range = [8, 15]
+model_id = "mistral-7b"
+estimated_vram_gb = 2.0
+
+[[blocks.replicas]]
+node_id = "node-1"
+priority = 1
+
+[[blocks]]
+block_id = 2
+layer_range = [16, 23]
+model_id = "mistral-7b"
+estimated_vram_gb = 2.0
+
+[[blocks.replicas]]
+node_id = "node-2"
+priority = 1
+
+[[blocks]]
+block_id = 3
+layer_range = [24, 31]
+model_id = "mistral-7b"
+estimated_vram_gb = 2.0
+
+[[blocks.replicas]]
+node_id = "node-3"
+priority = 1

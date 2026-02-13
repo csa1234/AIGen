@@ -209,6 +209,303 @@ impl CeoTransactable for Transaction {
     }
 }
 
+/// Reward transaction type for distributing compute and storage rewards
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RewardTx {
+    pub recipient: String,
+    pub amount: Amount,
+    pub reward_type: RewardType,
+    pub task_id: Option<String>,
+    pub timestamp: Timestamp,
+    pub tx_hash: TxHash,
+    pub ceo_signature: Option<CeoSignature>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub enum RewardType {
+    Compute,
+    Storage,
+}
+
+impl RewardTx {
+    /// Create a new reward transaction
+    pub fn new(
+        recipient: String,
+        amount: u64,
+        reward_type: RewardType,
+        task_id: Option<String>,
+        timestamp: i64,
+    ) -> Result<Self, GenesisError> {
+        check_shutdown()?;
+        validate_address(&recipient)?;
+
+        if amount == 0 {
+            return Err(GenesisError::InvalidAddress("Reward amount must be positive".to_string()));
+        }
+
+        let mut tx = RewardTx {
+            recipient,
+            amount: Amount::new(amount),
+            reward_type,
+            task_id,
+            timestamp: Timestamp(timestamp),
+            tx_hash: TxHash([0u8; 32]),
+            ceo_signature: None,
+        };
+        tx.update_hash();
+        Ok(tx)
+    }
+
+    fn update_hash(&mut self) {
+        self.tx_hash = hash_reward_tx(self);
+    }
+
+    pub fn sign_with_ceo(mut self, ceo_signature: CeoSignature) -> Self {
+        self.ceo_signature = Some(ceo_signature);
+        self
+    }
+
+    pub fn validate(&self) -> Result<(), BlockchainError> {
+        validate_address(&self.recipient)?;
+
+        if self.amount.is_zero() {
+            return Err(BlockchainError::InvalidAmount);
+        }
+
+        if self.timestamp.value() < 0 {
+            return Err(BlockchainError::InvalidTimestamp);
+        }
+
+        Ok(())
+    }
+
+    pub fn is_authorized(&self) -> bool {
+        self.ceo_signature.is_some()
+    }
+}
+
+impl CeoTransactable for RewardTx {
+    fn sender_address(&self) -> &str {
+        &self.recipient
+    }
+
+    fn is_priority(&self) -> bool {
+        true
+    }
+
+    fn ceo_signature(&self) -> Option<&CeoSignature> {
+        self.ceo_signature.as_ref()
+    }
+
+    fn message_to_sign(&self) -> Vec<u8> {
+        self.tx_hash.0.to_vec()
+    }
+}
+
+/// Hash a reward transaction for signing
+pub fn hash_reward_tx(tx: &RewardTx) -> TxHash {
+    use sha3::{Digest, Sha3_256};
+    let mut hasher = Sha3_256::new();
+    hasher.update(tx.recipient.as_bytes());
+    hasher.update(&tx.amount.value().to_le_bytes());
+    hasher.update(format!("{:?}", tx.reward_type).as_bytes());
+    if let Some(ref task_id) = tx.task_id {
+        hasher.update(task_id.as_bytes());
+    }
+    hasher.update(&tx.timestamp.value().to_le_bytes());
+    TxHash(hasher.finalize().into())
+}
+
+/// Stake transaction - locks tokens for validator/compute participation
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct StakeTx {
+    pub staker: String,
+    pub amount: Amount,
+    pub role: crate::state::StakeRole,
+    pub timestamp: Timestamp,
+    pub signature: Signature,
+    pub tx_hash: TxHash,
+}
+
+impl StakeTx {
+    pub fn new(
+        staker: String,
+        amount: u64,
+        role: crate::state::StakeRole,
+        timestamp: i64,
+    ) -> Result<Self, GenesisError> {
+        check_shutdown()?;
+        validate_address(&staker)?;
+
+        if amount == 0 {
+            return Err(GenesisError::InvalidAddress("Stake amount must be positive".to_string()));
+        }
+
+        let mut tx = StakeTx {
+            staker,
+            amount: Amount::new(amount),
+            role,
+            timestamp: Timestamp(timestamp),
+            signature: Signature::from([0u8; 64]),
+            tx_hash: TxHash([0u8; 32]),
+        };
+        tx.update_hash();
+        Ok(tx)
+    }
+
+    fn update_hash(&mut self) {
+        self.tx_hash = hash_stake_tx(self);
+    }
+
+    pub fn sign(mut self, secret_key: &SecretKey) -> Self {
+        let signature = sign_message(self.tx_hash.0.as_ref(), secret_key);
+        self.signature = signature;
+        self
+    }
+
+    pub fn validate(&self) -> Result<(), BlockchainError> {
+        validate_address(&self.staker)?;
+        if self.amount.is_zero() {
+            return Err(BlockchainError::InvalidAmount);
+        }
+        if self.timestamp.value() < 0 {
+            return Err(BlockchainError::InvalidTimestamp);
+        }
+        Ok(())
+    }
+}
+
+pub fn hash_stake_tx(tx: &StakeTx) -> TxHash {
+    use sha3::{Digest, Sha3_256};
+    let mut hasher = Sha3_256::new();
+    hasher.update(tx.staker.as_bytes());
+    hasher.update(&tx.amount.value().to_le_bytes());
+    hasher.update(format!("{:?}", tx.role).as_bytes());
+    hasher.update(&tx.timestamp.value().to_le_bytes());
+    TxHash(hasher.finalize().into())
+}
+
+/// Unstake transaction - initiates unstaking with 7-day cooldown
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct UnstakeTx {
+    pub staker: String,
+    pub amount: Amount,
+    pub timestamp: Timestamp,
+    pub signature: Signature,
+    pub tx_hash: TxHash,
+}
+
+impl UnstakeTx {
+    pub const UNSTAKE_COOLDOWN_SECS: i64 = 7 * 24 * 60 * 60; // 7 days
+
+    pub fn new(
+        staker: String,
+        amount: u64,
+        timestamp: i64,
+    ) -> Result<Self, GenesisError> {
+        check_shutdown()?;
+        validate_address(&staker)?;
+
+        if amount == 0 {
+            return Err(GenesisError::InvalidAddress("Unstake amount must be positive".to_string()));
+        }
+
+        let mut tx = UnstakeTx {
+            staker,
+            amount: Amount::new(amount),
+            timestamp: Timestamp(timestamp),
+            signature: Signature::from([0u8; 64]),
+            tx_hash: TxHash([0u8; 32]),
+        };
+        tx.update_hash();
+        Ok(tx)
+    }
+
+    fn update_hash(&mut self) {
+        self.tx_hash = hash_unstake_tx(self);
+    }
+
+    pub fn sign(mut self, secret_key: &SecretKey) -> Self {
+        let signature = sign_message(self.tx_hash.0.as_ref(), secret_key);
+        self.signature = signature;
+        self
+    }
+
+    pub fn validate(&self) -> Result<(), BlockchainError> {
+        validate_address(&self.staker)?;
+        if self.amount.is_zero() {
+            return Err(BlockchainError::InvalidAmount);
+        }
+        if self.timestamp.value() < 0 {
+            return Err(BlockchainError::InvalidTimestamp);
+        }
+        Ok(())
+    }
+}
+
+pub fn hash_unstake_tx(tx: &UnstakeTx) -> TxHash {
+    use sha3::{Digest, Sha3_256};
+    let mut hasher = Sha3_256::new();
+    hasher.update(tx.staker.as_bytes());
+    hasher.update(&tx.amount.value().to_le_bytes());
+    hasher.update(&tx.timestamp.value().to_le_bytes());
+    TxHash(hasher.finalize().into())
+}
+
+/// Claim unstaked tokens after cooldown period
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ClaimStakeTx {
+    pub staker: String,
+    pub timestamp: Timestamp,
+    pub signature: Signature,
+    pub tx_hash: TxHash,
+}
+
+impl ClaimStakeTx {
+    pub fn new(
+        staker: String,
+        timestamp: i64,
+    ) -> Result<Self, GenesisError> {
+        check_shutdown()?;
+        validate_address(&staker)?;
+
+        let mut tx = ClaimStakeTx {
+            staker,
+            timestamp: Timestamp(timestamp),
+            signature: Signature::from([0u8; 64]),
+            tx_hash: TxHash([0u8; 32]),
+        };
+        tx.update_hash();
+        Ok(tx)
+    }
+
+    fn update_hash(&mut self) {
+        self.tx_hash = hash_claim_stake_tx(self);
+    }
+
+    pub fn sign(mut self, secret_key: &SecretKey) -> Self {
+        let signature = sign_message(self.tx_hash.0.as_ref(), secret_key);
+        self.signature = signature;
+        self
+    }
+
+    pub fn validate(&self) -> Result<(), BlockchainError> {
+        validate_address(&self.staker)?;
+        if self.timestamp.value() < 0 {
+            return Err(BlockchainError::InvalidTimestamp);
+        }
+        Ok(())
+    }
+}
+
+pub fn hash_claim_stake_tx(tx: &ClaimStakeTx) -> TxHash {
+    use sha3::{Digest, Sha3_256};
+    let mut hasher = Sha3_256::new();
+    hasher.update(tx.staker.as_bytes());
+    hasher.update(&tx.timestamp.value().to_le_bytes());
+    TxHash(hasher.finalize().into())
+}
+
 #[derive(Default, Debug)]
 pub struct TransactionPool {
     pending: VecDeque<Transaction>,

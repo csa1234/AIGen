@@ -54,6 +54,19 @@ pub enum NetworkEvent {
         capabilities: crate::protocol::NodeCapabilities,
         timestamp: i64,
     },
+    HeartbeatReceived {
+        node_id: String,
+        timestamp: i64,
+        active_tasks: Vec<Uuid>,
+        load_score: f32,
+    },
+    CheckpointReceived {
+        task_id: Uuid,
+        inference_id: Uuid,
+        checkpoint_hash: [u8; 32],
+        layer_range: (u32, u32),
+        timestamp: i64,
+    },
     ShutdownSignal,
     ReputationUpdate(PeerId, i32),
 }
