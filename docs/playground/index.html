@@ -95,45 +95,147 @@
                     <button class="new-chat-btn" id="newChatBtn">New Chat</button>
                     <button class="export-btn" id="exportBtn">Export Chat</button>
                 </div>
+
+                <div class="sidebar-section">
+                    <h3>Navigation</h3>
+                    <div class="tab-buttons">
+                        <button class="tab-btn active" data-tab="chat">Chat</button>
+                        <button class="tab-btn" data-tab="staking">Staking</button>
+                        <button class="tab-btn" data-tab="governance">Governance</button>
+                    </div>
+                </div>
             </aside>
 
-            <!-- Chat Area -->
-            <div class="chat-area">
-                <div class="chat-messages" id="chatMessages">
-                    <div class="welcome-message">
-                        <h2>Welcome to AIGEN AI Playground</h2>
-                        <p>Start chatting with AI models powered by the AIGEN blockchain. Select a model and tier, then type your message below.</p>
-                        <div class="quick-actions">
-                            <button class="quick-action" data-message="Hello! How can you help me today?">Hello!</button>
-                            <button class="quick-action" data-message="Explain quantum computing in simple terms">Explain quantum computing</button>
-                            <button class="quick-action" data-message="Write a Python function to calculate fibonacci numbers">Write Python code</button>
+            <!-- Main Content Area -->
+            <div class="main-area">
+                <!-- Chat Tab -->
+                <div id="chatTab" class="tab-content active">
+                    <div class="chat-messages" id="chatMessages">
+                        <div class="welcome-message">
+                            <h2>Welcome to AIGEN AI Playground</h2>
+                            <p>Start chatting with AI models powered by the AIGEN blockchain. Select a model and tier, then type your message below.</p>
+                            <div class="quick-actions">
+                                <button class="quick-action" data-message="Hello! How can you help me today?">Hello!</button>
+                                <button class="quick-action" data-message="Explain quantum computing in simple terms">Explain quantum computing</button>
+                                <button class="quick-action" data-message="Write a Python function to calculate fibonacci numbers">Write Python code</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="chat-input-container">
+                        <div class="input-controls">
+                            <label class="streaming-toggle">
+                                <input type="checkbox" id="streamingToggle" checked>
+                                <span>Streaming</span>
+                            </label>
+                            <div class="token-counter">
+                                <span id="tokenCount">0</span> tokens
+                            </div>
+                        </div>
+                        <div class="chat-input-wrapper">
+                            <textarea 
+                                id="chatInput" 
+                                placeholder="Type your message here... (Shift+Enter for new line)"
+                                rows="1"
+                                maxlength="4000"
+                            ></textarea>
+                            <button class="send-btn" id="sendBtn" disabled>
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <line x1="22" y1="2" x2="11" y2="13"></line>
+                                    <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                                </svg>
+                            </button>
                         </div>
                     </div>
                 </div>
 
-                <div class="chat-input-container">
-                    <div class="input-controls">
-                        <label class="streaming-toggle">
-                            <input type="checkbox" id="streamingToggle" checked>
-                            <span>Streaming</span>
-                        </label>
-                        <div class="token-counter">
-                            <span id="tokenCount">0</span> tokens
+                <!-- Staking Tab -->
+                <div id="stakingTab" class="tab-content hidden">
+                    <div class="staking-header">
+                        <h2>Staking</h2>
+                        <div class="stake-summary">
+                            <div class="stat-card">
+                                <label>Your Stake</label>
+                                <span id="yourStake">0 AIGEN</span>
+                            </div>
+                            <div class="stat-card">
+                                <label>Role</label>
+                                <span id="stakeRole">None</span>
+                            </div>
+                            <div class="stat-card">
+                                <label>Rewards Earned</label>
+                                <span id="rewardsEarned">0 AIGEN</span>
+                            </div>
+                            <div class="stat-card">
+                                <label>Wallet Balance</label>
+                                <span id="walletBalance">-- AIGEN</span>
+                            </div>
                         </div>
                     </div>
-                    <div class="chat-input-wrapper">
-                        <textarea 
-                            id="chatInput" 
-                            placeholder="Type your message here... (Shift+Enter for new line)"
-                            rows="1"
-                            maxlength="4000"
-                        ></textarea>
-                        <button class="send-btn" id="sendBtn" disabled>
-                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <line x1="22" y1="2" x2="11" y2="13"></line>
-                                <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
-                            </svg>
-                        </button>
+                    
+                    <div class="staking-actions">
+                        <div class="action-card">
+                            <h3>Stake Tokens</h3>
+                            <form id="stakeForm">
+                                <input type="number" id="stakeAmount" placeholder="Amount (AIGEN)" min="1000" required>
+                                <select id="stakeRoleSelect">
+                                    <option value="Inference">Inference (min 1000)</option>
+                                    <option value="Training">Training (min 5000)</option>
+                                    <option value="Both">Both (min 5000)</option>
+                                </select>
+                                <button type="submit" class="btn-primary">Stake</button>
+                            </form>
+                        </div>
+                        
+                        <div class="action-card">
+                            <h3>Unstake Tokens</h3>
+                            <form id="unstakeForm">
+                                <input type="number" id="unstakeAmount" placeholder="Amount (AIGEN)" min="1" required>
+                                <button type="submit" class="btn-secondary">Unstake</button>
+                            </form>
+                        </div>
+                        
+                        <div class="action-card">
+                            <h3>Claim Rewards</h3>
+                            <p>Pending unstake: <span id="pendingUnstake">0 AIGEN</span></p>
+                            <button id="claimBtn" class="btn-primary">Claim</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Governance Tab -->
+                <div id="governanceTab" class="tab-content hidden">
+                    <div class="governance-header">
+                        <h2>Governance</h2>
+                        <div class="voting-power">
+                            <label>Your Voting Power:</label>
+                            <span id="votingPower">0 AIGEN</span>
+                        </div>
+                    </div>
+                    
+                    <div class="governance-content">
+                        <div class="proposals-list">
+                            <h3>Active Proposals</h3>
+                            <div id="proposalsList">
+                                <p class="empty-state">Loading proposals...</p>
+                            </div>
+                        </div>
+                        
+                        <div class="proposal-details hidden" id="proposalDetails">
+                            <h3>Proposal Details</h3>
+                            <div id="proposalInfo"></div>
+                            <div id="voteForm">
+                                <h4>Cast Your Vote</h4>
+                                <select id="voteChoice">
+                                    <option value="Approve">Approve</option>
+                                    <option value="Reject">Reject</option>
+                                    <option value="Abstain">Abstain</option>
+                                </select>
+                                <textarea id="voteComment" placeholder="Optional comment"></textarea>
+                                <button id="submitVoteBtn" class="btn-primary">Submit Vote</button>
+                            </div>
+                            <div id="voteTally"></div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -158,9 +260,21 @@
                 </div>
 
                 <div class="settings-section">
-                    <h3>Wallet</h3>
-                    <label for="walletAddress">Wallet Address (optional):</label>
-                    <input type="text" id="walletAddress" placeholder="Enter wallet address for authentication">
+                    <h3>Wallet Configuration</h3>
+                    <label for="walletAddress">Wallet Address (Public Key):</label>
+                    <input type="text" id="walletAddress" placeholder="Derived from private key" readonly>
+                    
+                    <label for="walletPrivateKey">Private Key (64 bytes hex):</label>
+                    <input type="password" id="walletPrivateKey" placeholder="Enter your private key">
+                    <button id="generateKeyBtn" class="btn-secondary">Generate New Keypair</button>
+                    
+                    <div id="generatedKeys" class="hidden">
+                        <p><strong>⚠️ Save these keys securely!</strong></p>
+                        <label>Private Key:</label>
+                        <input type="text" id="genPrivateKey" readonly>
+                        <label>Public Key (Address):</label>
+                        <input type="text" id="genPublicKey" readonly>
+                    </div>
                 </div>
 
                 <div class="settings-section">
@@ -193,6 +307,8 @@
         <div class="loading-text">Connecting to AIGEN...</div>
     </div>
 
+    <script src="../../dashboard/wallet.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/tweetnacl@1.0.3/nacl-fast.min.js"></script>
     <script src="app.js"></script>
 </body>
 </html>

@@ -5,6 +5,8 @@ Cargo.lock
 # IDE
 .vscode/
 .idea/
+./trae
+./traycer
 
 # OS
 .DS_Store

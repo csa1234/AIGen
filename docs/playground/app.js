@@ -279,6 +279,58 @@ class AIGENRPCClient {
         }
     }
 
+    // Staking methods
+    async getStake(address) {
+        return await this.callHttp('staking_getStake', [address]);
+    }
+
+    async submitStakeTx(staker, amount, role, timestamp, signature) {
+        return await this.callHttp('staking_submitStakeTx', [{
+            staker, amount, role, timestamp, signature
+        }]);
+    }
+
+    async submitUnstakeTx(staker, amount, timestamp, signature) {
+        return await this.callHttp('staking_submitUnstakeTx', [{
+            staker, amount, timestamp, signature
+        }]);
+    }
+
+    async submitClaimStakeTx(staker, timestamp, signature) {
+        return await this.callHttp('staking_submitClaimStakeTx', [{
+            staker, timestamp, signature
+        }]);
+    }
+
+    // Governance methods
+    async listProposals(statusFilter = null) {
+        return await this.callHttp('governance_listProposals', [statusFilter]);
+    }
+
+    async getProposal(proposalId) {
+        return await this.callHttp('governance_getProposal', [proposalId]);
+    }
+
+    async listVotes(proposalId) {
+        return await this.callHttp('governance_listVotes', [proposalId]);
+    }
+
+    async submitVote(proposalId, voterAddress, voterPublicKey, vote, comment, timestamp, signature) {
+        return await this.callHttp('governance_submitVote', [{
+            proposal_id: proposalId,
+            voter_address: voterAddress,
+            voter_public_key: voterPublicKey,
+            vote,
+            comment,
+            timestamp,
+            signature
+        }]);
+    }
+
+    async getBalance(address) {
+        return await this.callHttp('getBalance', [address]);
+    }
+
     disconnect() {
         if (this.ws) {
             this.ws.close();
@@ -298,6 +350,9 @@ class AIGENPlayground {
         this.isStreaming = true;
         this.settings = null;
         this.currentStreamingMessage = null;
+        this.currentTab = 'chat';
+        this.currentProposalId = null;
+        this.walletManager = new WalletManager();
         
         this.initializeElements();
         this.setupEventListeners();
@@ -326,7 +381,9 @@ class AIGENPlayground {
             resetSettingsBtn: document.getElementById('resetSettingsBtn'),
             newChatBtn: document.getElementById('newChatBtn'),
             exportBtn: document.getElementById('exportBtn'),
-            loadingOverlay: document.getElementById('loadingOverlay')
+            loadingOverlay: document.getElementById('loadingOverlay'),
+            tabButtons: document.querySelectorAll('.tab-btn'),
+            tabContents: document.querySelectorAll('.tab-content')
         };
     }
 
@@ -351,6 +408,8 @@ class AIGENPlayground {
         this.elements.tierSelector.addEventListener('change', (e) => {
             this.currentTier = e.target.value;
         });
+
+        this.setupTabListeners();
 
         this.elements.settingsBtn.addEventListener('click', () => this.openSettings());
         this.elements.modalClose.addEventListener('click', () => this.closeSettings());
@@ -393,6 +452,87 @@ class AIGENPlayground {
                 this.closeSettings();
             }
         });
+
+        // Staking form listeners
+        const stakeForm = document.getElementById('stakeForm');
+        if (stakeForm) {
+            stakeForm.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const amount = parseInt(document.getElementById('stakeAmount').value);
+                const role = document.getElementById('stakeRoleSelect').value;
+                await this.handleStake(amount, role);
+            });
+        }
+
+        const unstakeForm = document.getElementById('unstakeForm');
+        if (unstakeForm) {
+            unstakeForm.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const amount = parseInt(document.getElementById('unstakeAmount').value);
+                await this.handleUnstake(amount);
+            });
+        }
+
+        const claimBtn = document.getElementById('claimBtn');
+        if (claimBtn) {
+            claimBtn.addEventListener('click', async () => {
+                await this.handleClaim();
+            });
+        }
+
+        // Vote form listener
+        const submitVoteBtn = document.getElementById('submitVoteBtn');
+        if (submitVoteBtn) {
+            submitVoteBtn.addEventListener('click', async () => {
+                await this.handleVote();
+            });
+        }
+
+        // Generate keypair button
+        const generateKeyBtn = document.getElementById('generateKeyBtn');
+        if (generateKeyBtn) {
+            generateKeyBtn.addEventListener('click', () => {
+                try {
+                    const keypair = this.walletManager.generateKeypair();
+                    document.getElementById('genPrivateKey').value = keypair.privateKey;
+                    document.getElementById('genPublicKey').value = keypair.publicKey;
+                    document.getElementById('generatedKeys').classList.remove('hidden');
+                } catch (error) {
+                    this.showNotification(`Key generation failed: ${error.message}`, 'error');
+                }
+            });
+        }
+    }
+
+    setupTabListeners() {
+        document.querySelectorAll('.tab-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const tab = e.target.dataset.tab;
+                this.switchTab(tab);
+            });
+        });
+    }
+
+    switchTab(tabName) {
+        // Hide all tabs
+        document.querySelectorAll('.tab-content').forEach(t => t.classList.add('hidden'));
+        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+        
+        // Show selected tab
+        const tabContent = document.getElementById(`${tabName}Tab`);
+        if (tabContent) {
+            tabContent.classList.remove('hidden');
+        }
+        const tabBtn = document.querySelector(`[data-tab="${tabName}"]`);
+        if (tabBtn) {
+            tabBtn.classList.add('active');
+        }
+        
+        this.currentTab = tabName;
+        
+        // Load data for the tab
+        if (tabName === 'staking') this.loadStakingData();
+        if (tabName === 'governance') this.loadGovernanceData();
     }
 
     loadSettings() {
@@ -419,6 +559,19 @@ class AIGENPlayground {
         document.getElementById('temperature').value = settings.temperature;
         document.getElementById('themeToggle').checked = settings.theme === 'dark';
 
+        // Load wallet private key
+        const privateKey = localStorage.getItem('userPrivateKey');
+        if (privateKey) {
+            document.getElementById('walletPrivateKey').value = privateKey;
+            try {
+                const address = this.walletManager.derivePublicKey(privateKey);
+                document.getElementById('walletAddress').value = address;
+                settings.walletAddress = address;
+            } catch (error) {
+                console.error('Failed to derive address from private key:', error);
+            }
+        }
+
         if (this.elements && this.elements.rpcUrl && this.elements.wsUrl) {
             this.elements.rpcUrl.value = settings.rpcUrl;
             this.elements.wsUrl.value = settings.wsUrl;
@@ -433,6 +586,13 @@ class AIGENPlayground {
     }
 
     saveSettings() {
+        // Save wallet private key
+        const privateKey = document.getElementById('walletPrivateKey').value;
+        if (privateKey) {
+            localStorage.setItem('userPrivateKey', privateKey);
+            localStorage.setItem('ceoPrivateKey', privateKey);
+        }
+
         const settings = {
             rpcUrl: document.getElementById('settingsRpcUrl').value,
             wsUrl: document.getElementById('settingsWsUrl').value,
@@ -441,6 +601,16 @@ class AIGENPlayground {
             walletAddress: document.getElementById('walletAddress').value,
             theme: document.getElementById('themeToggle').checked ? 'dark' : 'light'
         };
+
+        // Try to derive address from private key if provided
+        if (privateKey) {
+            try {
+                settings.walletAddress = this.walletManager.derivePublicKey(privateKey);
+                document.getElementById('walletAddress').value = settings.walletAddress;
+            } catch (error) {
+                console.error('Failed to derive address:', error);
+            }
+        }
 
         localStorage.setItem('aigenPlaygroundSettings', JSON.stringify(settings));
         this.settings = settings;
@@ -478,13 +648,16 @@ class AIGENPlayground {
             await this.loadAvailableModels();
             await this.updateQuota();
             
+            // Load staking data if wallet configured
+            if (this.settings.walletAddress) {
+                await this.loadStakingData();
+            }
+            
             this.showNotification('Connected to AIGEN network!', 'success');
         } catch (error) {
             console.error('Connection failed:', error);
             this.updateConnectionStatus('disconnected');
             this.showNotification(`Connection failed: ${error.message}`, 'error');
-        } finally {
-            this.showLoading(false);
         }
     }
 
@@ -820,6 +993,294 @@ class AIGENPlayground {
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
+    }
+
+    // Staking methods
+    async loadStakingData() {
+        try {
+            const walletAddress = this.settings.walletAddress;
+            if (!walletAddress) {
+                this.showNotification('Please configure wallet address in settings', 'warning');
+                return;
+            }
+            
+            // Fetch stake info
+            const stakeInfo = await this.client.getStake(walletAddress);
+            const yourStakeEl = document.getElementById('yourStake');
+            const stakeRoleEl = document.getElementById('stakeRole');
+            const rewardsEarnedEl = document.getElementById('rewardsEarned');
+            const pendingUnstakeEl = document.getElementById('pendingUnstake');
+            const votingPowerEl = document.getElementById('votingPower');
+            
+            if (yourStakeEl) yourStakeEl.textContent = `${stakeInfo.staked_amount || 0} AIGEN`;
+            if (stakeRoleEl) stakeRoleEl.textContent = stakeInfo.role || 'None';
+            if (rewardsEarnedEl) rewardsEarnedEl.textContent = `${stakeInfo.total_rewards_claimed || 0} AIGEN`;
+            if (pendingUnstakeEl) pendingUnstakeEl.textContent = `${stakeInfo.pending_unstake || 0} AIGEN`;
+            if (votingPowerEl) votingPowerEl.textContent = `${stakeInfo.staked_amount || 0} AIGEN`;
+            
+            // Fetch balance
+            try {
+                const balance = await this.client.getBalance(walletAddress);
+                const balanceEl = document.getElementById('walletBalance');
+                if (balanceEl && balance !== undefined) {
+                    balanceEl.textContent = `${balance} AIGEN`;
+                }
+            } catch (balanceError) {
+                console.error('Failed to load balance:', balanceError);
+            }
+        } catch (error) {
+            console.error('Failed to load staking data:', error);
+            this.showNotification('Failed to load staking data', 'error');
+        }
+    }
+
+    async handleStake(amount, role) {
+        try {
+            const walletAddress = this.settings.walletAddress;
+            const timestamp = Math.floor(Date.now() / 1000);
+            
+            // Format message for signing
+            const message = `stake:${walletAddress}:${amount}:${role}:${timestamp}`;
+            
+            // Sign with wallet
+            const signature = await this.walletManager.signMessage(message);
+            
+            // Submit stake transaction
+            const result = await this.client.submitStakeTx(
+                walletAddress,
+                amount,
+                role,
+                timestamp,
+                signature
+            );
+            
+            this.showNotification(`Staked ${amount} AIGEN successfully!`, 'success');
+            await this.loadStakingData();
+        } catch (error) {
+            this.showNotification(`Stake failed: ${error.message}`, 'error');
+        }
+    }
+
+    async handleUnstake(amount) {
+        try {
+            const walletAddress = this.settings.walletAddress;
+            const timestamp = Math.floor(Date.now() / 1000);
+            
+            const message = `unstake:${walletAddress}:${amount}:${timestamp}`;
+            const signature = await this.walletManager.signMessage(message);
+            
+            const result = await this.client.submitUnstakeTx(
+                walletAddress,
+                amount,
+                timestamp,
+                signature
+            );
+            
+            this.showNotification(`Unstaked ${amount} AIGEN successfully!`, 'success');
+            await this.loadStakingData();
+        } catch (error) {
+            this.showNotification(`Unstake failed: ${error.message}`, 'error');
+        }
+    }
+
+    async handleClaim() {
+        try {
+            const walletAddress = this.settings.walletAddress;
+            const timestamp = Math.floor(Date.now() / 1000);
+            
+            const message = `claim_stake:${walletAddress}:${timestamp}`;
+            const signature = await this.walletManager.signMessage(message);
+            
+            const result = await this.client.submitClaimStakeTx(
+                walletAddress,
+                timestamp,
+                signature
+            );
+            
+            this.showNotification('Rewards claimed successfully!', 'success');
+            await this.loadStakingData();
+        } catch (error) {
+            this.showNotification(`Claim failed: ${error.message}`, 'error');
+        }
+    }
+
+    // Governance methods
+    async loadGovernanceData() {
+        try {
+            // Fetch all proposals
+            const proposals = await this.client.listProposals(null);
+            this.renderProposalsList(proposals.proposals);
+        } catch (error) {
+            console.error('Failed to load governance data:', error);
+            this.showNotification('Failed to load proposals', 'error');
+        }
+    }
+
+    renderProposalsList(proposals) {
+        const container = document.getElementById('proposalsList');
+        
+        if (!proposals || proposals.length === 0) {
+            container.innerHTML = '<p class="empty-state">No active proposals</p>';
+            return;
+        }
+        
+        container.innerHTML = proposals.map(p => `
+            <div class="proposal-card" data-proposal-id="${p.proposal_id}">
+                <div class="proposal-header">
+                    <h4>${p.description}</h4>
+                    <span class="status-badge status-${p.status.toLowerCase()}">${p.status}</span>
+                </div>
+                <div class="proposal-meta">
+                    <span>Submitted by: ${p.submitted_by.substring(0, 10)}...</span>
+                    <span>Date: ${new Date(p.submitted_at * 1000).toLocaleDateString()}</span>
+                </div>
+                <button class="btn-secondary view-proposal-btn" data-proposal-id="${p.proposal_id}">
+                    View Details
+                </button>
+            </div>
+        `).join('');
+        
+        // Add click handlers
+        document.querySelectorAll('.view-proposal-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const proposalId = e.target.dataset.proposalId;
+                this.showProposalDetails(proposalId);
+            });
+        });
+    }
+
+    async showProposalDetails(proposalId) {
+        try {
+            const proposal = await this.client.getProposal(proposalId);
+            const votes = await this.client.listVotes(proposalId);
+            
+            // Show proposal details section
+            const proposalDetailsEl = document.getElementById('proposalDetails');
+            if (proposalDetailsEl) {
+                proposalDetailsEl.classList.remove('hidden');
+            }
+            
+            // Render proposal info
+            const infoHtml = `
+                <div class="proposal-full">
+                    <h4>${proposal.description}</h4>
+                    <p><strong>Status:</strong> ${proposal.status}</p>
+                    <p><strong>Submitted by:</strong> ${proposal.submitted_by}</p>
+                    <p><strong>Submitted at:</strong> ${new Date(proposal.submitted_at * 1000).toLocaleString()}</p>
+                    ${proposal.model_id ? `<p><strong>Model:</strong> ${proposal.model_id}</p>` : ''}
+                    ${proposal.current_version ? `<p><strong>Current Version:</strong> ${proposal.current_version}</p>` : ''}
+                    ${proposal.new_version ? `<p><strong>New Version:</strong> ${proposal.new_version}</p>` : ''}
+                </div>
+            `;
+            const proposalInfoEl = document.getElementById('proposalInfo');
+            if (proposalInfoEl) {
+                proposalInfoEl.innerHTML = infoHtml;
+            }
+            
+            // Render vote tally
+            this.renderVoteTally(votes.tally, votes.votes);
+            
+            // Store current proposal ID for voting
+            this.currentProposalId = proposalId;
+        } catch (error) {
+            this.showNotification(`Failed to load proposal: ${error.message}`, 'error');
+        }
+    }
+
+    renderVoteTally(tally, votes) {
+        if (!tally) return;
+        
+        const totalWeight = tally.total_voting_power || 1;
+        const approvePercent = (tally.total_approve_weight / totalWeight * 100).toFixed(1);
+        const rejectPercent = (tally.total_reject_weight / totalWeight * 100).toFixed(1);
+        const abstainPercent = (tally.total_abstain_weight / totalWeight * 100).toFixed(1);
+        
+        const tallyHtml = `
+            <div class="vote-tally">
+                <h4>Vote Results</h4>
+                <div class="tally-stats">
+                    <div class="stat">
+                        <label>Approve</label>
+                        <div class="progress-bar">
+                            <div class="progress-fill approve" style="width: ${approvePercent}%"></div>
+                        </div>
+                        <span>${tally.total_approve_weight} AIGEN (${approvePercent}%)</span>
+                    </div>
+                    <div class="stat">
+                        <label>Reject</label>
+                        <div class="progress-bar">
+                            <div class="progress-fill reject" style="width: ${rejectPercent}%"></div>
+                        </div>
+                        <span>${tally.total_reject_weight} AIGEN (${rejectPercent}%)</span>
+                    </div>
+                    <div class="stat">
+                        <label>Abstain</label>
+                        <div class="progress-bar">
+                            <div class="progress-fill abstain" style="width: ${abstainPercent}%"></div>
+                        </div>
+                        <span>${tally.total_abstain_weight} AIGEN (${abstainPercent}%)</span>
+                    </div>
+                </div>
+                <p><strong>Participation:</strong> ${tally.participation_percentage ? tally.participation_percentage.toFixed(1) : 0}% (${tally.unique_voters || 0} voters)</p>
+            </div>
+            
+            <div class="votes-list">
+                <h4>Recent Votes</h4>
+                ${(votes || []).slice(0, 10).map(v => `
+                    <div class="vote-item">
+                        <span class="voter">${v.voter_address.substring(0, 10)}...</span>
+                        <span class="vote-choice vote-${v.vote.toLowerCase()}">${v.vote}</span>
+                        <span class="vote-weight">${v.stake_weight} AIGEN</span>
+                        ${v.comment ? `<p class="vote-comment">${v.comment}</p>` : ''}
+                    </div>
+                `).join('')}
+            </div>
+        `;
+        
+        const voteTallyEl = document.getElementById('voteTally');
+        if (voteTallyEl) {
+            voteTallyEl.innerHTML = tallyHtml;
+        }
+    }
+
+    async handleVote() {
+        try {
+            const walletAddress = this.settings.walletAddress;
+            const vote = document.getElementById('voteChoice').value;
+            const comment = document.getElementById('voteComment').value || null;
+            const timestamp = Math.floor(Date.now() / 1000);
+            
+            // Get private key to derive public key
+            const privateKey = localStorage.getItem('userPrivateKey');
+            if (!privateKey) {
+                throw new Error('Private key not configured. Please set up your wallet in settings.');
+            }
+            
+            // Derive public key from wallet
+            const publicKey = this.walletManager.derivePublicKey(privateKey);
+            
+            // Format message for signing
+            const message = `vote:${this.currentProposalId}:${walletAddress}:${vote}:${timestamp}`;
+            const signature = await this.walletManager.signMessage(message);
+            
+            // Submit vote
+            const result = await this.client.submitVote(
+                this.currentProposalId,
+                walletAddress,
+                publicKey,
+                vote,
+                comment,
+                timestamp,
+                signature
+            );
+            
+            this.showNotification('Vote submitted successfully!', 'success');
+            
+            // Refresh proposal details
+            await this.showProposalDetails(this.currentProposalId);
+        } catch (error) {
+            this.showNotification(`Vote failed: ${error.message}`, 'error');
+        }
     }
 }
 

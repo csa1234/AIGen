@@ -56,6 +56,8 @@ pub struct SipProposal {
     pub proposer: WalletAddress,
     pub timestamp: i64,
     pub ceo_approved: bool,
+    pub auto_approved: bool,     // NEW: true if auto-approved by staker consensus
+    pub approved_at: Option<i64>, // NEW: timestamp when approved (manual or auto)
 }
 
 impl SipProposal {

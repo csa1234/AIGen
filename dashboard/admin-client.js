@@ -477,6 +477,16 @@ class AdminRPCClient {
                     message: `veto_sip:${networkMagic}:${params.proposalId}`,
                     timestamp
                 };
+            case 'approveStakerProposal':
+                return {
+                    message: `approve_staker_proposal:${networkMagic}:${timestamp}:${params.proposalId}`,
+                    timestamp
+                };
+            case 'vetoStakerProposal':
+                return {
+                    message: `veto_staker_proposal:${networkMagic}:${timestamp}:${params.proposalId}:${params.reason}`,
+                    timestamp
+                };
             default:
                 throw new Error(`Unknown admin action: ${action}`);
         }
@@ -509,6 +519,91 @@ class AdminRPCClient {
 
     async getCompressionStats() {
         return this.callHttp('getCompressionStats', []);
+    }
+
+    // ========== Staking Methods ==========
+
+    async listStakes(roleFilter = null) {
+        return this.callHttp('staking_listStakes', [roleFilter]);
+    }
+
+    async getStake(address) {
+        return this.callHttp('staking_getStake', [address]);
+    }
+
+    async submitStakeTx(staker, amount, role, signature, timestamp = null) {
+        const txTimestamp = timestamp || Math.floor(Date.now() / 1000);
+        return this.callHttp('staking_submitStakeTx', [{
+            staker,
+            amount,
+            role,
+            timestamp: txTimestamp,
+            signature
+        }]);
+    }
+
+    async submitUnstakeTx(staker, amount, signature, timestamp = null) {
+        const txTimestamp = timestamp || Math.floor(Date.now() / 1000);
+        return this.callHttp('staking_submitUnstakeTx', [{
+            staker,
+            amount,
+            timestamp: txTimestamp,
+            signature
+        }]);
+    }
+
+    async submitClaimStakeTx(staker, signature, timestamp = null) {
+        const txTimestamp = timestamp || Math.floor(Date.now() / 1000);
+        return this.callHttp('staking_submitClaimStakeTx', [{
+            staker,
+            timestamp: txTimestamp,
+            signature
+        }]);
+    }
+
+    // ========== Governance Methods ==========
+
+    async listProposals(statusFilter = null) {
+        return this.callHttp('governance_listProposals', [statusFilter]);
+    }
+
+    async getProposal(proposalId) {
+        return this.callHttp('governance_getProposal', [proposalId]);
+    }
+
+    async listVotes(proposalId) {
+        return this.callHttp('governance_listVotes', [proposalId]);
+    }
+
+    async submitVote(proposalId, voterAddress, vote, comment, signature, timestamp = null) {
+        const txTimestamp = timestamp || Math.floor(Date.now() / 1000);
+        return this.callHttp('governance_submitVote', [{
+            proposal_id: proposalId,
+            voter_address: voterAddress,
+            vote,
+            comment,
+            timestamp: txTimestamp,
+            signature
+        }]);
+    }
+
+    // ========== CEO Governance Methods ==========
+
+    async approveStakerProposal(proposalId, signature, timestamp) {
+        return this.callHttp('approveStakerProposal', [{
+            proposal_id: proposalId,
+            signature,
+            timestamp
+        }]);
+    }
+
+    async vetoStakerProposal(proposalId, reason, signature, timestamp) {
+        return this.callHttp('vetoStakerProposal', [{
+            proposal_id: proposalId,
+            reason,
+            signature,
+            timestamp
+        }]);
     }
 
     parseRpcError(error) {

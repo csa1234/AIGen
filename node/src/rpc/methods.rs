@@ -679,6 +679,38 @@ pub trait RewardRpc {
     async fn get_reward_leaderboard(&self, limit: Option<u32>) -> Result<RewardLeaderboardResponse, RpcError>;
 }
 
+#[rpc(server)]
+pub trait StakingGovernanceRpc {
+    // Staking methods
+    #[method(name = "staking_listStakes")]
+    async fn list_stakes(&self, role_filter: Option<String>) -> Result<StakeListResponse, RpcError>;
+    
+    #[method(name = "staking_getStake")]
+    async fn get_stake(&self, address: String) -> Result<Option<StakeInfoResponse>, RpcError>;
+    
+    #[method(name = "staking_submitStakeTx")]
+    async fn submit_stake_tx(&self, request: SubmitStakeTxRequest) -> Result<StakeTxResponse, RpcError>;
+    
+    #[method(name = "staking_submitUnstakeTx")]
+    async fn submit_unstake_tx(&self, request: SubmitUnstakeTxRequest) -> Result<StakeTxResponse, RpcError>;
+    
+    #[method(name = "staking_submitClaimStakeTx")]
+    async fn submit_claim_stake_tx(&self, request: SubmitClaimStakeTxRequest) -> Result<StakeTxResponse, RpcError>;
+    
+    // Governance methods
+    #[method(name = "governance_listProposals")]
+    async fn list_proposals(&self, status_filter: Option<String>) -> Result<ProposalListResponse, RpcError>;
+    
+    #[method(name = "governance_getProposal")]
+    async fn get_proposal(&self, proposal_id: String) -> Result<Option<ProposalResponse>, RpcError>;
+    
+    #[method(name = "governance_listVotes")]
+    async fn list_votes(&self, proposal_id: String) -> Result<VoteListResponse, RpcError>;
+    
+    #[method(name = "governance_submitVote")]
+    async fn submit_vote(&self, request: SubmitVoteRequest) -> Result<SubmitVoteResponse, RpcError>;
+}
+
 pub struct RewardRpcImpl {
     pub dcs: Option<Arc<DynamicScheduler>>,
     pub dcs_state: Option<Arc<GlobalState>>,
@@ -1010,6 +1042,355 @@ impl RewardRpcServer for RewardRpcImpl {
         Ok(RewardLeaderboardResponse {
             entries,
             total_count,
+        })
+    }
+}
+
+pub struct StakingGovernanceRpcImpl {
+    pub blockchain: Arc<Mutex<blockchain_core::chain::Blockchain>>,
+}
+
+impl StakingGovernanceRpcImpl {
+    pub fn new(blockchain: Arc<Mutex<blockchain_core::chain::Blockchain>>) -> Self {
+        Self { blockchain }
+    }
+}
+
+#[async_trait]
+impl StakingGovernanceRpcServer for StakingGovernanceRpcImpl {
+    async fn list_stakes(&self, role_filter: Option<String>) -> Result<StakeListResponse, RpcError> {
+        let bc = self.blockchain.lock().await;
+        
+        let stakes_list = if let Some(role_str) = role_filter {
+            let role = parse_stake_role(&role_str)?;
+            bc.state.list_stakes_by_role(&role)
+        } else {
+            bc.state.list_all_stakes()
+        };
+        
+        let stakes: Vec<StakeInfoResponse> = stakes_list
+            .into_iter()
+            .map(|(address, stake)| StakeInfoResponse {
+                staker_address: address,
+                staked_amount: stake.staked_amount.value(),
+                staked_since: stake.staked_since,
+                pending_unstake: stake.pending_unstake.value(),
+                unstake_available_at: stake.unstake_available_at,
+                role: stake_role_to_string(&stake.role),
+                total_rewards_claimed: stake.total_rewards_claimed.value(),
+                last_slash_timestamp: stake.last_slash_timestamp,
+            })
+            .collect();
+        
+        Ok(StakeListResponse {
+            total_count: stakes.len() as u32,
+            stakes,
+        })
+    }
+    
+    async fn get_stake(&self, address: String) -> Result<Option<StakeInfoResponse>, RpcError> {
+        let bc = self.blockchain.lock().await;
+        
+        if let Some(stake) = bc.state.get_stake(&address) {
+            Ok(Some(StakeInfoResponse {
+                staker_address: address,
+                staked_amount: stake.staked_amount.value(),
+                staked_since: stake.staked_since,
+                pending_unstake: stake.pending_unstake.value(),
+                unstake_available_at: stake.unstake_available_at,
+                role: stake_role_to_string(&stake.role),
+                total_rewards_claimed: stake.total_rewards_claimed.value(),
+                last_slash_timestamp: stake.last_slash_timestamp,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+    
+    async fn submit_stake_tx(&self, request: SubmitStakeTxRequest) -> Result<StakeTxResponse, RpcError> {
+        use blockchain_core::transaction::StakeTx;
+        use blockchain_core::types::Timestamp;
+        
+        let role = parse_stake_role(&request.role)?;
+        
+        // Create stake transaction
+        let mut stake_tx = StakeTx::new(
+            request.staker.clone(),
+            request.amount,
+            role,
+            request.timestamp,
+        ).map_err(|e| RpcError::Internal(e.to_string()))?;
+        
+        // Parse and attach signature
+        let sig_bytes = parse_hex_bytes(&request.signature)?;
+        if sig_bytes.len() != 64 {
+            return Err(RpcError::InvalidParams("signature must be 64 bytes".to_string()));
+        }
+        let signature = ed25519_dalek::Signature::try_from(sig_bytes.as_slice())
+            .map_err(|e| RpcError::InvalidParams(format!("invalid signature: {e}")))?;
+        stake_tx.signature = signature;
+        
+        // Apply to blockchain state
+        let bc = self.blockchain.lock().await;
+        bc.state.apply_stake_transaction(&stake_tx)
+            .map_err(|e| RpcError::Internal(e.to_string()))?;
+        
+        Ok(StakeTxResponse {
+            success: true,
+            tx_hash: to_hex_tx_hash(&stake_tx.tx_hash),
+            message: format!("Staked {} AIGEN for {} role", request.amount, request.role),
+        })
+    }
+    
+    async fn submit_unstake_tx(&self, request: SubmitUnstakeTxRequest) -> Result<StakeTxResponse, RpcError> {
+        use blockchain_core::transaction::UnstakeTx;
+        
+        let mut unstake_tx = UnstakeTx::new(
+            request.staker.clone(),
+            request.amount,
+            request.timestamp,
+        ).map_err(|e| RpcError::Internal(e.to_string()))?;
+        
+        let sig_bytes = parse_hex_bytes(&request.signature)?;
+        if sig_bytes.len() != 64 {
+            return Err(RpcError::InvalidParams("signature must be 64 bytes".to_string()));
+        }
+        let signature = ed25519_dalek::Signature::try_from(sig_bytes.as_slice())
+            .map_err(|e| RpcError::InvalidParams(format!("invalid signature: {e}")))?;
+        unstake_tx.signature = signature;
+        
+        let bc = self.blockchain.lock().await;
+        bc.state.apply_unstake_transaction(&unstake_tx)
+            .map_err(|e| RpcError::Internal(e.to_string()))?;
+        
+        Ok(StakeTxResponse {
+            success: true,
+            tx_hash: to_hex_tx_hash(&unstake_tx.tx_hash),
+            message: format!("Unstaking {} AIGEN (7-day cooldown)", request.amount),
+        })
+    }
+    
+    async fn submit_claim_stake_tx(&self, request: SubmitClaimStakeTxRequest) -> Result<StakeTxResponse, RpcError> {
+        use blockchain_core::transaction::ClaimStakeTx;
+        
+        let mut claim_tx = ClaimStakeTx::new(
+            request.staker.clone(),
+            request.timestamp,
+        ).map_err(|e| RpcError::Internal(e.to_string()))?;
+        
+        let sig_bytes = parse_hex_bytes(&request.signature)?;
+        if sig_bytes.len() != 64 {
+            return Err(RpcError::InvalidParams("signature must be 64 bytes".to_string()));
+        }
+        let signature = ed25519_dalek::Signature::try_from(sig_bytes.as_slice())
+            .map_err(|e| RpcError::InvalidParams(format!("invalid signature: {e}")))?;
+        claim_tx.signature = signature;
+        
+        let bc = self.blockchain.lock().await;
+        bc.state.apply_claim_stake_transaction(&claim_tx)
+            .map_err(|e| RpcError::Internal(e.to_string()))?;
+        
+        Ok(StakeTxResponse {
+            success: true,
+            tx_hash: to_hex_tx_hash(&claim_tx.tx_hash),
+            message: "Unstaked tokens claimed successfully".to_string(),
+        })
+    }
+    
+    async fn list_proposals(&self, status_filter: Option<String>) -> Result<ProposalListResponse, RpcError> {
+        let bc = self.blockchain.lock().await;
+        
+        let all_proposals: Vec<_> = bc.state.snapshot().model_proposals.into_iter().collect();
+        
+        let filtered: Vec<ProposalResponse> = all_proposals
+            .into_iter()
+            .filter(|(_, p)| {
+                if let Some(ref filter) = status_filter {
+                    let status_str = match p.status {
+                        0 => "Pending",
+                        1 => "Approved",
+                        2 => "Rejected",
+                        3 => "AutoApproved",
+                        _ => "Unknown",
+                    };
+                    status_str.eq_ignore_ascii_case(filter)
+                } else {
+                    true
+                }
+            })
+            .map(|(id, p)| ProposalResponse {
+                proposal_id: id,
+                model_id: Some(p.model_id),
+                current_version: Some(p.current_version),
+                new_version: Some(p.new_version),
+                description: p.description,
+                submitted_by: p.submitted_by,
+                submitted_at: p.submitted_at,
+                status: match p.status {
+                    0 => "Pending".to_string(),
+                    1 => "Approved".to_string(),
+                    2 => "Rejected".to_string(),
+                    3 => "AutoApproved".to_string(),
+                    _ => "Unknown".to_string(),
+                },
+                approved_at: p.approved_at,
+                rejected_at: p.rejected_at,
+                rejection_reason: p.rejection_reason,
+                auto_approved: p.auto_approved,
+            })
+            .collect();
+        
+        Ok(ProposalListResponse {
+            total_count: filtered.len() as u32,
+            proposals: filtered,
+        })
+    }
+    
+    async fn get_proposal(&self, proposal_id: String) -> Result<Option<ProposalResponse>, RpcError> {
+        let bc = self.blockchain.lock().await;
+        
+        if let Some(p) = bc.state.get_model_proposal(&proposal_id) {
+            Ok(Some(ProposalResponse {
+                proposal_id: proposal_id.clone(),
+                model_id: Some(p.model_id),
+                current_version: Some(p.current_version),
+                new_version: Some(p.new_version),
+                description: p.description,
+                submitted_by: p.submitted_by,
+                submitted_at: p.submitted_at,
+                status: match p.status {
+                    0 => "Pending".to_string(),
+                    1 => "Approved".to_string(),
+                    2 => "Rejected".to_string(),
+                    3 => "AutoApproved".to_string(),
+                    _ => "Unknown".to_string(),
+                },
+                approved_at: p.approved_at,
+                rejected_at: p.rejected_at,
+                rejection_reason: p.rejection_reason,
+                auto_approved: p.auto_approved,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+    
+    async fn list_votes(&self, proposal_id: String) -> Result<VoteListResponse, RpcError> {
+        let bc = self.blockchain.lock().await;
+        
+        let votes_data = bc.state.get_votes_for_proposal(&proposal_id);
+        let tally = bc.state.tally_votes(&proposal_id);
+        
+        let votes: Vec<VoteResponse> = votes_data
+            .into_iter()
+            .map(|v| VoteResponse {
+                proposal_id: v.proposal_id,
+                voter_address: v.voter_address,
+                vote: match v.vote {
+                    0 => "Approve".to_string(),
+                    1 => "Reject".to_string(),
+                    2 => "Abstain".to_string(),
+                    _ => "Unknown".to_string(),
+                },
+                comment: v.comment,
+                timestamp: v.timestamp,
+                stake_weight: v.stake_weight,
+            })
+            .collect();
+        
+        Ok(VoteListResponse {
+            votes,
+            tally: VoteTallyResponse {
+                proposal_id: tally.proposal_id,
+                total_approve_weight: tally.total_approve_weight,
+                total_reject_weight: tally.total_reject_weight,
+                total_abstain_weight: tally.total_abstain_weight,
+                total_voting_power: tally.total_voting_power,
+                unique_voters: tally.unique_voters,
+                approval_percentage: tally.approval_percentage,
+                participation_percentage: tally.participation_percentage,
+            },
+        })
+    }
+    
+    async fn submit_vote(&self, request: SubmitVoteRequest) -> Result<SubmitVoteResponse, RpcError> {
+        use blockchain_core::state::GovernanceVote;
+        use blockchain_core::crypto::{verify_signature, PublicKey};
+        
+        // Parse vote value
+        let vote_value = match request.vote.to_lowercase().as_str() {
+            "approve" => 0,
+            "reject" => 1,
+            "abstain" => 2,
+            _ => return Err(RpcError::InvalidParams("invalid vote value".to_string())),
+        };
+        
+        // Verify signature (user must sign their vote)
+        // Message format: "vote:{proposal_id}:{vote}:{timestamp}"
+        let msg = format!("vote:{}:{}:{}", request.proposal_id, request.vote, request.timestamp);
+        let sig_bytes = parse_hex_bytes(&request.signature)?;
+        if sig_bytes.len() != 64 {
+            return Err(RpcError::InvalidParams("signature must be 64 bytes".to_string()));
+        }
+        let signature = ed25519_dalek::Signature::try_from(sig_bytes.as_slice())
+            .map_err(|e| RpcError::InvalidParams(format!("invalid signature: {e}")))?;
+        
+        // Parse and verify the voter's public key
+        let pk_bytes = parse_hex_bytes(&request.voter_public_key)?;
+        if pk_bytes.len() != 32 {
+            return Err(RpcError::InvalidParams("public key must be 32 bytes".to_string()));
+        }
+        let public_key = PublicKey::try_from(pk_bytes.as_slice())
+            .map_err(|e| RpcError::InvalidParams(format!("invalid public key: {e}")))?;
+        
+        // Verify the signature over the message
+        if !verify_signature(msg.as_bytes(), &signature, &public_key) {
+            return Err(RpcError::InvalidSignature);
+        }
+        
+        let bc = self.blockchain.lock().await;
+        
+        // Check if proposal exists
+        if bc.state.get_model_proposal(&request.proposal_id).is_none() {
+            return Err(RpcError::ProposalNotFound);
+        }
+        
+        // Create vote record
+        let vote = GovernanceVote {
+            proposal_id: request.proposal_id.clone(),
+            voter_address: request.voter_address.clone(),
+            vote: vote_value,
+            comment: request.comment,
+            timestamp: request.timestamp,
+            stake_weight: 0, // Will be filled by record_governance_vote
+        };
+        
+        // Record the vote with specific error mapping
+        bc.state.record_governance_vote(vote)
+            .map_err(|e| match e {
+                blockchain_core::types::BlockchainError::InvalidTransaction => {
+                    // InvalidTransaction can mean: no stake, zero weight, or already voted
+                    // Check if voter has stake to determine which error to return
+                    if bc.state.get_stake(&request.voter_address).is_none() {
+                        RpcError::InsufficientStake
+                    } else {
+                        // If stake exists but still InvalidTransaction, it's either 
+                        // zero weight or already voted
+                        let existing_votes = bc.state.get_votes_for_proposal(&request.proposal_id);
+                        if existing_votes.iter().any(|v| v.voter_address == request.voter_address) {
+                            RpcError::AlreadyVoted
+                        } else {
+                            RpcError::InsufficientStake
+                        }
+                    }
+                }
+                _ => RpcError::Internal(e.to_string()),
+            })?;
+        
+        Ok(SubmitVoteResponse {
+            success: true,
+            proposal_id: request.proposal_id,
+            vote: request.vote,
         })
     }
 }

@@ -252,6 +252,15 @@ class AdminDashboard {
         document.getElementById('vetoSipBtn').addEventListener('click', () => this.vetoSIP());
         document.getElementById('shutdownForm').addEventListener('submit', (e) => this.submitShutdown(e));
 
+        // Staking form
+        document.getElementById('stakeForm')?.addEventListener('submit', (e) => this.submitStake(e));
+        document.getElementById('unstakeBtn')?.addEventListener('click', () => this.submitUnstake());
+        document.getElementById('claimStakeBtn')?.addEventListener('click', () => this.submitClaimStake());
+
+        // CEO staker proposal controls
+        document.getElementById('approveStakerProposalBtn')?.addEventListener('click', () => this.approveStakerProposal());
+        document.getElementById('vetoStakerProposalBtn')?.addEventListener('click', () => this.vetoStakerProposal());
+
         document.addEventListener('keydown', (e) => {
             if (e.key === 'Escape') this.closeModals();
         });
@@ -758,38 +767,47 @@ class AdminDashboard {
     }
 
     async loadGovernanceProposals() {
-        // Governance listing RPC not yet implemented on server
-        // Replace the entire tab content with a CLI call-to-action
-        const governanceTab = document.getElementById('governanceTab');
-        if (governanceTab) {
-            governanceTab.innerHTML = `
-                <div class="governance-placeholder" style="
-                    display: flex;
-                    flex-direction: column;
-                    align-items: center;
-                    justify-content: center;
-                    padding: 3rem 2rem;
-                    text-align: center;
-                    color: var(--text-secondary);
-                ">
-                    <div style="font-size: 3rem; margin-bottom: 1rem;">🏛️</div>
-                    <h3 style="margin-bottom: 1rem; color: var(--text-primary);">Governance Features</h3>
-                    <p style="max-width: 500px; margin-bottom: 1.5rem; line-height: 1.6;">
-                        Governance proposals and voting are currently managed through the CLI.
-                        Please use the <code>aigen-cli</code> tool to create proposals, vote, and manage governance operations.
-                    </p>
-                    <div style="
-                        background: var(--bg-secondary);
-                        padding: 1rem 1.5rem;
-                        border-radius: var(--border-radius);
-                        font-family: monospace;
-                        font-size: 0.9rem;
-                        color: var(--text-primary);
-                    ">
-                        $ aigen-cli governance --help
-                    </div>
-                </div>
-            `;
+        try {
+            // Fetch proposals
+            const proposalsData = await this.rpcClient.listProposals(null);
+            this.renderGovernanceTable(proposalsData.proposals || []);
+            
+            // Fetch stakes
+            await this.loadStakes();
+        } catch (error) {
+            this.showNotification(`Failed to load governance data: ${error.message}`, 'error');
+            // Fallback to empty state
+            this.renderGovernanceTable([]);
+        }
+    }
+
+    async loadStakes() {
+        try {
+            const stakesData = await this.rpcClient.listStakes(null);
+            const stakes = Array.isArray(stakesData?.stakes) ? stakesData.stakes : [];
+            this.renderStakesTable(stakes);
+            
+            // Update overview cards
+            const totalStaked = stakes.reduce((sum, s) => sum + s.staked_amount, 0);
+            document.querySelector('#totalStakedCard .stat-value').textContent = 
+                this.formatAmount(totalStaked);
+            document.querySelector('#totalStakersCard .stat-value').textContent = 
+                stakesData?.total_count || 0;
+        } catch (error) {
+            this.showNotification(`Failed to load stakes: ${error.message}`, 'error');
+        }
+    }
+
+    async loadProposalVotes(proposalId) {
+        try {
+            const votesData = await this.rpcClient.listVotes(proposalId);
+            this.renderVotesTable(votesData.votes || [], votesData.tally);
+            
+            // Show votes section
+            document.getElementById('proposalVotesSection').style.display = 'block';
+            document.getElementById('selectedProposalId').textContent = proposalId;
+        } catch (error) {
+            this.showNotification(`Failed to load votes: ${error.message}`, 'error');
         }
     }
 
@@ -797,21 +815,90 @@ class AdminDashboard {
         const tbody = document.getElementById('governanceTableBody');
         
         if (!proposals || proposals.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="5" class="loading-cell" style="color: var(--text-secondary);">Governance features coming soon. Please use the CLI for governance operations.</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="5" class="loading-cell">No proposals found</td></tr>';
             return;
         }
         
         tbody.innerHTML = proposals.map(proposal => `
             <tr>
-                <td><code class="hash">${this.formatHash(proposal.id)}</code></td>
-                <td>${proposal.type}</td>
-                <td>${proposal.description}</td>
-                <td><span class="status-badge status-${proposal.status}">${proposal.status}</span></td>
+                <td><code class="hash">${this.formatHash(proposal.proposal_id)}</code></td>
+                <td>${proposal.model_id ? 'Model Upgrade' : 'General'}</td>
+                <td>${proposal.description || `${proposal.current_version} → ${proposal.new_version}`}</td>
+                <td><span class="status-badge status-${proposal.status.toLowerCase()}">${proposal.status}</span></td>
                 <td>
-                    <button class="btn btn-sm btn-primary" onclick="dashboard.voteOnProposal('${proposal.id}')">
-                        Vote
+                    <button class="btn btn-sm btn-primary" onclick="dashboard.loadProposalVotes('${proposal.proposal_id}')">
+                        View Votes
                     </button>
+                    ${proposal.status === 'Pending' ? `
+                        <button class="btn btn-sm btn-success" onclick="dashboard.voteOnProposal('${proposal.proposal_id}', 'Approve')">
+                            Vote Approve
+                        </button>
+                        <button class="btn btn-sm btn-danger" onclick="dashboard.voteOnProposal('${proposal.proposal_id}', 'Reject')">
+                            Vote Reject
+                        </button>
+                    ` : ''}
                 </td>
+            </tr>
+        `).join('');
+    }
+
+    renderStakesTable(stakes) {
+        const tbody = document.getElementById('stakesTableBody');
+        
+        if (!stakes || stakes.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="6" class="loading-cell">No stakers found</td></tr>';
+            return;
+        }
+        
+        const totalStake = stakes.reduce((sum, s) => sum + s.staked_amount, 0);
+        
+        tbody.innerHTML = stakes.map(stake => {
+            const votingPower = totalStake > 0 
+                ? ((stake.staked_amount / totalStake) * 100).toFixed(2) 
+                : '0.00';
+            
+            return `
+                <tr>
+                    <td><code class="hash">${this.formatHash(stake.staker_address)}</code></td>
+                    <td>${this.formatAmount(stake.staked_amount)} AIGEN</td>
+                    <td><span class="badge badge-${stake.role.toLowerCase()}">${stake.role}</span></td>
+                    <td>${votingPower}%</td>
+                    <td>${this.formatAmount(stake.total_rewards_claimed)} AIGEN</td>
+                    <td>${this.formatTimestamp(stake.staked_since)}</td>
+                </tr>
+            `;
+        }).join('');
+    }
+
+    renderVotesTable(votes, tally) {
+        const tbody = document.getElementById('votesTableBody');
+        
+        if (!votes || votes.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="5" class="loading-cell">No votes yet</td></tr>';
+            return;
+        }
+        
+        // Update tally cards
+        document.getElementById('approveWeight').textContent = this.formatAmount(tally.total_approve_weight);
+        document.getElementById('approvePercentage').textContent = `${tally.approval_percentage.toFixed(1)}%`;
+        document.getElementById('rejectWeight').textContent = this.formatAmount(tally.total_reject_weight);
+        const rejectPct = tally.total_voting_power > 0 
+            ? ((tally.total_reject_weight / tally.total_voting_power) * 100).toFixed(1) 
+            : '0.0';
+        document.getElementById('rejectPercentage').textContent = `${rejectPct}%`;
+        document.getElementById('abstainWeight').textContent = this.formatAmount(tally.total_abstain_weight);
+        const abstainPct = tally.total_voting_power > 0 
+            ? ((tally.total_abstain_weight / tally.total_voting_power) * 100).toFixed(1) 
+            : '0.0';
+        document.getElementById('abstainPercentage').textContent = `${abstainPct}%`;
+        
+        tbody.innerHTML = votes.map(vote => `
+            <tr>
+                <td><code class="hash">${this.formatHash(vote.voter_address)}</code></td>
+                <td><span class="badge badge-${vote.vote.toLowerCase()}">${vote.vote}</span></td>
+                <td>${this.formatAmount(vote.stake_weight)} AIGEN</td>
+                <td>${vote.comment || '-'}</td>
+                <td>${this.formatTimestamp(vote.timestamp)}</td>
             </tr>
         `).join('');
     }
@@ -823,17 +910,25 @@ class AdminDashboard {
             this.showLoading(true);
             
             const proposalId = document.getElementById('voteProposalId').value;
-            const vote = document.getElementById('voteType').value;
+            const voteType = document.getElementById('voteType').value;
             const comment = document.getElementById('voteComment').value;
             
-            const { message, timestamp } = this.rpcClient.formatAdminMessage('submitGovVote', {
-                proposalId,
-                vote
-            });
+            // Capitalize first letter to match governance API (Approve/Reject/Abstain)
+            const vote = voteType.charAt(0).toUpperCase() + voteType.slice(1);
             
+            const voterAddress = this.rpcClient.derivePublicKeyFromStoredKey();
+            const timestamp = Math.floor(Date.now() / 1000);
+            const message = `vote:${proposalId}:${vote}:${timestamp}`;
             const signature = await this.rpcClient.signMessage(message);
             
-            await this.rpcClient.submitGovVote(proposalId, vote, comment, signature, timestamp);
+            await this.rpcClient.submitVote(
+                proposalId, 
+                voterAddress, 
+                vote, 
+                comment, 
+                signature,
+                timestamp
+            );
             
             this.showNotification('Vote submitted successfully', 'success');
             document.getElementById('voteForm').reset();
@@ -919,6 +1014,179 @@ class AdminDashboard {
             document.getElementById('shutdownForm').reset();
         } catch (error) {
             this.showNotification(`Shutdown failed: ${error.message}`, 'error');
+        } finally {
+            this.showLoading(false);
+        }
+    }
+
+    async submitStake(e) {
+        e.preventDefault();
+        
+        const amount = parseInt(document.getElementById('stakeAmount').value);
+        const role = document.getElementById('stakeRole').value;
+        
+        // Validate minimum amounts
+        const minAmounts = { 'Inference': 1000, 'Training': 5000, 'Both': 5000 };
+        if (amount < minAmounts[role]) {
+            this.showNotification(`Minimum stake for ${role}: ${minAmounts[role]} AIGEN`, 'error');
+            return;
+        }
+        
+        try {
+            this.showLoading(true);
+            
+            const ceoPrivateKey = localStorage.getItem('ceoPrivateKey');
+            if (!ceoPrivateKey) {
+                throw new Error('CEO private key required for staking');
+            }
+            
+            // Derive staker address from CEO key
+            const stakerAddress = this.rpcClient.derivePublicKeyFromStoredKey();
+            if (!stakerAddress) {
+                throw new Error('Failed to derive staker address');
+            }
+            
+            // Sign stake transaction
+            const timestamp = Math.floor(Date.now() / 1000);
+            const message = `stake:${this.rpcClient.networkMagic}:${timestamp}:${stakerAddress}:${amount}:${role}`;
+            const signature = await this.rpcClient.signMessage(message);
+            
+            const result = await this.rpcClient.submitStakeTx(stakerAddress, amount, role, signature, timestamp);
+            
+            this.showNotification(result.message, 'success');
+            document.getElementById('stakeForm').reset();
+            await this.loadStakes();
+        } catch (error) {
+            this.showNotification(`Stake failed: ${error.message}`, 'error');
+        } finally {
+            this.showLoading(false);
+        }
+    }
+
+    async submitUnstake() {
+        const amount = prompt('Enter amount to unstake (AIGEN):');
+        if (!amount || isNaN(amount) || parseInt(amount) <= 0) return;
+        
+        try {
+            this.showLoading(true);
+            
+            const stakerAddress = this.rpcClient.derivePublicKeyFromStoredKey();
+            const timestamp = Math.floor(Date.now() / 1000);
+            const message = `unstake:${this.rpcClient.networkMagic}:${timestamp}:${stakerAddress}:${amount}`;
+            const signature = await this.rpcClient.signMessage(message);
+            
+            const result = await this.rpcClient.submitUnstakeTx(stakerAddress, parseInt(amount), signature, timestamp);
+            
+            this.showNotification(result.message, 'success');
+            await this.loadStakes();
+        } catch (error) {
+            this.showNotification(`Unstake failed: ${error.message}`, 'error');
+        } finally {
+            this.showLoading(false);
+        }
+    }
+
+    async submitClaimStake() {
+        if (!confirm('Claim all unstaked tokens that have passed the 7-day cooldown?')) return;
+        
+        try {
+            this.showLoading(true);
+            
+            const stakerAddress = this.rpcClient.derivePublicKeyFromStoredKey();
+            const timestamp = Math.floor(Date.now() / 1000);
+            const message = `claim_stake:${this.rpcClient.networkMagic}:${timestamp}:${stakerAddress}`;
+            const signature = await this.rpcClient.signMessage(message);
+            
+            const result = await this.rpcClient.submitClaimStakeTx(stakerAddress, signature, timestamp);
+            
+            this.showNotification(result.message, 'success');
+            await this.loadStakes();
+        } catch (error) {
+            this.showNotification(`Claim failed: ${error.message}`, 'error');
+        } finally {
+            this.showLoading(false);
+        }
+    }
+
+    async voteOnProposal(proposalId, voteType) {
+        const comment = prompt(`Comment for your ${voteType} vote (optional):`);
+        
+        try {
+            this.showLoading(true);
+            
+            const voterAddress = this.rpcClient.derivePublicKeyFromStoredKey();
+            const voterPublicKey = voterAddress; // Same as address for Ed25519
+            const timestamp = Math.floor(Date.now() / 1000);
+            const message = `vote:${proposalId}:${voteType}:${timestamp}`;
+            const signature = await this.rpcClient.signMessage(message);
+            
+            await this.rpcClient.submitVote(
+                proposalId, 
+                voterAddress, 
+                voteType, 
+                comment || '', 
+                signature,
+                timestamp
+            );
+            
+            this.showNotification(`Vote submitted: ${voteType}`, 'success');
+            await this.loadProposalVotes(proposalId);
+            await this.loadGovernanceProposals();
+        } catch (error) {
+            this.showNotification(`Vote failed: ${error.message}`, 'error');
+        } finally {
+            this.showLoading(false);
+        }
+    }
+
+    async approveStakerProposal() {
+        const proposalId = document.getElementById('stakerProposalId').value;
+        if (!proposalId) {
+            this.showNotification('Please enter a proposal ID', 'error');
+            return;
+        }
+        
+        try {
+            this.showLoading(true);
+            
+            const { message, timestamp } = this.rpcClient.formatAdminMessage('approveStakerProposal', { proposalId });
+            const signature = await this.rpcClient.signMessage(message);
+            
+            await this.rpcClient.approveStakerProposal(proposalId, signature, timestamp);
+            
+            this.showNotification('Staker proposal approved', 'success');
+            await this.loadGovernanceProposals();
+        } catch (error) {
+            this.showNotification(`Approval failed: ${error.message}`, 'error');
+        } finally {
+            this.showLoading(false);
+        }
+    }
+
+    async vetoStakerProposal() {
+        const proposalId = document.getElementById('stakerProposalId').value;
+        if (!proposalId) {
+            this.showNotification('Please enter a proposal ID', 'error');
+            return;
+        }
+        
+        const reason = prompt('Enter veto reason:');
+        if (!reason) return;
+        
+        if (!confirm(`Veto proposal ${proposalId}? This cannot be undone.`)) return;
+        
+        try {
+            this.showLoading(true);
+            
+            const { message, timestamp } = this.rpcClient.formatAdminMessage('vetoStakerProposal', { proposalId, reason });
+            const signature = await this.rpcClient.signMessage(message);
+            
+            await this.rpcClient.vetoStakerProposal(proposalId, reason, signature, timestamp);
+            
+            this.showNotification('Staker proposal vetoed', 'success');
+            await this.loadGovernanceProposals();
+        } catch (error) {
+            this.showNotification(`Veto failed: ${error.message}`, 'error');
         } finally {
             this.showLoading(false);
         }

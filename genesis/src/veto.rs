@@ -9,6 +9,7 @@
 // Contact: Cesar Saguier Antebi
 
 use crate::authority::verify_ceo_signature;
+use crate::governance_config::GovernanceConfig;
 use crate::shutdown::is_shutdown;
 use crate::types::{CeoSignature, GenesisError, SipProposal};
 use once_cell::sync::Lazy;
@@ -30,6 +31,26 @@ pub enum SipStatus {
 pub struct SipRegistry {
     pub proposals: HashMap<String, SipProposal>,
     pub statuses: HashMap<String, SipStatus>,
+    pub auto_approve_config: AutoApproveConfig, // NEW
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AutoApproveConfig {
+    pub enabled: bool,
+    pub min_approval_percentage: f64,    // Default: 80.0
+    pub min_participation_percentage: f64, // Default: 50.0
+}
+
+impl Default for AutoApproveConfig {
+    fn default() -> Self {
+        // Load from GovernanceConfig if available, otherwise use hardcoded defaults
+        let config = GovernanceConfig::load();
+        Self {
+            enabled: config.auto_approve_enabled,
+            min_approval_percentage: config.min_approval_percentage,
+            min_participation_percentage: config.min_participation_percentage,
+        }
+    }
 }
 
 static SIP_REGISTRY: Lazy<Mutex<SipRegistry>> =
@@ -97,6 +118,8 @@ pub fn veto_sip(proposal_id: &str, signature: CeoSignature) -> Result<(), Genesi
     registry.proposals.insert(proposal_id.to_string(), updated);
 
     persist_registry(&registry)?;
+    
+    eprintln!("SIP {} vetoed by CEO (overrides auto-approval if any)", proposal_id); // NEW
 
     Ok(())
 }
@@ -114,6 +137,12 @@ pub fn approve_sip(proposal_id: &str, signature: CeoSignature) -> Result<(), Gen
 
     let mut updated = proposal.clone();
     updated.ceo_approved = true;
+    updated.approved_at = Some(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64
+    );
 
     registry
         .statuses
@@ -121,8 +150,88 @@ pub fn approve_sip(proposal_id: &str, signature: CeoSignature) -> Result<(), Gen
     registry.proposals.insert(proposal_id.to_string(), updated);
 
     persist_registry(&registry)?;
+    
+    eprintln!("SIP {} approved by CEO", proposal_id); // NEW: logging
 
     Ok(())
+}
+
+/// Check if proposal meets auto-approval criteria based on staker votes
+/// Uses GovernanceConfig for thresholds
+/// Returns true if auto-approved, false if CEO review needed
+pub fn check_and_auto_approve(
+    proposal_id: &str,
+    chain_state: &blockchain_core::state::ChainState,
+) -> Result<bool, GenesisError> {
+    let mut registry = SIP_REGISTRY.lock().expect("sip registry mutex poisoned");
+    
+    // Load governance config for thresholds
+    let config = GovernanceConfig::load();
+    
+    if !config.auto_approve_enabled {
+        return Ok(false); // Auto-approve disabled, needs CEO review
+    }
+    
+    let proposal = registry
+        .proposals
+        .get(proposal_id)
+        .ok_or(GenesisError::ProposalNotFound)?;
+    
+    // Check if already approved/vetoed
+    if let Some(status) = registry.statuses.get(proposal_id) {
+        match status {
+            SipStatus::Approved | SipStatus::Vetoed | SipStatus::Deployed => {
+                return Ok(false); // Already decided
+            }
+            _ => {}
+        }
+    }
+    
+    // Check staker vote threshold using config values
+    let meets_threshold = chain_state.check_auto_approve_threshold(
+        proposal_id,
+        config.min_approval_percentage,
+        config.min_participation_percentage,
+    );
+    
+    if meets_threshold {
+        // Auto-approve
+        let mut updated = proposal.clone();
+        updated.ceo_approved = true; // Mark as approved
+        updated.auto_approved = true; // Mark as auto-approved
+        updated.approved_at = Some(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs() as i64
+        );
+
+        registry.statuses.insert(
+            proposal_id.to_string(),
+            SipStatus::Approved,
+        );
+        registry.proposals.insert(proposal_id.to_string(), updated);
+        persist_registry(&registry)?;
+        
+        eprintln!(
+            "SIP {} auto-approved by staker consensus (threshold met: {}% approval, {}% participation)",
+            proposal_id,
+            config.min_approval_percentage,
+            config.min_participation_percentage
+        );
+        Ok(true)
+    } else {
+        Ok(false) // Needs CEO review
+    }
+}
+
+/// Trigger auto-approval check for a proposal after vote recording or period close
+/// This should be called by the voting lifecycle manager
+pub fn trigger_auto_approval_check(
+    proposal_id: &str,
+    chain_state: &blockchain_core::state::ChainState,
+) -> Result<bool, GenesisError> {
+    check_and_auto_approve(proposal_id, chain_state)
 }
 
 pub fn can_deploy_sip(proposal_id: &str) -> bool {

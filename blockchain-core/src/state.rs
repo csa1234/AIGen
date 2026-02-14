@@ -70,10 +70,11 @@ pub struct ModelUpgradeProposalState {
     pub description: String,
     pub submitted_by: String,
     pub submitted_at: i64,
-    pub status: u8,
+    pub status: u8, // 0=Pending, 1=Approved, 2=Rejected, 3=AutoApproved
     pub approved_at: Option<i64>,
     pub rejected_at: Option<i64>,
     pub rejection_reason: Option<String>,
+    pub auto_approved: bool, // NEW: track if auto-approved by stakers
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -83,6 +84,19 @@ pub struct GovernanceVote {
     pub vote: u8,
     pub comment: Option<String>,
     pub timestamp: i64,
+    pub stake_weight: u64, // Snapshotted stake weight at vote time
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct VoteTally {
+    pub proposal_id: String,
+    pub total_approve_weight: u64,
+    pub total_reject_weight: u64,
+    pub total_abstain_weight: u64,
+    pub total_voting_power: u64,
+    pub unique_voters: usize,
+    pub approval_percentage: f64,
+    pub participation_percentage: f64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -514,8 +528,103 @@ impl ChainState {
             .collect()
     }
 
-    pub fn record_governance_vote(&self, vote: GovernanceVote) {
+    /// Check and auto-approve model proposal if staker threshold met
+    /// Uses GovernanceConfig for thresholds
+    pub fn check_model_proposal_auto_approve(
+        &self,
+        proposal_id: &str,
+    ) -> Result<bool, BlockchainError> {
+        // Load governance config for thresholds
+        let config = genesis::GovernanceConfig::load();
+        
+        if !config.auto_approve_enabled {
+            return Ok(false); // Auto-approve disabled
+        }
+        
+        let meets_threshold = self.check_auto_approve_threshold(
+            proposal_id,
+            config.min_approval_percentage,
+            config.min_participation_percentage,
+        );
+        
+        if meets_threshold {
+            let mut proposals = self.model_proposals.write();
+            if let Some(proposal) = proposals.get_mut(proposal_id) {
+                if proposal.status == 0 { // Only auto-approve pending proposals
+                    proposal.status = 3; // AutoApproved
+                    proposal.auto_approved = true;
+                    proposal.approved_at = Some(
+                        std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs() as i64
+                    );
+                    eprintln!(
+                        "Model proposal {} auto-approved by staker consensus (threshold: {}% approval, {}% participation)",
+                        proposal_id,
+                        config.min_approval_percentage,
+                        config.min_participation_percentage
+                    );
+                    return Ok(true);
+                }
+            }
+        }
+        Ok(false)
+    }
+
+    /// Trigger auto-approval check for both SIPs and model proposals
+    /// Call this after recording votes or when closing voting period
+    pub fn trigger_auto_approval(&self, proposal_id: &str) -> Result<bool, BlockchainError> {
+        // Try model proposal auto-approval first
+        let model_result = self.check_model_proposal_auto_approve(proposal_id);
+        
+        // Also trigger SIP auto-approval through genesis
+        let sip_result = genesis::trigger_auto_approval_check(proposal_id, self);
+        
+        // Return true if either succeeded
+        match (model_result, sip_result) {
+            (Ok(true), _) => Ok(true),
+            (_, Ok(true)) => Ok(true),
+            (Err(e), _) => Err(e),
+            (_, Err(_)) => Ok(false),
+            _ => Ok(false),
+        }
+    }
+
+    /// Record a governance vote (validates staker has stake and snapshots weight)
+    pub fn record_governance_vote(&self, mut vote: GovernanceVote) -> Result<(), BlockchainError> {
+        // Check if voter has stake (or is CEO)
+        let stake_weight = if vote.voter_address != genesis::CEO_WALLET {
+            let stake = self.get_stake(&vote.voter_address);
+            if stake.is_none() || stake.unwrap().staked_amount.is_zero() {
+                return Err(BlockchainError::InvalidTransaction); // No stake, can't vote
+            }
+            stake.unwrap().staked_amount.value()
+        } else {
+            // CEO votes with weight 0 (their approval is handled separately via signature)
+            0
+        };
+        
+        // Snapshot the stake weight at vote time
+        vote.stake_weight = stake_weight;
+        
+        // Explicitly reject votes with zero stake weight (except CEO)
+        if vote.voter_address != genesis::CEO_WALLET && stake_weight == 0 {
+            return Err(BlockchainError::InvalidTransaction); // Zero stake weight not allowed for non-CEO voters
+        }
+        
+        // Prevent duplicate votes from same address on same proposal
+        let existing_votes = self.get_votes_for_proposal(&vote.proposal_id);
+        if existing_votes.iter().any(|v| v.voter_address == vote.voter_address) {
+            return Err(BlockchainError::InvalidTransaction); // Already voted
+        }
+        
         self.governance_votes.write().push(vote);
+        
+        // After recording vote, try to auto-approve (handles both model proposals and SIPs)
+        let _ = self.trigger_auto_approval(&vote.proposal_id);
+        
+        Ok(())
     }
 
     pub fn get_votes_for_proposal(&self, proposal_id: &str) -> Vec<GovernanceVote> {
@@ -523,6 +632,74 @@ impl ChainState {
             .filter(|v| v.proposal_id == proposal_id)
             .cloned()
             .collect()
+    }
+
+    /// Calculate weighted vote tally based on staked amounts
+    pub fn tally_votes(&self, proposal_id: &str) -> VoteTally {
+        let votes = self.get_votes_for_proposal(proposal_id);
+        let stakes = self.stakes.read();
+        
+        let mut approve_weight = 0u64;
+        let mut reject_weight = 0u64;
+        let mut abstain_weight = 0u64;
+        let mut unique_voters = 0;
+        
+        // Calculate total staked amount across all stakers for participation %
+        let total_staked: u64 = stakes.values()
+            .map(|s| s.staked_amount.value())
+            .sum();
+        
+        for vote in votes.iter() {
+            // Use the snapshotted stake weight from when vote was recorded
+            let stake_weight = vote.stake_weight;
+            
+            if stake_weight > 0 {
+                unique_voters += 1;
+                match vote.vote {
+                    0 => approve_weight += stake_weight, // Approve
+                    1 => reject_weight += stake_weight,  // Reject
+                    2 => abstain_weight += stake_weight, // Abstain
+                    _ => {} // Invalid vote, skip
+                }
+            }
+        }
+        
+        let total_voting_power = approve_weight + reject_weight + abstain_weight;
+        let approval_percentage = if total_voting_power > 0 {
+            (approve_weight as f64 / total_voting_power as f64) * 100.0
+        } else {
+            0.0
+        };
+        
+        let participation_percentage = if total_staked > 0 {
+            (total_voting_power as f64 / total_staked as f64) * 100.0
+        } else {
+            0.0
+        };
+        
+        VoteTally {
+            proposal_id: proposal_id.to_string(),
+            total_approve_weight: approve_weight,
+            total_reject_weight: reject_weight,
+            total_abstain_weight: abstain_weight,
+            total_voting_power,
+            unique_voters,
+            approval_percentage,
+            participation_percentage,
+        }
+    }
+
+    /// Check if proposal meets auto-approval threshold
+    /// Default: 80% approval + 50% participation
+    pub fn check_auto_approve_threshold(
+        &self, 
+        proposal_id: &str,
+        min_approval_pct: f64,
+        min_participation_pct: f64,
+    ) -> bool {
+        let tally = self.tally_votes(proposal_id);
+        tally.approval_percentage >= min_approval_pct 
+            && tally.participation_percentage >= min_participation_pct
     }
 
     // Stake management
@@ -561,9 +738,21 @@ impl ChainState {
         let stake = stakes.get_mut(address)
             .ok_or(BlockchainError::InvalidTransaction)?;
 
-        let current = stake.staked_amount.value();
-        let slash = slash_amount.value().min(current);
-        stake.staked_amount = Amount::new(current.saturating_sub(slash));
+        let slash = slash_amount.value();
+        let pending = stake.pending_unstake.value();
+        let staked = stake.staked_amount.value();
+        let total_available = pending.saturating_add(staked);
+
+        // Ensure we don't slash more than available
+        let actual_slash = slash.min(total_available);
+
+        // Deduct from pending_unstake first, then from staked_amount
+        let from_pending = actual_slash.min(pending);
+        let from_staked = actual_slash.saturating_sub(from_pending);
+
+        stake.pending_unstake = Amount::new(pending.saturating_sub(from_pending));
+        stake.staked_amount = Amount::new(staked.saturating_sub(from_staked));
+
         stake.last_slash_timestamp = Some(
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -571,10 +760,16 @@ impl ChainState {
                 .as_secs() as i64
         );
 
-        // Apply slash: 40% burn, 60% to CEO
-        self.apply_slash(address, Amount::new(slash))?;
+        // Apply distribution: 40% burn, 60% to CEO
+        // Burn 40% by not minting it back (tokens already deducted from stake)
+        let burn_amount = Amount::new(actual_slash.saturating_mul(40) / 100);
+        let ceo_amount = Amount::new(actual_slash.saturating_sub(burn_amount.value()));
 
-        eprintln!("Slashed {} AIGEN from {} (reason: {})", slash, address, reason);
+        // Mint CEO share directly (doesn't affect liquid balance of the slashed address)
+        self.mint_tokens(CEO_WALLET, ceo_amount)?;
+
+        eprintln!("Slashed {} AIGEN from {} (burned: {}, to CEO: {}, reason: {})",
+            actual_slash, address, burn_amount.value(), ceo_amount.value(), reason);
         Ok(())
     }
 
@@ -582,14 +777,20 @@ impl ChainState {
     pub fn apply_stake_transaction(&self, stake_tx: &crate::transaction::StakeTx) -> Result<(), BlockchainError> {
         stake_tx.validate()?;
 
-        // Check minimum stake requirements
+        // Get existing stake amount (if any)
+        let existing_stake = self.get_staked_amount(&stake_tx.staker);
+
+        // Compute prospective total stake
+        let prospective_total = existing_stake.safe_add(stake_tx.amount)?;
+
+        // Check minimum stake requirements on the resulting total
         let min_stake = match stake_tx.role {
             StakeRole::Inference => 1_000,
             StakeRole::Training | StakeRole::Both => 5_000,
         };
 
-        if stake_tx.amount.value() < min_stake {
-            return Err(BlockchainError::InvalidAmount);
+        if prospective_total.value() < min_stake {
+            return Err(BlockchainError::InsufficientStake);
         }
 
         // Deduct from balance

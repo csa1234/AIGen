@@ -23,7 +23,7 @@ use tower_http::cors::{Any, AllowOrigin, CorsLayer};
 
 use crate::config::RpcConfig;
 use crate::rpc::ceo::{CeoRpcMethods, CeoRpcServer};
-use crate::rpc::methods::{PublicRpcServer, RpcMethods, RewardRpcServer, RewardRpcImpl};
+use crate::rpc::methods::{PublicRpcServer, RpcMethods, RewardRpcServer, RewardRpcImpl, StakingGovernanceRpcServer, StakingGovernanceRpcImpl};
 use crate::rpc::subscriptions::{RpcSubscriptions, SubscriptionsRpcServer};
 use crate::rpc::model::{ModelRpcMethods, ModelRpcServer};
 use distributed_compute::scheduler::DynamicScheduler;
@@ -87,12 +87,14 @@ pub async fn start_rpc_server(
         inference_engine,
     );
     let reward_rpc = RewardRpcImpl::new(dcs.clone(), dcs_state.clone());
+    let staking_gov_rpc = StakingGovernanceRpcImpl::new(blockchain.clone());
 
     let mut module = public.into_rpc();
     module.merge(ceo.into_rpc())?;
     module.merge(subs.into_rpc())?;
     module.merge(model_rpc.into_rpc())?;
     module.merge(reward_rpc.into_rpc())?;
+    module.merge(staking_gov_rpc.into_rpc())?;
 
     let handle = server.start(module);
 

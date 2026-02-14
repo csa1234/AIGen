@@ -370,6 +370,98 @@
             </div>
 
             <div class="section">
+                <h2>Staking</h2>
+                <div class="staking-overview">
+                    <div class="stat-card" id="totalStakedCard">
+                        <h3>Total Staked</h3>
+                        <div class="stat-value">-</div>
+                        <div class="stat-unit">AIGEN</div>
+                    </div>
+                    <div class="stat-card" id="totalStakersCard">
+                        <h3>Total Stakers</h3>
+                        <div class="stat-value">-</div>
+                    </div>
+                </div>
+                
+                <div class="table-container">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Staker Address</th>
+                                <th>Staked Amount</th>
+                                <th>Role</th>
+                                <th>Voting Power</th>
+                                <th>Rewards Claimed</th>
+                                <th>Staked Since</th>
+                            </tr>
+                        </thead>
+                        <tbody id="stakesTableBody">
+                            <tr><td colspan="6" class="loading-cell">Loading stakes...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+                
+                <h3>Stake Management</h3>
+                <form id="stakeForm" class="form">
+                    <div class="form-group">
+                        <label for="stakeAmount">Amount (AIGEN)</label>
+                        <input type="number" id="stakeAmount" min="1000" required>
+                        <small class="text-secondary">Minimum: 1000 AIGEN (Inference) or 5000 AIGEN (Training)</small>
+                    </div>
+                    <div class="form-group">
+                        <label for="stakeRole">Role</label>
+                        <select id="stakeRole" required>
+                            <option value="Inference">Inference (min 1000 AIGEN)</option>
+                            <option value="Training">Training (min 5000 AIGEN)</option>
+                            <option value="Both">Both (min 5000 AIGEN)</option>
+                        </select>
+                    </div>
+                    <div class="form-actions">
+                        <button type="submit" class="btn btn-primary">Stake</button>
+                        <button type="button" id="unstakeBtn" class="btn btn-secondary">Unstake</button>
+                        <button type="button" id="claimStakeBtn" class="btn btn-success">Claim Unstaked</button>
+                    </div>
+                </form>
+            </div>
+
+            <div class="section" id="proposalVotesSection" style="display: none;">
+                <h3>Votes for Proposal <code id="selectedProposalId"></code></h3>
+                <div class="vote-tally-cards">
+                    <div class="stat-card">
+                        <h4>Approve</h4>
+                        <div class="stat-value" id="approveWeight">-</div>
+                        <div class="stat-unit" id="approvePercentage">-%</div>
+                    </div>
+                    <div class="stat-card">
+                        <h4>Reject</h4>
+                        <div class="stat-value" id="rejectWeight">-</div>
+                        <div class="stat-unit" id="rejectPercentage">-%</div>
+                    </div>
+                    <div class="stat-card">
+                        <h4>Abstain</h4>
+                        <div class="stat-value" id="abstainWeight">-</div>
+                        <div class="stat-unit" id="abstainPercentage">-%</div>
+                    </div>
+                </div>
+                <div class="table-container">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Voter</th>
+                                <th>Vote</th>
+                                <th>Stake Weight</th>
+                                <th>Comment</th>
+                                <th>Timestamp</th>
+                            </tr>
+                        </thead>
+                        <tbody id="votesTableBody">
+                            <tr><td colspan="5" class="loading-cell">No votes yet</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div class="section">
                 <h2>Submit Vote</h2>
                 <form id="voteForm" class="form">
                     <div class="form-group">
@@ -402,6 +494,20 @@
                     <div class="form-actions">
                         <button id="approveSipBtn" class="btn btn-success">Approve SIP</button>
                         <button id="vetoSipBtn" class="btn btn-danger">Veto SIP</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="section">
+                <h2>CEO: Staker Proposal Management</h2>
+                <div class="form">
+                    <div class="form-group">
+                        <label for="stakerProposalId">Staker Proposal ID</label>
+                        <input type="text" id="stakerProposalId">
+                    </div>
+                    <div class="form-actions">
+                        <button id="approveStakerProposalBtn" class="btn btn-success">Approve Staker Proposal</button>
+                        <button id="vetoStakerProposalBtn" class="btn btn-danger">Veto Staker Proposal</button>
                     </div>
                 </div>
             </div>

@@ -21,6 +21,7 @@ use crate::rpc::types::{
     GetMetricsRequest, GetMetricsResponse, InitNewModelRequest, InitNewModelResponse,
     ModelUpgradeResponse, RejectUpgradeRequest, RpcError, ShutdownRequest, SipActionRequest,
     SipActionResponse, SipStatusResponse, SubmitGovVoteRequest, SuccessResponse, GovVoteResponse,
+    ApproveStakerProposalRequest, VetoStakerProposalRequest,
 };
 
 fn verify_ceo_request(message: &[u8], signature_hex: &str) -> Result<CeoSignature, RpcError> {
@@ -73,6 +74,12 @@ pub trait CeoRpc {
 
     #[method(name = "submitGovVote")]
     async fn submit_gov_vote(&self, request: SubmitGovVoteRequest) -> Result<GovVoteResponse, RpcError>;
+
+    #[method(name = "approveStakerProposal")]
+    async fn approve_staker_proposal(&self, request: ApproveStakerProposalRequest) -> Result<ModelUpgradeResponse, RpcError>;
+
+    #[method(name = "vetoStakerProposal")]
+    async fn veto_staker_proposal(&self, request: VetoStakerProposalRequest) -> Result<ModelUpgradeResponse, RpcError>;
 }
 
 #[derive(Clone)]
@@ -566,6 +573,87 @@ impl CeoRpcServer for CeoRpcMethods {
             success: true,
             proposal_id: request.proposal_id,
             vote: request.vote,
+        })
+    }
+
+    async fn approve_staker_proposal(&self, request: ApproveStakerProposalRequest) -> Result<ModelUpgradeResponse, RpcError> {
+        // Verify CEO signature
+        let bc = self.blockchain.lock().await;
+        let network_magic = bc.genesis_config.network_magic;
+        let msg = format!(
+            "approve_staker_proposal:{}:{}:{}",
+            network_magic, request.timestamp, request.proposal_id
+        ).into_bytes();
+        verify_ceo_request(&msg, &request.signature)?;
+
+        println!("CEO approving staker proposal: {}", request.proposal_id);
+
+        // Get proposal
+        let mut proposal = bc.state.get_model_proposal(&request.proposal_id)
+            .ok_or_else(|| RpcError::InvalidParams("proposal not found".to_string()))?;
+
+        if proposal.status != 0 && proposal.status != 3 {
+            return Err(RpcError::InvalidParams("proposal already processed by CEO".to_string()));
+        }
+
+        // Update proposal status to CEO-approved (overrides auto-approval)
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+
+        proposal.status = 1; // Approved
+        proposal.approved_at = Some(now);
+        proposal.auto_approved = false; // CEO override
+        bc.state.set_model_proposal(request.proposal_id.clone(), proposal);
+
+        println!("Staker proposal approved by CEO: {}", request.proposal_id);
+
+        Ok(ModelUpgradeResponse {
+            success: true,
+            proposal_id: request.proposal_id,
+            status: "approved".to_string(),
+        })
+    }
+
+    async fn veto_staker_proposal(&self, request: VetoStakerProposalRequest) -> Result<ModelUpgradeResponse, RpcError> {
+        // Verify CEO signature
+        let bc = self.blockchain.lock().await;
+        let network_magic = bc.genesis_config.network_magic;
+        let msg = format!(
+            "veto_staker_proposal:{}:{}:{}:{}",
+            network_magic, request.timestamp, request.proposal_id, request.reason
+        ).into_bytes();
+        verify_ceo_request(&msg, &request.signature)?;
+
+        println!("CEO vetoing staker proposal: {}, reason: {}", request.proposal_id, request.reason);
+
+        // Get proposal
+        let mut proposal = bc.state.get_model_proposal(&request.proposal_id)
+            .ok_or_else(|| RpcError::InvalidParams("proposal not found".to_string()))?;
+
+        if proposal.status == 2 {
+            return Err(RpcError::InvalidParams("proposal already vetoed".to_string()));
+        }
+
+        // Update proposal status to vetoed (overrides auto-approval)
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+
+        proposal.status = 2; // Rejected/Vetoed
+        proposal.rejected_at = Some(now);
+        proposal.rejection_reason = Some(request.reason.clone());
+        proposal.auto_approved = false; // CEO override
+        bc.state.set_model_proposal(request.proposal_id.clone(), proposal);
+
+        println!("Staker proposal vetoed by CEO: {}", request.proposal_id);
+
+        Ok(ModelUpgradeResponse {
+            success: true,
+            proposal_id: request.proposal_id,
+            status: "vetoed".to_string(),
         })
     }
 }

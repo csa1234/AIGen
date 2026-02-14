@@ -43,6 +43,12 @@ pub enum RpcError {
     InvalidParams(String),
     #[error("internal error: {0}")]
     Internal(String),
+    #[error("insufficient stake")]
+    InsufficientStake,
+    #[error("proposal not found")]
+    ProposalNotFound,
+    #[error("already voted")]
+    AlreadyVoted,
 }
 
 impl RpcError {
@@ -62,6 +68,9 @@ impl RpcError {
             RpcError::ContextLengthExceeded => 2008,
             RpcError::InvalidParams(_) => -32602,
             RpcError::Internal(_) => -32603,
+            RpcError::InsufficientStake => 3001,
+            RpcError::ProposalNotFound => 3002,
+            RpcError::AlreadyVoted => 3003,
         }
     }
 
@@ -969,10 +978,154 @@ pub struct BlockLatencyMetrics {
     pub tasks_failed: u64,
 }
 
+// Staking RPC Types
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct CompressionStatsResponse {
-    pub total_tensors_compressed: u64,
-    pub avg_compression_ratio: f64,
-    pub total_bytes_saved: u64,
-    pub quantization_enabled: bool,
+pub struct StakeInfoResponse {
+    pub staker_address: String,
+    pub staked_amount: u64,
+    pub staked_since: i64,
+    pub pending_unstake: u64,
+    pub unstake_available_at: Option<i64>,
+    pub role: String, // "Inference" | "Training" | "Both"
+    pub total_rewards_claimed: u64,
+    pub last_slash_timestamp: Option<i64>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct StakeListResponse {
+    pub stakes: Vec<StakeInfoResponse>,
+    pub total_count: u32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SubmitStakeTxRequest {
+    pub staker: String,
+    pub amount: u64,
+    pub role: String, // "Inference" | "Training" | "Both"
+    pub timestamp: i64,
+    pub signature: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SubmitUnstakeTxRequest {
+    pub staker: String,
+    pub amount: u64,
+    pub timestamp: i64,
+    pub signature: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SubmitClaimStakeTxRequest {
+    pub staker: String,
+    pub timestamp: i64,
+    pub signature: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct StakeTxResponse {
+    pub success: bool,
+    pub tx_hash: String,
+    pub message: String,
+}
+
+// Governance RPC Types
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ProposalResponse {
+    pub proposal_id: String,
+    pub model_id: Option<String>, // For model proposals
+    pub current_version: Option<String>,
+    pub new_version: Option<String>,
+    pub description: String,
+    pub submitted_by: String,
+    pub submitted_at: i64,
+    pub status: String, // "Pending" | "Approved" | "Rejected" | "AutoApproved"
+    pub approved_at: Option<i64>,
+    pub rejected_at: Option<i64>,
+    pub rejection_reason: Option<String>,
+    pub auto_approved: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ProposalListResponse {
+    pub proposals: Vec<ProposalResponse>,
+    pub total_count: u32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct VoteResponse {
+    pub proposal_id: String,
+    pub voter_address: String,
+    pub vote: String, // "Approve" | "Reject" | "Abstain"
+    pub comment: Option<String>,
+    pub timestamp: i64,
+    pub stake_weight: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct VoteListResponse {
+    pub votes: Vec<VoteResponse>,
+    pub tally: VoteTallyResponse,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct VoteTallyResponse {
+    pub proposal_id: String,
+    pub total_approve_weight: u64,
+    pub total_reject_weight: u64,
+    pub total_abstain_weight: u64,
+    pub total_voting_power: u64,
+    pub unique_voters: usize,
+    pub approval_percentage: f64,
+    pub participation_percentage: f64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SubmitVoteRequest {
+    pub proposal_id: String,
+    pub voter_address: String,
+    pub voter_public_key: String, // hex-encoded ed25519 public key (32 bytes)
+    pub vote: String, // "Approve" | "Reject" | "Abstain"
+    pub comment: Option<String>,
+    pub timestamp: i64,
+    pub signature: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SubmitVoteResponse {
+    pub success: bool,
+    pub proposal_id: String,
+    pub vote: String,
+}
+
+// CEO Governance Actions
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ApproveStakerProposalRequest {
+    pub proposal_id: String,
+    pub signature: String,
+    pub timestamp: i64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct VetoStakerProposalRequest {
+    pub proposal_id: String,
+    pub reason: String,
+    pub signature: String,
+    pub timestamp: i64,
+}
+
+pub fn stake_role_to_string(role: &blockchain_core::state::StakeRole) -> String {
+    match role {
+        blockchain_core::state::StakeRole::Inference => "Inference".to_string(),
+        blockchain_core::state::StakeRole::Training => "Training".to_string(),
+        blockchain_core::state::StakeRole::Both => "Both".to_string(),
+    }
+}
+
+pub fn parse_stake_role(s: &str) -> Result<blockchain_core::state::StakeRole, RpcError> {
+    match s.trim() {
+        "Inference" => Ok(blockchain_core::state::StakeRole::Inference),
+        "Training" => Ok(blockchain_core::state::StakeRole::Training),
+        "Both" => Ok(blockchain_core::state::StakeRole::Both),
+        _ => Err(RpcError::InvalidParams("invalid stake role".to_string())),
+    }
 }

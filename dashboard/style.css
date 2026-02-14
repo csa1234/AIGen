@@ -885,3 +885,36 @@ body {
     font-size: 0.8rem;
     line-height: 1.4;
 }
+
+.staking-overview {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+}
+
+.vote-tally-cards {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+}
+
+.badge {
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.85rem;
+    font-weight: 600;
+}
+
+.badge-inference { background: var(--primary-color); color: white; }
+.badge-training { background: var(--success-color); color: white; }
+.badge-both { background: var(--warning-color); color: white; }
+.badge-approve { background: var(--success-color); color: white; }
+.badge-reject { background: var(--danger-color); color: white; }
+.badge-abstain { background: var(--text-secondary); color: white; }
+
+.status-badge.status-pending { background: var(--warning-color); }
+.status-badge.status-approved { background: var(--success-color); }
+.status-badge.status-rejected { background: var(--danger-color); }
+.status-badge.status-autoapproved { background: var(--info-color); }
