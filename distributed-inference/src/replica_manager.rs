@@ -14,7 +14,6 @@
 //! via DashMap for high-performance operations.
 
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::time::Duration;
 
 use dashmap::DashMap;
@@ -49,7 +48,6 @@ impl std::fmt::Display for HealthStatus {
 pub struct BlockReplica {
     pub block_id: u32,
     pub node_id: String,
-    #[serde(with = "serde_bytes")]
     pub peer_id: PeerId,
     pub capabilities: NodeCapabilities,
     pub last_heartbeat: i64,

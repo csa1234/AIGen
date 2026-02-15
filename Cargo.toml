@@ -9,6 +9,7 @@ members = [
     "scripts",
     "distributed-compute",
     "distributed-inference",
+    "poi-types",
 ]
 resolver = "2"
 

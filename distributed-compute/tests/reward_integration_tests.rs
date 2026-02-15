@@ -14,20 +14,14 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
-use dashmap::DashMap;
-use tokio::sync::RwLock;
-use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use blockchain_core::types::Amount;
 use consensus::poi::{DistributedTaskProof, WorkType, CompressionMethod, ComputationMetadata};
 use consensus::PoIProof;
-use distributed_compute::state::{GlobalState, NodeState, NodeRole, FragmentLocation, RewardRecord};
-use distributed_compute::scheduler::DynamicScheduler;
-use distributed_compute::routing::RouteSelector;
+use distributed_compute::state::{GlobalState, NodeState, NodeRole, FragmentLocation};
 use distributed_compute::task::{ComputeTask, TaskStatus};
-use network::protocol::{NetworkMessage, NodeCapabilities};
+use network::protocol::NodeCapabilities;
 
 fn create_test_node(node_id: &str, stake: u64, vram_gb: f32) -> NodeState {
     NodeState {
@@ -49,6 +43,8 @@ fn create_test_node(node_id: &str, stake: u64, vram_gb: f32) -> NodeState {
             max_fragment_size_mb: 2048,
         },
         rtt_map: HashMap::new(),
+        accepts_bids: true,
+        bid_price_per_task: Some(blockchain_core::types::Amount::new(100)),
     }
 }
 
@@ -59,9 +55,11 @@ fn create_test_fragment(fragment_id: &str, model_id: &str, size_bytes: u64, repl
         fragment_index: 0,
         size_bytes,
         replicas,
+        target_fragment_size_bytes: 1024 * 1024 * 100, // 100MB default
     }
 }
 
+#[allow(dead_code)]
 fn create_test_compute_task(task_id: Uuid, assigned_node: &str, fragment_ids: Vec<String>) -> ComputeTask {
     ComputeTask {
         task_id,
@@ -71,6 +69,11 @@ fn create_test_compute_task(task_id: Uuid, assigned_node: &str, fragment_ids: Ve
         required_fragments: fragment_ids,
         assigned_node: assigned_node.to_string(),
         status: TaskStatus::Pending,
+        input_activation_ref: None,
+        rejected_nodes: Vec::new(),
+        target_fragment_size_bytes: 1024 * 1024 * 100,
+        tensor_shard_index: 0,
+        total_tensor_shards: 1,
     }
 }
 
@@ -94,6 +97,7 @@ fn create_test_distributed_proof(
         Some([2u8; 32]),
         compute_time_ms,
         "test-node-1".to_string(),
+        1, // nonce
     )
 }
 
@@ -103,7 +107,10 @@ fn create_test_poi_proof(distributed_proof: &DistributedTaskProof) -> PoIProof {
     });
     
     PoIProof::new(
-        distributed_proof.node_id.clone(),
+        [0u8; 32], // work_hash
+        distributed_proof.node_id.clone(), // miner_address
+        1234567890, // timestamp
+        verification_data,
         WorkType::DistributedInference,
         distributed_proof.input_activation_hash,
         distributed_proof.output_activation_hash.to_vec(),
@@ -116,10 +123,8 @@ fn create_test_poi_proof(distributed_proof: &DistributedTaskProof) -> PoIProof {
             compression_method: CompressionMethod::None,
             original_size: 1000000,
         },
-        1000,
-        1234567890,
-        42,
-        verification_data,
+        1000, // difficulty
+        42, // nonce
     )
 }
 
@@ -147,7 +152,7 @@ fn test_distributed_task_proof_validation() {
     
     // Valid proof
     let proof = create_test_distributed_proof(task_id, inference_id, 3, 1000);
-    let result = verify_distributed_task(&proof);
+    let result = verify_distributed_task(&proof, None, None, None);
     assert!(result.is_ok());
     assert_eq!(result.unwrap(), true);
     
@@ -162,8 +167,9 @@ fn test_distributed_task_proof_validation() {
         None,
         1000,
         "test-node".to_string(),
+        1, // nonce
     );
-    let result = verify_distributed_task(&invalid_proof);
+    let result = verify_distributed_task(&invalid_proof, None, None, None);
     assert_eq!(result.unwrap(), false);
     
     // Invalid: invalid layer range
@@ -177,8 +183,9 @@ fn test_distributed_task_proof_validation() {
         None,
         1000,
         "test-node".to_string(),
+        1, // nonce
     );
-    let result = verify_distributed_task(&invalid_proof2);
+    let result = verify_distributed_task(&invalid_proof2, None, None, None);
     assert_eq!(result.unwrap(), false);
 }
 
@@ -211,6 +218,7 @@ fn test_reward_calculation_formula() {
         Some([2u8; 32]), // checkpoint
         2000,
         "test-node".to_string(),
+        1, // nonce
     );
     
     let poi_proof_checkpoint = create_test_poi_proof(&distributed_proof_checkpoint);
@@ -239,7 +247,8 @@ fn test_reward_split_formula() {
 
 #[test]
 fn test_global_state_reward_tracking() {
-    let state = GlobalState::new();
+    let chain_state = Arc::new(blockchain_core::state::ChainState::new());
+    let state = GlobalState::new(chain_state);
     let node_id = "test-node-1".to_string();
     
     // Initially no record
@@ -266,7 +275,8 @@ fn test_global_state_reward_tracking() {
 
 #[test]
 fn test_nodes_hosting_fragments() {
-    let state = GlobalState::new();
+    let chain_state = Arc::new(blockchain_core::state::ChainState::new());
+    let state = GlobalState::new(chain_state);
     
     // Add fragments
     let frag1 = create_test_fragment("frag-1", "model-1", 1000000, 
@@ -291,7 +301,8 @@ fn test_nodes_hosting_fragments() {
 
 #[test]
 fn test_vram_allocation_calculation() {
-    let state = GlobalState::new();
+    let chain_state = Arc::new(blockchain_core::state::ChainState::new());
+    let state = GlobalState::new(chain_state);
     
     // Add fragments
     let frag1 = create_test_fragment("frag-1", "model-1", 1073741824, // 1 GB
@@ -317,7 +328,8 @@ fn test_vram_allocation_calculation() {
 
 #[test]
 fn test_storage_reward_distribution() {
-    let state = GlobalState::new();
+    let chain_state = Arc::new(blockchain_core::state::ChainState::new());
+    let state = GlobalState::new(chain_state);
     
     // Add nodes with different stakes
     state.nodes.insert("node-1".to_string(), create_test_node("node-1", 1000, 24.0));
@@ -357,7 +369,7 @@ fn test_storage_reward_distribution() {
     // Verify calculations are reasonable
     assert!(stake_weight_1 > 0.0 && stake_weight_1 <= 1.0);
     assert!(vram_weight_1 > 0.0 && vram_weight_1 <= 1.0);
-    assert!(reward_1 >= 0);
+    assert!(reward_1 > 0);
 }
 
 #[test]

@@ -59,7 +59,7 @@ impl ValidatorRegistry {
     pub fn register_validator(
         &self,
         address: String,
-        stake: Amount,
+        _stake: Amount,
         pubkey: String,
         chain_state: &blockchain_core::state::ChainState,
     ) -> Result<(), ConsensusError> {

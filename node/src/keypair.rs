@@ -17,6 +17,7 @@ use serde::{Serialize, Deserialize};
 
 /// Authentication token for pipeline replica join/registration
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[allow(dead_code)]
 pub struct PipelineAuthToken {
     pub node_id: String,
     pub block_id: u32,
@@ -25,6 +26,7 @@ pub struct PipelineAuthToken {
     pub signature: Vec<u8>,
 }
 
+#[allow(dead_code)]
 impl PipelineAuthToken {
     /// Token expiry time in seconds (5 minutes)
     pub const EXPIRY_SECONDS: u64 = 300;
@@ -67,6 +69,7 @@ impl PipelineAuthToken {
 }
 
 /// Generate a pipeline authentication token using Ed25519
+#[allow(dead_code)]
 pub fn generate_pipeline_auth_token(
     keypair: &Keypair,
     node_id: String,
@@ -90,6 +93,7 @@ pub fn generate_pipeline_auth_token(
 }
 
 /// Verify a pipeline authentication token using Ed25519
+#[allow(dead_code)]
 pub fn verify_pipeline_auth_token(token: &PipelineAuthToken) -> Result<()> {
     // Check expiry
     if token.is_expired() {
@@ -97,7 +101,7 @@ pub fn verify_pipeline_auth_token(token: &PipelineAuthToken) -> Result<()> {
     }
     
     // Reconstruct public key from protobuf encoding
-    let public_key = libp2p::identity::PublicKey::from_protobuf_encoding(&token.public_key)
+    let public_key = libp2p::identity::PublicKey::try_decode_protobuf(&token.public_key)
         .map_err(|e| anyhow!("failed to decode public key: {}", e))?;
     
     // Create unsigned token copy for verification

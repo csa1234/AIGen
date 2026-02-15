@@ -24,14 +24,13 @@ use tokio::sync::{mpsc, RwLock};
 use thiserror::Error;
 use uuid::Uuid;
 
-use crate::block_assignment::{BlockAssignment, LayerBlock, StaticBlockConfig};
+use crate::block_assignment::{BlockAssignment, StaticBlockConfig};
 use crate::pipeline_message::{InferenceStart, PipelineMessage};
-use crate::replica_manager::{BlockReplica, ReplicaManager, ReplicaHealth, HealthStatus};
+use crate::replica_manager::{BlockReplica, ReplicaManager, ReplicaHealth};
 use crate::health_monitor::HealthMonitor;
 use crate::route_selector::RouteSelector;
 use crate::coordinator::{StaticPipelineCoordinator, BatchConfig, InferenceRequest, BatchedInference};
 use distributed_compute::scheduler::DynamicScheduler;
-use distributed_compute::state::GlobalState;
 use consensus::validator::ValidatorRegistry;
 use network::protocol::{NetworkMessage, NodeCapabilities};
 
@@ -80,7 +79,7 @@ pub fn verify_pipeline_auth_token(token: &PipelineAuthToken) -> Result<(), Orche
     }
     
     // Reconstruct public key from protobuf encoding
-    let public_key = libp2p::identity::PublicKey::from_protobuf_encoding(&token.public_key)
+    let public_key = libp2p::identity::PublicKey::try_decode_protobuf(&token.public_key)
         .map_err(|e| OrchestratorError::ReplicaManagerError(
             format!("failed to decode public key: {}", e)
         ))?;
@@ -147,7 +146,7 @@ pub struct BatchTracking {
 }
 
 /// Result routing information for batch processing
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct BatchResultRouting {
     pub batch_id: Uuid,
     pub inference_ids: Vec<Uuid>,
@@ -550,7 +549,7 @@ impl OrchestratorNode {
         self.active_inferences.insert(inference_id, plan.clone());
 
         // Send inference start to first block
-        if let Some(first_replica) = plan.pipeline_route.first() {
+        if let Some(_first_replica) = plan.pipeline_route.first() {
             let inference_start = InferenceStart {
                 inference_id,
                 model_id,
@@ -622,6 +621,7 @@ impl OrchestratorNode {
     /// 
     /// DEPRECATED: This method is deprecated and disabled because it emits zeroed checkpoint hashes.
     /// Use the FailoverCoordinator for checkpoint-aware failover recovery instead.
+    #[allow(dead_code)]
     async fn send_failover_message(
         &self,
         _inference_id: Uuid,
@@ -921,7 +921,7 @@ impl OrchestratorNode {
         // The batch_id is encoded in a custom metadata field when present
         if chunk.tensor.metadata.layer_range.0 == u32::MAX {
             // Special marker indicating batched output - batch_id encoded in layer_range.1
-            let batch_id_bytes = chunk.tensor.metadata.layer_range.1.to_le_bytes();
+            let _batch_id_bytes = chunk.tensor.metadata.layer_range.1.to_le_bytes();
             // This is a simplified extraction - in production, batch_id would be properly serialized
             None // Placeholder - requires proper encoding in block executor
         } else {
@@ -930,14 +930,14 @@ impl OrchestratorNode {
     }
     
     /// Split batched output by [BATCH_SEP] delimiter
-    fn split_batched_output(chunk: &crate::pipeline_message::ActivationChunk) -> Vec<String> {
+    fn split_batched_output(_chunk: &crate::pipeline_message::ActivationChunk) -> Vec<String> {
         // Decompress tensor data and split by separator
         // This is a placeholder - actual implementation depends on output encoding
         vec![]
     }
     
     /// Extract single output from chunk
-    fn extract_output_from_chunk(chunk: &crate::pipeline_message::ActivationChunk) -> String {
+    fn extract_output_from_chunk(_chunk: &crate::pipeline_message::ActivationChunk) -> String {
         // Convert tensor data to string output
         // Placeholder implementation
         String::new()
@@ -950,7 +950,7 @@ impl OrchestratorNode {
         output: String,
     ) -> Result<(), OrchestratorError> {
         // Remove from active inferences
-        if let Some((_, plan)) = self.active_inferences.remove(&inference_id) {
+        if let Some((_, _plan)) = self.active_inferences.remove(&inference_id) {
             tracing::info!(
                 "Completed inference {} with output length {}",
                 inference_id,

@@ -32,5 +32,5 @@ pub use crate::shutdown::{
 pub use crate::types::{CeoSignature, GenesisError, ShutdownCommand, SipProposal, WalletAddress};
 pub use crate::veto::{
     approve_sip, can_deploy_sip, check_and_auto_approve, get_sip_status, submit_sip, veto_sip,
-    trigger_auto_approval_check, AutoApproveConfig, SipRegistry, SipStatus,
+    trigger_auto_approval_check, AutoApproveConfig, SipRegistry, SipStatus, ChainStateProvider,
 };

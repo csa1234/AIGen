@@ -37,6 +37,8 @@ fn create_test_node(node_id: &str, vram_gb: f32) -> NodeState {
             max_fragment_size_mb: 500,
         },
         rtt_map: std::collections::HashMap::new(),
+        bid_price_per_task: None,
+        accepts_bids: false,
     }
 }
 
@@ -54,6 +56,8 @@ fn test_task_plan_creation() {
         status: TaskStatus::Pending,
         tensor_shard_index: 0,
         total_tensor_shards: 1,
+        rejected_nodes: Vec::new(),
+        target_fragment_size_bytes: distributed_compute::state::DEFAULT_FRAGMENT_SIZE_BYTES,
     };
 
     let plan = TaskPlan {
@@ -80,7 +84,7 @@ fn test_activation_ref_creation() {
 
 #[test]
 fn test_global_state_node_tracking() {
-    let state = GlobalState::new();
+    let state = GlobalState::new(std::sync::Arc::new(blockchain_core::state::ChainState::new()));
     
     let node = create_test_node("node_1", 24.0);
     state.update_node_state(node.clone());
@@ -97,7 +101,7 @@ fn test_global_state_node_tracking() {
 
 #[test]
 fn test_global_state_fragment_tracking() {
-    let state = GlobalState::new();
+    let state = GlobalState::new(std::sync::Arc::new(blockchain_core::state::ChainState::new()));
     
     let fragment = FragmentLocation {
         fragment_id: "frag_0".to_string(),
@@ -105,6 +109,7 @@ fn test_global_state_fragment_tracking() {
         fragment_index: 0,
         size_bytes: 200 * 1024 * 1024, // 200MB
         replicas: vec!["node_1".to_string(), "node_2".to_string()],
+        target_fragment_size_bytes: distributed_compute::state::DEFAULT_FRAGMENT_SIZE_BYTES,
     };
     
     state.fragments.insert("frag_0".to_string(), fragment);
@@ -114,7 +119,7 @@ fn test_global_state_fragment_tracking() {
 
 #[test]
 fn test_task_allocation() {
-    let state = GlobalState::new();
+    let state = GlobalState::new(std::sync::Arc::new(blockchain_core::state::ChainState::new()));
     
     let node = create_test_node("node_1", 24.0);
     state.update_node_state(node);
@@ -130,6 +135,8 @@ fn test_task_allocation() {
         status: TaskStatus::Pending,
         tensor_shard_index: 0,
         total_tensor_shards: 1,
+        rejected_nodes: Vec::new(),
+        target_fragment_size_bytes: distributed_compute::state::DEFAULT_FRAGMENT_SIZE_BYTES,
     };
     
     state.allocate_task(&task, "node_1");
@@ -147,7 +154,7 @@ fn test_task_allocation() {
 
 #[test]
 fn test_vram_tracking() {
-    let state = GlobalState::new();
+    let state = GlobalState::new(std::sync::Arc::new(blockchain_core::state::ChainState::new()));
     
     let node = create_test_node("node_1", 24.0);
     state.update_node_state(node);
@@ -168,7 +175,7 @@ fn test_vram_tracking() {
 
 #[test]
 fn test_pipeline_activation_linking() {
-    let state = GlobalState::new();
+    let state = GlobalState::new(std::sync::Arc::new(blockchain_core::state::ChainState::new()));
     let _router = RouteSelector::new(std::sync::Arc::new(state));
     
     // Create tasks for a pipeline
@@ -184,6 +191,8 @@ fn test_pipeline_activation_linking() {
         status: TaskStatus::Pending,
         tensor_shard_index: 0,
         total_tensor_shards: 1,
+        rejected_nodes: Vec::new(),
+        target_fragment_size_bytes: distributed_compute::state::DEFAULT_FRAGMENT_SIZE_BYTES,
     };
     
     let task2_id = Uuid::new_v4();
@@ -201,6 +210,8 @@ fn test_pipeline_activation_linking() {
         status: TaskStatus::Pending,
         tensor_shard_index: 1,
         total_tensor_shards: 1,
+        rejected_nodes: Vec::new(),
+        target_fragment_size_bytes: distributed_compute::state::DEFAULT_FRAGMENT_SIZE_BYTES,
     };
     
     let plan = TaskPlan {
@@ -231,6 +242,8 @@ fn test_task_status_transitions() {
         status: TaskStatus::Pending,
         tensor_shard_index: 0,
         total_tensor_shards: 1,
+        rejected_nodes: Vec::new(),
+        target_fragment_size_bytes: distributed_compute::state::DEFAULT_FRAGMENT_SIZE_BYTES,
     };
     
     assert_eq!(task.status, TaskStatus::Pending);
@@ -274,6 +287,7 @@ fn test_fragment_location_replicas() {
         fragment_index: 0,
         size_bytes: 200 * 1024 * 1024,
         replicas: vec!["node_1".to_string(), "node_2".to_string(), "node_3".to_string()],
+        target_fragment_size_bytes: distributed_compute::state::DEFAULT_FRAGMENT_SIZE_BYTES,
     };
     
     assert_eq!(fragment.replicas.len(), 3);
@@ -295,6 +309,8 @@ fn test_compute_task_clone() {
         status: TaskStatus::Pending,
         tensor_shard_index: 0,
         total_tensor_shards: 1,
+        rejected_nodes: Vec::new(),
+        target_fragment_size_bytes: distributed_compute::state::DEFAULT_FRAGMENT_SIZE_BYTES,
     };
     
     let cloned = task.clone();

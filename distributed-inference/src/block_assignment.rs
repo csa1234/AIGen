@@ -10,7 +10,10 @@
 
 use std::collections::HashMap;
 use std::path::Path;
+use std::time::Duration;
 
+use libp2p::PeerId;
+use network::protocol::NodeCapabilities;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -28,19 +31,25 @@ pub struct LayerBlock {
 pub struct BlockReplica {
     pub block_id: u32,
     pub node_id: String,
+    pub peer_id: PeerId,
+    pub capabilities: NodeCapabilities,
     pub is_healthy: bool,
     pub last_heartbeat: i64,
     pub load_score: f32,
+    pub rtt_map: HashMap<String, Duration>,
 }
 
 impl BlockReplica {
-    pub fn new(block_id: u32, node_id: String) -> Self {
+    pub fn new(block_id: u32, node_id: String, peer_id: PeerId, capabilities: NodeCapabilities) -> Self {
         Self {
             block_id,
             node_id,
+            peer_id,
+            capabilities,
             is_healthy: true,
             last_heartbeat: chrono::Utc::now().timestamp(),
             load_score: 0.0,
+            rtt_map: HashMap::new(),
         }
     }
 }
@@ -70,9 +79,9 @@ impl BlockAssignment {
         self.replicas.entry(block_id).or_insert_with(Vec::new);
     }
 
-    /// Assign node to block
-    pub fn assign_replica(&mut self, block_id: u32, node_id: String) {
-        let replica = BlockReplica::new(block_id, node_id);
+    /// Assign node to block with peer details
+    pub fn assign_replica(&mut self, block_id: u32, node_id: String, peer_id: PeerId, capabilities: NodeCapabilities) {
+        let replica = BlockReplica::new(block_id, node_id, peer_id, capabilities);
         self.replicas
             .entry(block_id)
             .or_insert_with(Vec::new)
@@ -245,11 +254,29 @@ impl StaticBlockConfig {
             assignment.add_block(layer_block);
 
             for replica_config in &block_config.replicas {
-                assignment.assign_replica(block_config.block_id, replica_config.node_id.clone());
+                let peer_id = libp2p::PeerId::random();
+                let capabilities = network::protocol::NodeCapabilities {
+                    has_gpu: false,
+                    gpu_model: None,
+                    supports_inference: true,
+                    supports_training: false,
+                    max_fragment_size_mb: 1024,
+                };
+                assignment.assign_replica(block_config.block_id, replica_config.node_id.clone(), peer_id, capabilities);
             }
         }
 
         assignment
+    }
+}
+
+impl Default for StaticBlockConfig {
+    fn default() -> Self {
+        Self {
+            total_blocks: 0,
+            replication_factor: 3,
+            blocks: Vec::new(),
+        }
     }
 }
 
@@ -283,9 +310,17 @@ mod tests {
             estimated_vram_gb: 2.5,
         });
 
-        assignment.assign_replica(0, "node-a".to_string());
-        assignment.assign_replica(0, "node-b".to_string());
-        assignment.assign_replica(0, "node-c".to_string());
+        let peer_id = libp2p::PeerId::random();
+        let capabilities = network::protocol::NodeCapabilities {
+            has_gpu: false,
+            gpu_model: None,
+            supports_inference: true,
+            supports_training: false,
+            max_fragment_size_mb: 1024,
+        };
+        assignment.assign_replica(0, "node-a".to_string(), peer_id, capabilities.clone());
+        assignment.assign_replica(0, "node-b".to_string(), peer_id, capabilities.clone());
+        assignment.assign_replica(0, "node-c".to_string(), peer_id, capabilities);
 
         let replicas = assignment.get_replicas(0);
         assert_eq!(replicas.len(), 3);
@@ -303,9 +338,17 @@ mod tests {
             estimated_vram_gb: 2.5,
         });
 
-        assignment.assign_replica(0, "node-a".to_string());
-        assignment.assign_replica(0, "node-b".to_string());
-        assignment.assign_replica(0, "node-c".to_string());
+        let peer_id = libp2p::PeerId::random();
+        let capabilities = network::protocol::NodeCapabilities {
+            has_gpu: false,
+            gpu_model: None,
+            supports_inference: true,
+            supports_training: false,
+            max_fragment_size_mb: 1024,
+        };
+        assignment.assign_replica(0, "node-a".to_string(), peer_id, capabilities.clone());
+        assignment.assign_replica(0, "node-b".to_string(), peer_id, capabilities.clone());
+        assignment.assign_replica(0, "node-c".to_string(), peer_id, capabilities);
 
         assignment.mark_replica_unhealthy(0, "node-b");
 
@@ -325,9 +368,17 @@ mod tests {
             estimated_vram_gb: 2.5,
         });
 
-        assignment.assign_replica(0, "node-a".to_string());
-        assignment.assign_replica(0, "node-b".to_string());
-        assignment.assign_replica(0, "node-c".to_string());
+        let peer_id = libp2p::PeerId::random();
+        let capabilities = network::protocol::NodeCapabilities {
+            has_gpu: false,
+            gpu_model: None,
+            supports_inference: true,
+            supports_training: false,
+            max_fragment_size_mb: 1024,
+        };
+        assignment.assign_replica(0, "node-a".to_string(), peer_id, capabilities.clone());
+        assignment.assign_replica(0, "node-b".to_string(), peer_id, capabilities.clone());
+        assignment.assign_replica(0, "node-c".to_string(), peer_id, capabilities);
 
         assignment.update_replica_load(0, "node-a", 0.8);
         assignment.update_replica_load(0, "node-b", 0.3);

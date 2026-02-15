@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use distributed_compute::state::{GlobalState, NodeState, NodeRole};
 use network::protocol::NodeCapabilities;
 use libp2p::PeerId;
@@ -6,7 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 #[test]
 fn test_node_state_update() {
-    let state = GlobalState::new();
+    let state = GlobalState::new(Arc::new(blockchain_core::state::ChainState::new()));
     let node_id = "node1".to_string();
     let peer_id = PeerId::random();
     
@@ -29,6 +30,8 @@ fn test_node_state_update() {
             max_fragment_size_mb: 1024,
         },
         rtt_map: Default::default(),
+        bid_price_per_task: None,
+        accepts_bids: false,
     };
     
     state.update_node_state(node.clone());

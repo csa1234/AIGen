@@ -9,7 +9,7 @@ use uuid::Uuid;
 
 #[test]
 fn test_routing_selection() {
-    let state = Arc::new(GlobalState::new());
+    let state = Arc::new(GlobalState::new(Arc::new(blockchain_core::state::ChainState::new())));
     let router = RouteSelector::new(state.clone());
     
     // Setup state
@@ -22,6 +22,7 @@ fn test_routing_selection() {
         fragment_index: 0,
         size_bytes: 1024 * 1024 * 1024, // 1GB
         replicas: vec![node_id.clone()],
+        target_fragment_size_bytes: distributed_compute::state::DEFAULT_FRAGMENT_SIZE_BYTES,
     });
     
     state.nodes.insert(node_id.clone(), NodeState {
@@ -43,6 +44,8 @@ fn test_routing_selection() {
             max_fragment_size_mb: 2048,
         },
         rtt_map: Default::default(),
+        bid_price_per_task: None,
+        accepts_bids: false,
     });
     
     let mut plan = TaskPlan {
@@ -58,6 +61,8 @@ fn test_routing_selection() {
             status: TaskStatus::Pending,
             tensor_shard_index: 0,
             total_tensor_shards: 1,
+            rejected_nodes: Vec::new(),
+            target_fragment_size_bytes: distributed_compute::state::DEFAULT_FRAGMENT_SIZE_BYTES,
         }],
         pipeline_order: vec![],
     };

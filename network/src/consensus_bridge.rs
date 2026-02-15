@@ -13,7 +13,7 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
 
 use blockchain_core::Block;
-use consensus::{PoIConsensus, PoIProof, ValidatorVote};
+use consensus::{PoIConsensus, PoIProof, ValidatorVote, verify_poi_proof};
 
 use crate::events::NetworkEvent;
 use crate::p2p::P2PNode;
@@ -50,7 +50,7 @@ impl ConsensusBridge {
             NetworkMessage::PoIProof(proof) => {
                 // Verify the proof (cheap gating) and then forward it to the node role that owns
                 // submission context (txs/prev hash/height) to trigger block production.
-                if proof.verify().is_ok() {
+                if verify_poi_proof(&proof).is_ok() {
                     if let Some(tx) = &self.poi_proof_tx {
                         let _ = tx.try_send(proof);
                     }

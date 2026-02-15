@@ -10,19 +10,24 @@ license.workspace = true
 bincode = { workspace = true }
 zstd = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }
+serde_bytes = "0.11"
 tokio = { workspace = true }
 thiserror = { workspace = true }
-libp2p = { workspace = true }
+libp2p = { workspace = true, features = ["serde"] }
 sha3 = { workspace = true }
 chrono = { workspace = true }
 uuid = { version = "1.7", features = ["v4", "serde"] }
 toml = { workspace = true }
 dashmap = "5.5"
+tracing = { workspace = true }
+anyhow = "1.0"
 
 # Path dependencies
 blockchain-core = { path = "../blockchain-core" }
 consensus = { path = "../consensus" }
 network = { path = "../network" }
+distributed-compute = { path = "../distributed-compute" }
 model = { path = "../model" }
 
 [dev-dependencies]

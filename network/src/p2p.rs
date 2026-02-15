@@ -570,7 +570,7 @@ impl P2PNode {
     }
 
     /// Subscribe to a specific block topic for distributed pipeline inference
-    pub fn subscribe_to_block(&mut self, block_id: u32) -> Result<(), gossipsub::SubscriptionError> {
+    pub fn subscribe_to_block(&mut self, block_id: u32) -> Result<bool, gossipsub::SubscriptionError> {
         let topic = crate::gossip::topic_block(block_id);
         self.swarm.behaviour_mut().gossipsub.subscribe(&topic)
     }
@@ -584,7 +584,7 @@ impl P2PNode {
     }
 
     /// Unsubscribe from a specific block topic
-    pub fn unsubscribe_from_block(&mut self, block_id: u32) -> bool {
+    pub fn unsubscribe_from_block(&mut self, block_id: u32) -> Result<bool, gossipsub::PublishError> {
         let topic = crate::gossip::topic_block(block_id);
         self.swarm.behaviour_mut().gossipsub.unsubscribe(&topic)
     }

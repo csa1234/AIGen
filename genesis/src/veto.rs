@@ -19,6 +19,17 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
+/// Trait for chain state operations needed by genesis
+pub trait ChainStateProvider {
+    /// Check if auto-approve threshold is met for a proposal
+    fn check_auto_approve_threshold(
+        &self,
+        proposal_id: &str,
+        min_approval_percentage: f64,
+        min_participation_percentage: f64,
+    ) -> bool;
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum SipStatus {
     Pending,
@@ -161,7 +172,7 @@ pub fn approve_sip(proposal_id: &str, signature: CeoSignature) -> Result<(), Gen
 /// Returns true if auto-approved, false if CEO review needed
 pub fn check_and_auto_approve(
     proposal_id: &str,
-    chain_state: &blockchain_core::state::ChainState,
+    chain_state: &dyn ChainStateProvider,
 ) -> Result<bool, GenesisError> {
     let mut registry = SIP_REGISTRY.lock().expect("sip registry mutex poisoned");
     
@@ -229,7 +240,7 @@ pub fn check_and_auto_approve(
 /// This should be called by the voting lifecycle manager
 pub fn trigger_auto_approval_check(
     proposal_id: &str,
-    chain_state: &blockchain_core::state::ChainState,
+    chain_state: &dyn ChainStateProvider,
 ) -> Result<bool, GenesisError> {
     check_and_auto_approve(proposal_id, chain_state)
 }

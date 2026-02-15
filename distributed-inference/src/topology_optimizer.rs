@@ -13,7 +13,6 @@
 //! Arranges nodes in ring topology based on RTT measurements to minimize
 //! total pipeline latency. Uses greedy nearest-neighbor TSP heuristic.
 
-use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -310,7 +309,7 @@ pub trait TopologyOptimizedRouteSelector {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::replica_manager::{HealthStatus, ReplicaHealth};
+    use std::collections::HashMap;
     use libp2p::PeerId;
     use network::protocol::NodeCapabilities;
     use std::str::FromStr;
@@ -322,9 +321,10 @@ mod tests {
             peer_id: PeerId::from_str("12D3KooWDpJ7As7BWAwRMfu1VU2WCqNjvq387JEYKDBj4kx6nXTN").unwrap(),
             capabilities: NodeCapabilities {
                 has_gpu: false,
-                cuda_version: None,
-                max_model_size_gb: 8,
-                supported_dtypes: vec!["f32".to_string()],
+                gpu_model: None,
+                supports_inference: true,
+                supports_training: false,
+                max_fragment_size_mb: 2048,
             },
             last_heartbeat: chrono::Utc::now().timestamp(),
             load_score: 0.5,
@@ -365,7 +365,7 @@ mod tests {
         assert!(node_ids.contains(&"node-3".to_string()));
 
         // Check that metrics were recorded
-        let (optimizations, _, improvement) = optimizer.get_metrics().get_stats();
+        let (optimizations, _, _improvement) = optimizer.get_metrics().get_stats();
         assert_eq!(optimizations, 1);
         // Improvement should be positive (optimized better than random)
         // Note: with the specific RTT setup, we might not always get improvement

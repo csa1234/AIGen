@@ -8,7 +8,7 @@ license.workspace = true
 [dependencies]
 genesis = { path = "../genesis" }
 blockchain-core = { path = "../blockchain-core" }
-model = { path = "../model" }
+poi-types = { path = "../poi-types" }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
@@ -20,9 +20,12 @@ hex = { workspace = true }
 base64 = { workspace = true }
 bincode = { workspace = true }
 chrono = { workspace = true }
-# tracing = "0.1"
+uuid = { version = "1.0", features = ["v4", "serde"] }
+tracing = "0.1"
 
 [dev-dependencies]
+model = { path = "../model" }
+sha3 = { workspace = true }
 futures = "0.3"
 prost = "0.12"
 reqwest = { workspace = true }

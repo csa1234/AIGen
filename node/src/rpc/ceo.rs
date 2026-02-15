@@ -563,9 +563,10 @@ impl CeoRpcServer for CeoRpcMethods {
             vote: vote_value,
             comment: request.comment,
             timestamp: request.timestamp,
+            stake_weight: 0, // CEO vote has default stake weight
         };
 
-        bc.state.record_governance_vote(vote);
+        let _ = bc.state.record_governance_vote(vote);
 
         println!("governance vote recorded: {}", request.proposal_id);
 

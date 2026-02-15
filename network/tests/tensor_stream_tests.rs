@@ -186,6 +186,9 @@ fn test_activation_reconstruction_mismatched_chunks() {
         checkpoint_hash: [0u8; 32],
         shape: vec![1, 3],
         layer_range: (0, 10),
+        quantization_min: 0.0,
+        quantization_max: 1.0,
+        is_quantized: false,
     };
 
     let chunk2 = ActivationChunk {
@@ -198,6 +201,9 @@ fn test_activation_reconstruction_mismatched_chunks() {
         checkpoint_hash: [0u8; 32],
         shape: vec![1, 3],
         layer_range: (0, 10),
+        quantization_min: 0.0,
+        quantization_max: 1.0,
+        is_quantized: false,
     };
 
     let result = reconstruct_activation(&[chunk1, chunk2]);

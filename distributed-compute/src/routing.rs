@@ -259,7 +259,7 @@ pub fn select_route(&self, task_plan: &mut TaskPlan) -> Result<(), SchedulerErro
         &self,
         node: &crate::state::NodeState,
         prev_node_id: &str,
-        task: &crate::task::ComputeTask,
+        _task: &crate::task::ComputeTask,
     ) -> f64 {
         // Get latency score
         let latency = self.calculate_latency_score(node, prev_node_id);

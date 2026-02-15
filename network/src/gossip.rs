@@ -186,7 +186,7 @@ impl GossipManager {
         &self,
         gossipsub: &mut libp2p::gossipsub::Behaviour,
         block_id: u32,
-    ) -> Result<(), libp2p::gossipsub::SubscriptionError> {
+    ) -> Result<bool, libp2p::gossipsub::SubscriptionError> {
         let topic = topic_block(block_id);
         gossipsub.subscribe(&topic)
     }
@@ -208,7 +208,7 @@ impl GossipManager {
         &self,
         gossipsub: &mut libp2p::gossipsub::Behaviour,
         block_id: u32,
-    ) -> bool {
+    ) -> Result<bool, libp2p::gossipsub::PublishError> {
         let topic = topic_block(block_id);
         gossipsub.unsubscribe(&topic)
     }
@@ -218,12 +218,12 @@ impl GossipManager {
         &self,
         gossipsub: &mut libp2p::gossipsub::Behaviour,
         block_ids: &[u32],
-    ) -> bool {
+    ) -> Result<bool, libp2p::gossipsub::PublishError> {
         for &block_id in block_ids {
-            if !self.unsubscribe_block(gossipsub, block_id) {
-                return false;
+            if !self.unsubscribe_block(gossipsub, block_id)? {
+                return Ok(false);
             }
         }
-        true
+        Ok(true)
     }
 }

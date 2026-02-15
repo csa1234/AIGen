@@ -276,7 +276,7 @@ impl FailoverCoordinator {
 }
 
 /// Metrics for failover operations
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct FailoverMetrics {
     total_failovers: AtomicU64,
     total_recovery_time_ms: AtomicU64,

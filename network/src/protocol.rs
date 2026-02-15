@@ -27,6 +27,18 @@ pub struct NodeCapabilities {
     pub max_fragment_size_mb: u32,
 }
 
+impl Default for NodeCapabilities {
+    fn default() -> Self {
+        Self {
+            has_gpu: false,
+            gpu_model: None,
+            supports_inference: true,
+            supports_training: false,
+            max_fragment_size_mb: 1024,
+        }
+    }
+}
+
 /// Reference to an activation tensor stored on a node
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ActivationRef {

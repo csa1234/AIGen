@@ -75,7 +75,7 @@ pub mod checkpoint_manager;
 pub mod failover_coordinator;
 pub mod topology_optimizer;
 
-pub use block_assignment::{BlockAssignment, BlockReplica, LayerBlock, StaticBlockConfig};
+pub use block_assignment::{BlockAssignment, BlockReplica, LayerBlock, StaticBlockConfig, BlockConfig, ReplicaConfig};
 pub use coordinator::{ActiveInference, StaticPipelineCoordinator};
 pub use tensor_transport::{CompressedTensor, TensorMetadata, TensorTransport, TransportError};
 pub use pipeline_message::{

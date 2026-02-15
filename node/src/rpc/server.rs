@@ -28,7 +28,6 @@ use crate::rpc::subscriptions::{RpcSubscriptions, SubscriptionsRpcServer};
 use crate::rpc::model::{ModelRpcMethods, ModelRpcServer};
 use distributed_compute::scheduler::DynamicScheduler;
 use distributed_compute::state::GlobalState;
-use distributed_inference::OrchestratorNode;
 
 pub async fn start_rpc_server(
     blockchain: Arc<Mutex<Blockchain>>,

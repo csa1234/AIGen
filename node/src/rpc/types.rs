@@ -978,6 +978,24 @@ pub struct BlockLatencyMetrics {
     pub tasks_failed: u64,
 }
 
+// NEW: Pipeline Status Type
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[allow(dead_code)]
+pub struct PipelineStatus {
+    pub inference_id: String,
+    pub status: String, // "running", "completed", "failed"
+    pub current_block: u32,
+    pub total_blocks: u32,
+    pub progress_percent: f32,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CompressionStatsResponse {
+    pub total_tensors_compressed: u64,
+    pub avg_compression_ratio: f64,
+    pub total_bytes_saved: u64,
+    pub quantization_enabled: bool,
+}
+
 // Staking RPC Types
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct StakeInfoResponse {

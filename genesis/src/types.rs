@@ -99,6 +99,8 @@ pub enum GenesisError {
     InvalidPublicKey,
     #[error("invalid wallet address")]
     InvalidWalletAddress,
+    #[error("invalid address: {0}")]
+    InvalidAddress(String),
     #[error("shutdown active")]
     ShutdownActive,
     #[error("replay attack detected")]

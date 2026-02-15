@@ -24,9 +24,10 @@ use genesis::{check_shutdown, is_shutdown};
 use tokio::sync::broadcast;
 use tokio::sync::mpsc;
 
+pub use crate::poi::verify_poi_proof;
 use crate::poi::{calculate_poi_reward, check_shutdown_and_halt, ConsensusError, PoIBlockProducer};
 use crate::state::{ConsensusEvent, ConsensusMetrics, ConsensusStateMachine};
-use crate::validator::{QuorumResult, SlashReason, ValidatorRegistry, VoteRegistry};
+use crate::validator::{QuorumResult, ValidatorRegistry, VoteRegistry};
 
 pub use crate::poi::PoIProof;
 pub use crate::poi::{
@@ -98,7 +99,7 @@ impl PoIConsensus {
             return Err(ConsensusError::InvalidProof);
         }
 
-        proof.verify()?;
+        verify_poi_proof(&proof)?;
 
         let active = self.validator_registry.get_active_validators();
         let committee = crate::validator::select_validators_weighted(
@@ -155,7 +156,7 @@ impl PoIConsensus {
                 self.metrics.inc_rejected();
                 self.metrics.inc_slashing();
 
-                let slashed = crate::validator::slash_for_poi_failure(
+                let _slashed = crate::validator::slash_for_poi_failure(
                     &self.validator_registry,
                     &self.chain_state,
                     &miner_address,

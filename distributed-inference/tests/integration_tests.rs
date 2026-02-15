@@ -8,16 +8,25 @@
 // Commercial use requires express written consent and royalty agreements.
 // Contact: Cesar Saguier Antebi
 
-use std::path::Path;
-use std::sync::Arc;
-use tokio::sync::Mutex;
-
 use distributed_inference::{
-    ActivationChunk, BlockAssignment, BlockConfig, BlockReplica, CompressedTensor,
-    Failover, InferenceStart, LayerBlock, PipelineMessage, Proof, ReplicaConfig,
+    ActivationChunk, BlockAssignment, CompressedTensor,
+    Failover, InferenceStart, LayerBlock, PipelineMessage, Proof,
     StaticBlockConfig, TensorMetadata, TensorTransport,
 };
+use distributed_inference::block_assignment::{BlockConfig, ReplicaConfig};
+use network::protocol::NodeCapabilities;
 use uuid::Uuid;
+
+/// Helper function to create test node capabilities
+fn test_capabilities() -> NodeCapabilities {
+    NodeCapabilities {
+        has_gpu: true,
+        gpu_model: Some("RTX4090".to_string()),
+        supports_inference: true,
+        supports_training: false,
+        max_fragment_size_mb: 512,
+    }
+}
 
 /// Test block assignment creation and basic operations
 #[test]
@@ -58,9 +67,9 @@ fn test_replica_assignment() {
         estimated_vram_gb: 2.5,
     });
 
-    assignment.assign_replica(0, "node-a".to_string());
-    assignment.assign_replica(0, "node-b".to_string());
-    assignment.assign_replica(0, "node-c".to_string());
+    assignment.assign_replica(0, "node-a".to_string(), libp2p::PeerId::random(), test_capabilities());
+    assignment.assign_replica(0, "node-b".to_string(), libp2p::PeerId::random(), test_capabilities());
+    assignment.assign_replica(0, "node-c".to_string(), libp2p::PeerId::random(), test_capabilities());
 
     let replicas = assignment.get_replicas(0);
     assert_eq!(replicas.len(), 3);
@@ -91,9 +100,9 @@ fn test_replica_selection() {
         estimated_vram_gb: 2.5,
     });
 
-    assignment.assign_replica(0, "node-a".to_string());
-    assignment.assign_replica(0, "node-b".to_string());
-    assignment.assign_replica(0, "node-c".to_string());
+    assignment.assign_replica(0, "node-a".to_string(), libp2p::PeerId::random(), test_capabilities());
+    assignment.assign_replica(0, "node-b".to_string(), libp2p::PeerId::random(), test_capabilities());
+    assignment.assign_replica(0, "node-c".to_string(), libp2p::PeerId::random(), test_capabilities());
 
     // Set different load scores
     assignment.update_replica_load(0, "node-a", 0.8);
@@ -129,11 +138,11 @@ fn test_minimum_replicas() {
     assert!(!assignment.has_minimum_replicas(0));
 
     // Add one replica (still not enough)
-    assignment.assign_replica(0, "node-a".to_string());
+    assignment.assign_replica(0, "node-a".to_string(), libp2p::PeerId::random(), test_capabilities());
     assert!(!assignment.has_minimum_replicas(0));
 
     // Add second replica (now enough)
-    assignment.assign_replica(0, "node-b".to_string());
+    assignment.assign_replica(0, "node-b".to_string(), libp2p::PeerId::random(), test_capabilities());
     assert!(assignment.has_minimum_replicas(0));
 
     // Mark one as unhealthy
@@ -155,8 +164,8 @@ fn test_total_healthy_replicas() {
             estimated_vram_gb: 2.5,
         });
 
-        assignment.assign_replica(i, format!("node-{}-a", i));
-        assignment.assign_replica(i, format!("node-{}-b", i));
+        assignment.assign_replica(i, format!("node-{}-a", i), libp2p::PeerId::random(), test_capabilities());
+        assignment.assign_replica(i, format!("node-{}-b", i), libp2p::PeerId::random(), test_capabilities());
     }
 
     assert_eq!(assignment.total_healthy_replicas(), 4);
@@ -181,6 +190,7 @@ fn test_tensor_compression_roundtrip() {
         shape: vec![1, 512, 4096],
         dtype: "f32".to_string(),
         layer_range: (0, 9),
+        original_dtype: None,
     };
 
     // Compress at level 1 (low latency)
@@ -218,6 +228,7 @@ fn test_compression_levels() {
         shape: vec![num_elements],
         dtype: "f32".to_string(),
         layer_range: (0, 9),
+        original_dtype: None,
     };
 
     for level in 1..=3 {
@@ -241,6 +252,7 @@ fn test_tensor_serialization() {
         shape: vec![10, 20, 30],
         dtype: "f16".to_string(),
         layer_range: (5, 14),
+        original_dtype: None,
     };
 
     let data: Vec<u8> = (0..1000).map(|i| (i % 256) as u8).collect();
@@ -288,6 +300,7 @@ fn test_pipeline_message_serialization() {
         shape: vec![1, 512, 4096],
         dtype: "f32".to_string(),
         layer_range: (0, 9),
+        original_dtype: None,
     };
     let tensor_data: Vec<u8> = vec![0; 100];
     let compressed = TensorTransport::compress(&tensor_data, metadata, 1).unwrap();
@@ -381,6 +394,7 @@ fn test_message_priorities() {
         shape: vec![1],
         dtype: "f32".to_string(),
         layer_range: (0, 0),
+        original_dtype: None,
     };
     let compressed = TensorTransport::compress(&vec![0; 100], metadata.clone(), 1).unwrap();
 
@@ -488,6 +502,7 @@ fn test_checkpoint_integrity() {
         shape: vec![1, 512, 4096],
         dtype: "f32".to_string(),
         layer_range: (0, 9),
+        original_dtype: None,
     };
 
     let data: Vec<u8> = (0..1000).map(|i| (i % 256) as u8).collect();
@@ -533,6 +548,7 @@ fn test_tensor_metadata_byte_size() {
         shape: vec![1, 512, 4096],
         dtype: "f32".to_string(),
         layer_range: (0, 9),
+        original_dtype: None,
     };
     assert_eq!(f32_meta.byte_size(), 1 * 512 * 4096 * 4);
 
@@ -540,6 +556,7 @@ fn test_tensor_metadata_byte_size() {
         shape: vec![1, 512, 4096],
         dtype: "f16".to_string(),
         layer_range: (0, 9),
+        original_dtype: None,
     };
     assert_eq!(f16_meta.byte_size(), 1 * 512 * 4096 * 2);
 
@@ -547,6 +564,7 @@ fn test_tensor_metadata_byte_size() {
         shape: vec![100, 100],
         dtype: "i8".to_string(),
         layer_range: (0, 9),
+        original_dtype: None,
     };
     assert_eq!(i8_meta.byte_size(), 100 * 100);
 }
@@ -561,6 +579,7 @@ fn test_batch_tensor_operations() {
                 shape: vec![10, 10, 10],
                 dtype: "f32".to_string(),
                 layer_range: (i as u32 * 10, i as u32 * 10 + 9),
+                original_dtype: None,
             };
             (data, metadata)
         })
@@ -592,6 +611,7 @@ fn test_tensor_validation() {
         shape: vec![10, 20],
         dtype: "f32".to_string(),
         layer_range: (0, 9),
+        original_dtype: None,
     };
 
     let data: Vec<u8> = vec![0; 1000];
@@ -605,6 +625,7 @@ fn test_tensor_validation() {
         shape: vec![],
         dtype: "f32".to_string(),
         layer_range: (0, 9),
+        original_dtype: None,
     };
     let invalid = TensorTransport::compress(&data, invalid_meta, 1).unwrap();
     assert!(TensorTransport::validate(&invalid).is_err());
@@ -636,6 +657,7 @@ fn test_activation_chunk_properties() {
         shape: vec![1, 512, 4096],
         dtype: "f32".to_string(),
         layer_range: (0, 9),
+        original_dtype: None,
     };
 
     let data: Vec<u8> = vec![0; 100];
@@ -675,6 +697,7 @@ fn test_message_inference_id_extraction() {
         shape: vec![1],
         dtype: "f32".to_string(),
         layer_range: (0, 0),
+        original_dtype: None,
     };
     let compressed = TensorTransport::compress(&vec![0; 10], metadata, 1).unwrap();
 

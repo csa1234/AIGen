@@ -526,7 +526,7 @@ impl NetworkMetrics {
 
     /// Update global VRAM statistics
     pub fn update_global_stats(&self, active_nodes: u32, total_vram: f32, allocated_vram: f32) {
-        let mut global = self.global.write();
+        let global = self.global.write();
         global.active_nodes.store(active_nodes, Ordering::Relaxed);
         global.update_vram_stats(total_vram, allocated_vram);
     }
@@ -673,6 +673,14 @@ impl NetworkMetrics {
 
     pub fn inc_model_shards_received(&self) {
         self.model_shards_received.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn add_bytes_sent(&self, bytes: u64) {
+        self.bytes_sent.fetch_add(bytes, Ordering::Relaxed);
+    }
+
+    pub fn add_bytes_received(&self, bytes: u64) {
+        self.bytes_received.fetch_add(bytes, Ordering::Relaxed);
     }
 
     pub fn add_model_bytes_sent(&self, bytes: u64) {

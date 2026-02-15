@@ -276,7 +276,7 @@ pub fn compress_activation_quantized(data: &[f32], level: i32) -> Result<(Vec<u8
     let (quantized, min, max) = quantize_f32_to_u8(data);
 
     // Step 2: Apply zstd compression on u8 data
-    let compressed = zstd::encode_all(&quantized, level)
+    let compressed = zstd::encode_all(quantized.as_slice(), level)
         .map_err(|e| ActivationStreamError::Compression(e.to_string()))?;
 
     Ok((compressed, min, max))

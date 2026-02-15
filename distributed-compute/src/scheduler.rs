@@ -4,17 +4,19 @@ use std::collections::HashMap;
 use tokio::sync::{mpsc, RwLock};
 use thiserror::Error;
 use consensus::validator::{ValidatorRegistry, select_validators_weighted};
-use consensus::poi::{PoIProof, calculate_poi_reward, verify_distributed_task, ConsensusError};
+use consensus::poi::{PoIProof, calculate_poi_reward, verify_distributed_task};
 use network::protocol::NetworkMessage;
 use model::registry::ModelRegistry;
 use blockchain_core::types::Amount;
 use blockchain_core::state::ChainState;
 use blockchain_core::{RewardTx, RewardType};
 use blockchain_core::crypto::{SecretKey, sign_message};
+use genesis::{CeoTransactable, CeoSignature};
 use uuid::Uuid;
 use crate::state::GlobalState;
 use crate::routing::RouteSelector;
 use crate::task::{InferenceTask, TaskPlan, decompose_inference};
+use hex;
 
 /// Hourly storage reward pool (10,000 AIGEN tokens per hour)
 const HOURLY_STORAGE_POOL: u64 = 10_000;
@@ -465,7 +467,7 @@ impl DynamicScheduler {
         }
 
         // 4. Calculate and distribute rewards
-        for (node_id, fragments) in node_fragments {
+        for (node_id, _fragments) in node_fragments {
             // Get node stake
             let node_stake = self.state.nodes.get(&node_id)
                 .map(|n| n.stake.value())
@@ -513,6 +515,7 @@ impl DynamicScheduler {
     }
 
     /// Background task to periodically flush rewards (every 5 minutes)
+    #[allow(dead_code)]
     async fn reward_flush_loop(&self) {
         let mut interval = tokio::time::interval(Duration::from_secs(300)); // 5 minutes
         interval.tick().await; // Skip first tick
@@ -530,19 +533,20 @@ impl DynamicScheduler {
         &self,
         task_id: Uuid,
         poi_proof: &PoIProof,
-        compute_time_ms: u64,
+        _compute_time_ms: u64,
         fragment_ids: &[String],
     ) -> Result<(), SchedulerError> {
         // 1. Get task info first for validation
         let task = self.state.active_tasks.get(&task_id);
-        let (node_id, task_layer_range, task_fragment_ids) = if let Some(t) = task {
+        let (node_id, task_layer_range, task_fragment_ids) = if let Some(ref t) = task {
             (t.assigned_node.clone(), t.layer_range, t.required_fragments.clone())
         } else {
             return Err(SchedulerError::ChainStateError(format!("Task {} not found", task_id)));
         };
 
         // 2. Validate the PoI proof - with slashing on failure
-        if let Err(e) = poi_proof.verify() {
+        // Note: verify_poi_proof is the standalone function from consensus
+        if let Err(e) = consensus::poi::verify_poi_proof(poi_proof) {
             eprintln!("Task {} proof verification failed: {}", task_id, e);
             
             // NEW: Slash 10% of stake for inference PoI failure
@@ -696,7 +700,7 @@ impl DynamicScheduler {
             "compute".to_string(),
             now,
             Some(task_id.to_string()),
-            Some(task.inference_id.to_string()),
+            task.as_ref().map(|t| t.inference_id.to_string()),
             true, // proof_verified
         );
         self.state.record_reward_event(reward_event);
@@ -776,7 +780,8 @@ impl DynamicScheduler {
 
                 // Sign the reward transaction with CEO key
                 let message = reward_tx.message_to_sign();
-                let ceo_sig = sign_message(&message, ceo_key);
+                let sig = sign_message(&message, ceo_key);
+                let ceo_sig = CeoSignature(sig);
                 let signed_reward_tx = reward_tx.sign_with_ceo(ceo_sig);
 
                 // Apply the reward transaction through the chain state

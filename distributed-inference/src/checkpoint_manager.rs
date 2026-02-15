@@ -15,7 +15,7 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use dashmap::DashMap;
 use tokio::sync::RwLock;
@@ -33,12 +33,25 @@ pub struct CheckpointKey {
 }
 
 /// Stored checkpoint with metadata for LRU eviction
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct StoredCheckpoint {
     pub checkpoint: Checkpoint,
     pub size_bytes: usize,
     pub created_at: Instant,
     pub access_count: std::sync::atomic::AtomicU32,
+}
+
+impl Clone for StoredCheckpoint {
+    fn clone(&self) -> Self {
+        Self {
+            checkpoint: self.checkpoint.clone(),
+            size_bytes: self.size_bytes,
+            created_at: self.created_at,
+            access_count: std::sync::atomic::AtomicU32::new(
+                self.access_count.load(std::sync::atomic::Ordering::Relaxed)
+            ),
+        }
+    }
 }
 
 impl StoredCheckpoint {
@@ -283,7 +296,7 @@ impl CheckpointManager {
 
         // Evict the least accessed, oldest entries
         for (key, _, _, size_bytes) in entries.into_iter().take(to_evict) {
-            if let Some((_, stored)) = self.storage.remove(&key) {
+            if let Some((_, _stored)) = self.storage.remove(&key) {
                 self.total_storage_bytes
                     .fetch_sub(size_bytes, std::sync::atomic::Ordering::Relaxed);
                 
@@ -368,6 +381,7 @@ mod tests {
             shape: vec![1, 512, 4096],
             dtype: "f32".to_string(),
             layer_range: (0, 9),
+            original_dtype: None,
         };
         let data: Vec<u8> = vec![0; 100];
         TensorTransport::compress(&data, metadata, 1).unwrap()

@@ -9,7 +9,7 @@
 // Contact: Cesar Saguier Antebi
 
 use crate::crypto::hash_data;
-use crate::transaction::{Transaction, RewardTx, RewardType};
+use crate::transaction::{Transaction, RewardTx};
 use crate::types::{Address, Amount, Balance, BlockchainError, Nonce};
 use genesis::CEO_WALLET;
 use parking_lot::RwLock;
@@ -579,7 +579,7 @@ impl ChainState {
         let model_result = self.check_model_proposal_auto_approve(proposal_id);
         
         // Also trigger SIP auto-approval through genesis
-        let sip_result = genesis::trigger_auto_approval_check(proposal_id, self);
+        let sip_result = genesis::trigger_auto_approval_check(proposal_id, self as &dyn genesis::ChainStateProvider);
         
         // Return true if either succeeded
         match (model_result, sip_result) {
@@ -596,10 +596,14 @@ impl ChainState {
         // Check if voter has stake (or is CEO)
         let stake_weight = if vote.voter_address != genesis::CEO_WALLET {
             let stake = self.get_stake(&vote.voter_address);
-            if stake.is_none() || stake.unwrap().staked_amount.is_zero() {
+            if let Some(stake) = stake {
+                if stake.staked_amount.is_zero() {
+                    return Err(BlockchainError::InvalidTransaction); // No stake, can't vote
+                }
+                stake.staked_amount.value()
+            } else {
                 return Err(BlockchainError::InvalidTransaction); // No stake, can't vote
             }
-            stake.unwrap().staked_amount.value()
         } else {
             // CEO votes with weight 0 (their approval is handled separately via signature)
             0
@@ -619,10 +623,12 @@ impl ChainState {
             return Err(BlockchainError::InvalidTransaction); // Already voted
         }
         
+        // After recording vote, try to auto-approve (handles both model proposals and SIPs)
+        let proposal_id = vote.proposal_id.clone();
+        
         self.governance_votes.write().push(vote);
         
-        // After recording vote, try to auto-approve (handles both model proposals and SIPs)
-        let _ = self.trigger_auto_approval(&vote.proposal_id);
+        let _ = self.trigger_auto_approval(&proposal_id);
         
         Ok(())
     }
@@ -875,5 +881,20 @@ impl ChainState {
         }
 
         Ok(())
+    }
+}
+
+impl genesis::ChainStateProvider for ChainState {
+    fn check_auto_approve_threshold(
+        &self,
+        proposal_id: &str,
+        min_approval_percentage: f64,
+        min_participation_percentage: f64,
+    ) -> bool {
+        self.check_auto_approve_threshold(
+            proposal_id,
+            min_approval_percentage,
+            min_participation_percentage,
+        )
     }
 }

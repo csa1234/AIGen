@@ -31,6 +31,11 @@ use crate::rpc::types::{
     ReplicaHealthResponse, PipelineInferenceRequest, PipelineInferenceResponse,
     // NEW: Distributed Inference types
     DistributedInferenceStatsResponse, ActivePipelineResponse, BlockLatencyMetrics, CompressionStatsResponse,
+    // NEW: Staking and Governance types
+    SubmitStakeTxRequest, SubmitUnstakeTxRequest, SubmitClaimStakeTxRequest, StakeTxResponse, StakeInfoResponse, StakeListResponse,
+    ProposalResponse, ProposalListResponse, 
+    VoteResponse, VoteListResponse, VoteTallyResponse, SubmitVoteRequest, SubmitVoteResponse,
+    parse_hex_bytes, to_hex_tx_hash, parse_stake_role, stake_role_to_string,
 };
 use distributed_compute::scheduler::DynamicScheduler;
 use distributed_compute::state::GlobalState;
@@ -479,8 +484,8 @@ impl PublicRpcServer for RpcMethods {
         let global_metrics = self.network_metrics.get_global_metrics();
         
         // Get checkpoint and failover stats
-        let checkpoint_stats = self.network_metrics.get_checkpoint_stats();
-        let failover_stats = self.network_metrics.get_failover_stats();
+        let _checkpoint_stats = self.network_metrics.get_checkpoint_stats();
+        let _failover_stats = self.network_metrics.get_failover_stats();
         
         // Count healthy replicas
         let total_replicas = orchestrator.replica_manager.get_all_replicas().len();
@@ -490,8 +495,8 @@ impl PublicRpcServer for RpcMethods {
         let (_, _, avg_compression_ratio) = distributed_inference::tensor_transport::TensorTransport::get_compression_stats();
         
         Ok(DistributedInferenceStatsResponse {
-            active_pipelines: global_metrics.total_inferences as u32,
-            total_inferences_completed: global_metrics.total_tasks,
+            active_pipelines: global_metrics.total_inferences.load(Ordering::Relaxed) as u32,
+            total_inferences_completed: global_metrics.total_tasks.load(Ordering::Relaxed),
             avg_pipeline_latency_ms: global_metrics.get_latency() as f64,
             avg_throughput_tasks_per_sec: global_metrics.avg_throughput_tasks_per_sec.load(Ordering::Relaxed) as f64 / 100.0,
             avg_compression_ratio,
@@ -970,7 +975,16 @@ impl RewardRpcServer for RewardRpcImpl {
         if let Some(id) = node_id {
             // Get specific node metrics
             if let Some(node) = state.nodes.get(&id) {
-                let reward_record = state.get_node_earnings(&id).unwrap_or_default();
+                let reward_record = state.get_node_earnings(&id)
+                    .unwrap_or(distributed_compute::state::RewardRecord {
+                        node_id: id.clone(),
+                        total_earned: blockchain_core::types::Amount::ZERO,
+                        compute_rewards: blockchain_core::types::Amount::ZERO,
+                        storage_rewards: blockchain_core::types::Amount::ZERO,
+                        tasks_completed: 0,
+                        fragments_hosted: 0,
+                        last_reward_timestamp: 0,
+                    });
                 let fragments_hosted = state.fragments.iter()
                     .filter(|f| f.value().replicas.contains(&id))
                     .count() as u32;
@@ -992,7 +1006,16 @@ impl RewardRpcServer for RewardRpcImpl {
             for node_entry in state.nodes.iter() {
                 let node = node_entry.value();
                 let id = node.node_id.clone();
-                let reward_record = state.get_node_earnings(&id).unwrap_or_default();
+                let reward_record = state.get_node_earnings(&id)
+                    .unwrap_or(distributed_compute::state::RewardRecord {
+                        node_id: id.clone(),
+                        total_earned: blockchain_core::types::Amount::ZERO,
+                        compute_rewards: blockchain_core::types::Amount::ZERO,
+                        storage_rewards: blockchain_core::types::Amount::ZERO,
+                        tasks_completed: 0,
+                        fragments_hosted: 0,
+                        last_reward_timestamp: 0,
+                    });
                 let fragments_hosted = state.fragments.iter()
                     .filter(|f| f.value().replicas.contains(&id))
                     .count() as u32;
@@ -1109,7 +1132,6 @@ impl StakingGovernanceRpcServer for StakingGovernanceRpcImpl {
     
     async fn submit_stake_tx(&self, request: SubmitStakeTxRequest) -> Result<StakeTxResponse, RpcError> {
         use blockchain_core::transaction::StakeTx;
-        use blockchain_core::types::Timestamp;
         
         let role = parse_stake_role(&request.role)?;
         

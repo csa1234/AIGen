@@ -12,6 +12,7 @@ parking_lot = "0.12"
 thiserror = "1.0"
 tracing = "0.1"
 uuid = { version = "1.4", features = ["v4", "serde"] }
+hex = "0.4"
 libp2p = { workspace = true }
 blockchain-core = { path = "../blockchain-core" }
 consensus = { path = "../consensus" }

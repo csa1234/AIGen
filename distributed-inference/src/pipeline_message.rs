@@ -9,6 +9,7 @@
 // Contact: Cesar Saguier Antebi
 
 use serde::{Deserialize, Serialize};
+use sha3::Digest;
 use uuid::Uuid;
 
 use crate::tensor_transport::CompressedTensor;

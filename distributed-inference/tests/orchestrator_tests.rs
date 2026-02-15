@@ -26,10 +26,12 @@ use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use distributed_inference::{
-    OrchestratorNode, OrchestratorConfig, OrchestratorState, StaticBlockConfig,
-    BlockConfig, ReplicaConfig, LayerBlock, ReplicaManager, HealthStatus,
-    BlockReplica, NetworkMessage, NodeCapabilities,
+    OrchestratorConfig, StaticBlockConfig,
+    ReplicaManager, HealthStatus,
+    BlockReplicaInfo,
 };
+use distributed_inference::block_assignment::{BlockConfig, ReplicaConfig};
+use network::protocol::{NetworkMessage, NodeCapabilities};
 
 /// Helper function to create a test static block config
 fn create_test_config() -> StaticBlockConfig {
@@ -96,7 +98,7 @@ async fn test_replica_manager_adds_and_tracks_replicas() {
     let replica_manager = ReplicaManager::new();
     
     // Add replicas for block 0
-    let replica_a = BlockReplica {
+    let replica_a = BlockReplicaInfo {
         block_id: 0,
         node_id: "node_A".to_string(),
         peer_id: PeerId::random(),
@@ -124,7 +126,7 @@ async fn test_replica_manager_filters_healthy_replicas() {
     let replica_manager = ReplicaManager::new();
     
     // Add two replicas
-    let replica_a = BlockReplica {
+    let replica_a = BlockReplicaInfo {
         block_id: 0,
         node_id: "node_A".to_string(),
         peer_id: PeerId::random(),
@@ -134,7 +136,7 @@ async fn test_replica_manager_filters_healthy_replicas() {
         rtt_map: HashMap::new(),
     };
     
-    let replica_b = BlockReplica {
+    let replica_b = BlockReplicaInfo {
         block_id: 0,
         node_id: "node_B".to_string(),
         peer_id: PeerId::random(),
@@ -166,7 +168,7 @@ async fn test_replica_manager_selects_best_replica() {
     let mut rtt_map_a = HashMap::new();
     rtt_map_a.insert("source".to_string(), Duration::from_millis(20));
     
-    let replica_a = BlockReplica {
+    let replica_a = BlockReplicaInfo {
         block_id: 0,
         node_id: "node_A".to_string(),
         peer_id: PeerId::random(),
@@ -179,7 +181,7 @@ async fn test_replica_manager_selects_best_replica() {
     let mut rtt_map_b = HashMap::new();
     rtt_map_b.insert("source".to_string(), Duration::from_millis(30));
     
-    let replica_b = BlockReplica {
+    let replica_b = BlockReplicaInfo {
         block_id: 0,
         node_id: "node_B".to_string(),
         peer_id: PeerId::random(),
@@ -201,12 +203,12 @@ async fn test_replica_manager_selects_best_replica() {
 
 #[tokio::test]
 async fn test_health_monitor_detects_failures() {
-    use distributed_inference::health_monitor::{HealthMonitor, SimpleLoadProvider};
+    use distributed_inference::health_monitor::HealthMonitor;
     
     let replica_manager = Arc::new(ReplicaManager::new());
     let network_tx = mock_network_channel();
     
-    let health_monitor = HealthMonitor::new(
+    let _health_monitor = HealthMonitor::new(
         replica_manager.clone(),
         500, // 500ms interval
         3,   // 3 missed = dead
@@ -216,7 +218,7 @@ async fn test_health_monitor_detects_failures() {
     // Add a replica with an old heartbeat
     let old_timestamp = chrono::Utc::now().timestamp() - 10; // 10 seconds ago
     
-    let replica = BlockReplica {
+    let replica = BlockReplicaInfo {
         block_id: 0,
         node_id: "node_A".to_string(),
         peer_id: PeerId::random(),
@@ -255,7 +257,7 @@ async fn test_health_monitor_handles_heartbeat() {
     
     // Add a replica
     let old_timestamp = chrono::Utc::now().timestamp() - 10;
-    let replica = BlockReplica {
+    let replica = BlockReplicaInfo {
         block_id: 0,
         node_id: "node_A".to_string(),
         peer_id: PeerId::random(),
@@ -317,7 +319,7 @@ async fn test_route_selector_validates_route() {
     
     // Create replicas for 3 blocks
     for block_id in 0..3 {
-        let replica = BlockReplica {
+        let replica = BlockReplicaInfo {
             block_id,
             node_id: format!("node_{}", block_id),
             peer_id: PeerId::random(),
@@ -349,7 +351,7 @@ async fn test_route_selector_fails_on_missing_replicas() {
     
     // Only add replicas for blocks 0 and 1
     for block_id in 0..2 {
-        let replica = BlockReplica {
+        let replica = BlockReplicaInfo {
             block_id,
             node_id: format!("node_{}", block_id),
             peer_id: PeerId::random(),

@@ -10,16 +10,15 @@
 
 //! Integration tests for checkpoint and failover functionality
 
-use std::sync::Arc;
 use std::time::Duration;
 
 use uuid::Uuid;
 
 use distributed_inference::checkpoint_manager::{
-    CheckpointConfig, CheckpointManager, CheckpointStats, CheckpointStorageBackend,
+    CheckpointConfig, CheckpointManager, CheckpointStorageBackend,
 };
 use distributed_inference::failover_coordinator::{
-    FailoverConfig, FailoverCoordinator, FailoverMetrics, FailoverStats,
+    FailoverConfig, FailoverMetrics,
 };
 use distributed_inference::tensor_transport::{TensorMetadata, TensorTransport};
 
@@ -28,6 +27,7 @@ fn create_test_tensor() -> distributed_inference::tensor_transport::CompressedTe
         shape: vec![1, 512, 4096],
         dtype: "f32".to_string(),
         layer_range: (0, 9),
+        original_dtype: None,
     };
     let data: Vec<u8> = vec![0; 100];
     TensorTransport::compress(&data, metadata, 1).unwrap()

@@ -19,8 +19,7 @@ use tokio::time::interval;
 use uuid::Uuid;
 
 use crate::block_assignment::{BlockAssignment, StaticBlockConfig};
-use crate::pipeline_message::{ActivationChunk, InferenceStart, PipelineMessage};
-use crate::tensor_transport::{CompressedTensor, TensorMetadata, TensorTransport};
+use crate::pipeline_message::{InferenceStart};
 
 /// Tracks active inference requests in the pipeline
 #[derive(Clone, Debug)]
@@ -403,7 +402,7 @@ impl StaticPipelineCoordinator {
     /// Process batch result and split back to individual requests
     pub async fn process_batch_result(
         &self,
-        batch_id: Uuid,
+        _batch_id: Uuid,
         inference_ids: Vec<Uuid>,
         outputs: Vec<String>,
     ) -> Result<HashMap<Uuid, String>> {
@@ -449,7 +448,7 @@ impl StaticPipelineCoordinator {
         let interval_duration = Duration::from_millis(self.batch_config.max_wait_ms / 2);
         let pending_requests = self.pending_requests.clone();
         let batch_config = self.batch_config.clone();
-        let batching_metrics = self.batching_metrics.clone();
+        let _batching_metrics = self.batching_metrics.clone();
         let coordinator = self.clone();
 
         tokio::spawn(async move {
@@ -523,13 +522,13 @@ impl StaticPipelineCoordinator {
     /// Update token state for a specific block
     pub async fn update_token_state(
         &self,
-        inference_id: Uuid,
+        _batch_id: Uuid,
         token_idx: usize,
         state: TokenState,
     ) -> Result<()> {
         let mut inferences = self.active_inferences.write().await;
         
-        if let Some(active) = inferences.get_mut(&inference_id) {
+        if let Some(active) = inferences.get_mut(&_batch_id) {
             if token_idx < active.token_pipeline.len() {
                 active.token_pipeline[token_idx] = state;
                 Ok(())

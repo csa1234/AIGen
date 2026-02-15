@@ -12,9 +12,9 @@
 //!
 //! Tests for distributed task proof verification and reward calculation
 
-use consensus::poi::{DistributedTaskProof, verify_distributed_task, calculate_poi_reward, WorkType, CompressionMethod, ComputationMetadata};
+use consensus::poi::{DistributedTaskProof, verify_distributed_task, verify_poi_proof, calculate_poi_reward, WorkType, CompressionMethod, ComputationMetadata, poi_proof_work_payload_bytes, validate_work_difficulty, ConsensusError};
 use consensus::PoIProof;
-use sha3::{Digest, Sha3_256};
+use blockchain_core::hash_data;
 use uuid::Uuid;
 
 fn create_test_distributed_proof(
@@ -49,33 +49,80 @@ fn create_test_distributed_proof(
         checkpoint_hash,
         compute_time_ms,
         "test-node".to_string(),
+        0, // nonce
     )
 }
 
 fn create_poi_proof(distributed_proof: &DistributedTaskProof, difficulty: u64) -> PoIProof {
-    let verification_data = serde_json::json!({
-        "distributed_task_proof": distributed_proof
-    });
+    let miner_address = distributed_proof.node_id.clone();
+    let work_type = WorkType::DistributedInference;
+    let input_hash = distributed_proof.input_activation_hash;
+    let output_data = distributed_proof.output_activation_hash.to_vec();
+    let metadata = ComputationMetadata {
+        rows: 0,
+        cols: 0,
+        inner: 0,
+        iterations: 0,
+        model_id: "test-model".to_string(),
+        compression_method: CompressionMethod::None,
+        original_size: 1000000,
+    };
+    // Use current timestamp to pass verify_poi_proof time window validation
+    let timestamp = chrono::Utc::now().timestamp();
     
-    PoIProof::new(
-        distributed_proof.node_id.clone(),
-        WorkType::DistributedInference,
-        distributed_proof.input_activation_hash,
-        distributed_proof.output_activation_hash.to_vec(),
-        ComputationMetadata {
-            rows: 0,
-            cols: 0,
-            inner: 0,
-            iterations: 0,
-            model_id: "test-model".to_string(),
-            compression_method: CompressionMethod::None,
-            original_size: 1000000,
-        },
-        difficulty,
-        1234567890,
-        42,
-        verification_data,
-    )
+    // Mining loop to find a valid nonce
+    let mut nonce: u64 = 0;
+    const MAX_NONCE: u64 = 100_000;
+    
+    while nonce < MAX_NONCE {
+        let payload = poi_proof_work_payload_bytes(
+            &miner_address,
+            work_type,
+            input_hash,
+            &output_data,
+            &metadata,
+            difficulty,
+            timestamp,
+            nonce,
+        );
+        let work_hash_vec = hash_data(&payload);
+        let work_hash: [u8; 32] = work_hash_vec.try_into().expect("Hash should be 32 bytes");
+        
+        if validate_work_difficulty(&work_hash, difficulty).is_ok() {
+            // Clone the distributed proof and update its nonce to match the PoI nonce
+            let mut distributed_proof_with_nonce = distributed_proof.clone();
+            distributed_proof_with_nonce.nonce = nonce;
+            
+            let verification_data = serde_json::json!({
+                "distributed_task_proof": distributed_proof_with_nonce
+            });
+            
+            let poi = PoIProof::new(
+                work_hash,
+                miner_address,
+                timestamp,
+                verification_data,
+                work_type,
+                input_hash,
+                output_data,
+                metadata,
+                difficulty,
+                nonce,
+            );
+            
+            // Verify the generated proof passes full validation
+            assert!(
+                verify_poi_proof(&poi).expect("Proof verification should not fail"),
+                "Test helper create_poi_proof generated an invalid proof - verify_poi_proof returned false"
+            );
+            
+            return poi;
+        }
+        
+        nonce += 1;
+    }
+    
+    panic!("Mining timeout: Could not find a valid nonce within {} iterations. Check difficulty configuration.", MAX_NONCE);
 }
 
 #[test]
@@ -83,7 +130,7 @@ fn test_verify_distributed_task_valid() {
     let task_id = Uuid::new_v4();
     let proof = create_test_distributed_proof(task_id, 3, 0, 10, 1000, false);
     
-    let result = verify_distributed_task(&proof);
+    let result = verify_distributed_task(&proof, None, None, None);
     assert!(result.is_ok());
     assert!(result.unwrap());
 }
@@ -101,9 +148,10 @@ fn test_verify_distributed_task_empty_fragments() {
         None,
         1000,
         "test-node".to_string(),
+        0, // nonce
     );
     
-    let result = verify_distributed_task(&proof);
+    let result = verify_distributed_task(&proof, None, None, None);
     assert!(result.is_ok());
     assert_eq!(result.unwrap(), false);
 }
@@ -123,9 +171,10 @@ fn test_verify_distributed_task_invalid_layer_range() {
         None,
         1000,
         "test-node".to_string(),
+        0, // nonce
     );
     
-    let result = verify_distributed_task(&proof);
+    let result = verify_distributed_task(&proof, None, None, None);
     assert_eq!(result.unwrap(), false);
     
     // Start > End
@@ -139,9 +188,10 @@ fn test_verify_distributed_task_invalid_layer_range() {
         None,
         1000,
         "test-node".to_string(),
+        0, // nonce
     );
     
-    let result2 = verify_distributed_task(&proof2);
+    let result2 = verify_distributed_task(&proof2, None, None, None);
     assert_eq!(result2.unwrap(), false);
 }
 
@@ -160,9 +210,10 @@ fn test_verify_distributed_task_invalid_activation_hashes() {
         None,
         1000,
         "test-node".to_string(),
+        0, // nonce
     );
     
-    let result = verify_distributed_task(&proof);
+    let result = verify_distributed_task(&proof, None, None, None);
     assert_eq!(result.unwrap(), false);
     
     // Output hash all zeros
@@ -176,9 +227,10 @@ fn test_verify_distributed_task_invalid_activation_hashes() {
         None,
         1000,
         "test-node".to_string(),
+        0, // nonce
     );
     
-    let result2 = verify_distributed_task(&proof2);
+    let result2 = verify_distributed_task(&proof2, None, None, None);
     assert_eq!(result2.unwrap(), false);
 }
 
@@ -195,9 +247,10 @@ fn test_verify_distributed_task_zero_compute_time() {
         None,
         0, // Invalid: zero compute time
         "test-node".to_string(),
+        0, // nonce
     );
     
-    let result = verify_distributed_task(&proof);
+    let result = verify_distributed_task(&proof, None, None, None);
     assert_eq!(result.unwrap(), false);
 }
 
@@ -214,9 +267,10 @@ fn test_verify_distributed_task_empty_node_id() {
         None,
         1000,
         "".to_string(), // Invalid: empty node_id
+        0, // nonce
     );
     
-    let result = verify_distributed_task(&proof);
+    let result = verify_distributed_task(&proof, None, None, None);
     assert_eq!(result.unwrap(), false);
 }
 
@@ -271,6 +325,7 @@ fn test_calculate_reward_time_factor() {
 #[test]
 fn test_calculate_reward_checkpoint_bonus() {
     let task_id = Uuid::new_v4();
+    let base_reward = 100u64; // difficulty=1000 → factor=1 → base=100
     
     // Without checkpoint
     let proof1 = create_test_distributed_proof(task_id, 3, 0, 10, 1000, false);
@@ -282,18 +337,22 @@ fn test_calculate_reward_checkpoint_bonus() {
     let poi2 = create_poi_proof(&proof2, 1000);
     let reward2 = calculate_poi_reward(&poi2).unwrap();
     
-    // Checkpoint should give ~20% bonus
+    // Checkpoint should give ~20% bonus on incremental rewards only
     assert!(reward2.value() > reward1.value());
     
-    // Verify the bonus is roughly 20%
-    let bonus_ratio = (reward2.value() as f64 - reward1.value() as f64) / reward1.value() as f64;
+    // Calculate incremental rewards (excluding base difficulty reward)
+    let incremental1 = reward1.value() as f64 - base_reward as f64;
+    let incremental2 = reward2.value() as f64 - base_reward as f64;
+    
+    // Verify the bonus is roughly 20% on incremental portion
+    let bonus_ratio = (incremental2 / incremental1) - 1.0;
     assert!(bonus_ratio > 0.15 && bonus_ratio < 0.25, 
-        "Checkpoint bonus should be ~20%, got {:.2}%", bonus_ratio * 100.0);
+        "Checkpoint bonus on incremental reward should be ~20%, got {:.2}%", bonus_ratio * 100.0);
 }
 
 #[test]
 fn test_calculate_reward_edge_cases() {
-    // Test zero fragments
+    // Test zero fragments - use valid proof for mining, fragments don't affect PoI validation
     let task_id = Uuid::new_v4();
     let proof = DistributedTaskProof::new(
         task_id,
@@ -305,30 +364,21 @@ fn test_calculate_reward_edge_cases() {
         None,
         1000,
         "test-node".to_string(),
+        0, // nonce
     );
-    let poi = create_poi_proof(&proof, 1000);
-    // Should not panic even with empty fragments
-    let reward = calculate_poi_reward(&poi);
-    assert!(reward.is_ok());
+    // Edge case: zero fragments should result in minimal reward but not panic
+    // We can't use create_poi_proof with this invalid proof, so we verify the edge case directly
+    let result = verify_distributed_task(&proof, None, None, None);
+    assert_eq!(result.unwrap(), false); // Zero fragments returns false
     
-    // Test max fragments (100)
+    // Test max fragments (100) - use valid distributed proof for mining
     let task_id = Uuid::new_v4();
     let mut fragment_ids = Vec::new();
     for i in 0..100 {
         fragment_ids.push(format!("frag-{:03}", i));
     }
-    let proof = DistributedTaskProof::new(
-        task_id,
-        Uuid::new_v4(),
-        fragment_ids,
-        (0, 100), // 100 layers
-        [0u8; 32],
-        [1u8; 32],
-        None,
-        1000,
-        "test-node".to_string(),
-    );
-    let poi = create_poi_proof(&proof, 1000);
+    let valid_proof = create_test_distributed_proof(task_id, 100, 0, 100, 1000, false);
+    let poi = create_poi_proof(&valid_proof, 1000);
     let reward = calculate_poi_reward(&poi).unwrap();
     
     // High fragment count should result in high reward
@@ -371,6 +421,7 @@ fn test_distributed_proof_serialization() {
         Some([2u8; 32]),
         5000,
         "test-node".to_string(),
+        0, // nonce
     );
     
     // Serialize
@@ -432,10 +483,11 @@ fn test_proof_verification_with_wrong_activation_hash() {
         None,
         1000,
         "test-node".to_string(),
+        0, // nonce
     );
     
     // Verify the proof with correct hashes
-    let result = verify_distributed_task(&proof);
+    let result = verify_distributed_task(&proof, None, None, None);
     assert!(result.unwrap());
     
     // Create proof with wrong output hash (should still pass basic verification)
@@ -450,10 +502,11 @@ fn test_proof_verification_with_wrong_activation_hash() {
         None,
         1000,
         "test-node".to_string(),
+        0, // nonce
     );
     
     // Basic verification doesn't check hash correctness - just non-zero
-    let result2 = verify_distributed_task(&proof2);
+    let result2 = verify_distributed_task(&proof2, None, None, None);
     assert!(result2.unwrap());
 }
 
@@ -461,18 +514,154 @@ fn test_proof_verification_with_wrong_activation_hash() {
 fn test_reward_formula_components() {
     let task_id = Uuid::new_v4();
     
-    // Base case: 1 fragment, 1 layer, 0ms, no checkpoint
-    let proof1 = create_test_distributed_proof(task_id, 1, 0, 1, 0, false);
+    // Base case: 1 fragment, 1 layer, valid compute time, no checkpoint
+    let proof1 = create_test_distributed_proof(task_id, 1, 0, 1, 1000, false);
     let poi1 = create_poi_proof(&proof1, 1000);
     let reward1 = calculate_poi_reward(&poi1).unwrap();
     
     // Base + difficulty: 100 * 1 = 100 (from difficulty factor)
     assert!(reward1.value() >= 100);
     
-    // Test fragment_factor = 0 is handled
-    let proof2 = create_test_distributed_proof(task_id, 1, 0, 0, 1000, false);
-    let poi2 = create_poi_proof(&proof2, 1000);
-    // This would have layer_range of 0, which is invalid but we test it doesn't panic
-    let reward2 = calculate_poi_reward(&poi2);
-    assert!(reward2.is_ok());
+    // Test compute_time_ms = 0 edge case - verify_distributed_task handles it
+    let proof2 = DistributedTaskProof::new(
+        task_id,
+        Uuid::new_v4(),
+        vec!["frag1".to_string()],
+        (0, 10),
+        [0u8; 32],
+        [1u8; 32],
+        None,
+        0, // Invalid: zero compute time
+        "test-node".to_string(),
+        0,
+    );
+    let result = verify_distributed_task(&proof2, None, None, None);
+    assert_eq!(result.unwrap(), false); // Zero compute time returns false
+}
+
+#[test]
+fn test_calculate_reward_rejects_invalid_work_hash() {
+    // Create a valid distributed proof
+    let task_id = uuid::Uuid::new_v4();
+    let distributed_proof = create_test_distributed_proof(task_id, 3, 0, 10, 1000, false);
+    
+    // Create a valid PoI proof
+    let mut poi = create_poi_proof(&distributed_proof, 1000);
+    
+    // Tamper with the work_hash by flipping some bytes
+    poi.work_hash[0] ^= 0xFF;
+    poi.work_hash[1] ^= 0xFF;
+    
+    // Verify that calculate_poi_reward rejects the tampered proof
+    let result = calculate_poi_reward(&poi);
+    assert!(
+        result.is_err(),
+        "calculate_poi_reward should reject a proof with an invalid work_hash"
+    );
+    assert!(
+        matches!(result.unwrap_err(), ConsensusError::InvalidProof),
+        "Expected InvalidProof error for tampered work_hash, but got a different error"
+    );
+}
+
+#[test]
+fn test_calculate_reward_rejects_invalid_difficulty() {
+    // Create a valid distributed proof
+    let task_id = uuid::Uuid::new_v4();
+    let distributed_proof = create_test_distributed_proof(task_id, 3, 0, 10, 1000, false);
+    
+    let miner_address = distributed_proof.node_id.clone();
+    let work_type = WorkType::DistributedInference;
+    let input_hash = distributed_proof.input_activation_hash;
+    let output_data = distributed_proof.output_activation_hash.to_vec();
+    let metadata = ComputationMetadata {
+        rows: 0,
+        cols: 0,
+        inner: 0,
+        iterations: 0,
+        model_id: "test-model".to_string(),
+        compression_method: CompressionMethod::None,
+        original_size: 1000000,
+    };
+    let timestamp = chrono::Utc::now().timestamp();
+    
+    // Use a fixed nonce of 0 that won't meet the difficulty requirement
+    let nonce: u64 = 0;
+    let difficulty: u64 = 10000; // High difficulty that nonce=0 won't satisfy
+    
+    // Compute work_hash with the invalid nonce
+    let payload = poi_proof_work_payload_bytes(
+        &miner_address,
+        work_type,
+        input_hash,
+        &output_data,
+        &metadata,
+        difficulty,
+        timestamp,
+        nonce,
+    );
+    let work_hash_vec = blockchain_core::hash_data(&payload);
+    let work_hash: [u8; 32] = work_hash_vec.try_into().expect("Hash should be 32 bytes");
+    
+    // Create verification data with the distributed proof
+    let verification_data = serde_json::json!({
+        "distributed_task_proof": distributed_proof
+    });
+    
+    // Create a PoI proof with nonce=0 and high difficulty
+    let poi = PoIProof::new(
+        work_hash,
+        miner_address,
+        timestamp,
+        verification_data,
+        work_type,
+        input_hash,
+        output_data,
+        metadata,
+        difficulty,
+        nonce,
+    );
+    
+    // Verify that calculate_poi_reward rejects the proof due to difficulty validation failure
+    let result = calculate_poi_reward(&poi);
+    assert!(
+        result.is_err(),
+        "calculate_poi_reward should reject a proof where nonce doesn't meet difficulty requirement"
+    );
+    assert!(
+        matches!(result.unwrap_err(), ConsensusError::InvalidProof),
+        "Expected InvalidProof error for difficulty validation failure, but got a different error"
+    );
+}
+
+#[test]
+fn test_calculate_reward_rejects_mismatched_nonce() {
+    // Create a valid distributed proof
+    let task_id = uuid::Uuid::new_v4();
+    let distributed_proof = create_test_distributed_proof(task_id, 3, 0, 10, 1000, false);
+    
+    // Create a valid PoI proof with a specific nonce (will be found by mining)
+    let mut poi = create_poi_proof(&distributed_proof, 1000);
+    let original_nonce = poi.nonce;
+    
+    // Extract the embedded DistributedTaskProof
+    let proof_data = poi.verification_data.get("distributed_task_proof").unwrap();
+    let mut distributed_proof: DistributedTaskProof = serde_json::from_value(proof_data.clone()).unwrap();
+    
+    // Modify the distributed proof's nonce to a different value
+    distributed_proof.nonce = original_nonce + 99; // Use a different nonce
+    
+    // Re-embed the tampered distributed proof back into verification_data
+    poi.verification_data["distributed_task_proof"] = serde_json::to_value(&distributed_proof).unwrap();
+    
+    // Verify that calculate_poi_reward rejects the proof due to nonce mismatch
+    let result = calculate_poi_reward(&poi);
+    assert!(
+        result.is_err(),
+        "calculate_poi_reward should reject a proof with mismatched nonce in distributed_task_proof"
+    );
+    assert!(
+        matches!(result.unwrap_err(), ConsensusError::InvalidProof),
+        "Expected InvalidProof error for nonce binding violation, but got a different error"
+    );
 }

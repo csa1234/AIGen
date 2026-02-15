@@ -233,20 +233,26 @@ pub trait LoadProvider: Send + Sync {
 
 /// Simple load provider implementation
 pub struct SimpleLoadProvider {
-    load_score: Arc<std::sync::atomic::AtomicF32>,
+    load_score: Arc<std::sync::atomic::AtomicU32>,
     active_tasks: Arc<std::sync::Mutex<Vec<Uuid>>>,
 }
 
 impl SimpleLoadProvider {
     pub fn new() -> Self {
         Self {
-            load_score: Arc::new(std::sync::atomic::AtomicF32::new(0.0)),
+            load_score: Arc::new(std::sync::atomic::AtomicU32::new(0)),
             active_tasks: Arc::new(std::sync::Mutex::new(Vec::new())),
         }
     }
 
-    pub fn set_load(&self, load: f32) {
-        self.load_score.store(load, std::sync::atomic::Ordering::Relaxed);
+    pub fn update_load(&self, score: f32) {
+        let bits = score.to_bits();
+        self.load_score.store(bits, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    pub fn get_load(&self) -> f32 {
+        let bits = self.load_score.load(std::sync::atomic::Ordering::Relaxed);
+        f32::from_bits(bits)
     }
 
     pub fn add_task(&self, task_id: Uuid) {
@@ -264,11 +270,11 @@ impl SimpleLoadProvider {
 
 impl LoadProvider for SimpleLoadProvider {
     fn get_current_load(&self) -> f32 {
-        self.load_score.load(std::sync::atomic::Ordering::Relaxed)
+        self.get_load()
     }
 
     fn get_active_tasks(&self) -> Vec<Uuid> {
-        self.active_tasks.lock().unwrap_or_default().clone()
+        self.active_tasks.lock().map(|g| g.clone()).unwrap_or_default()
     }
 }
 

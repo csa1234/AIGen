@@ -80,7 +80,7 @@ pub struct CompressionStats {
 }
 
 impl CompressionStats {
-    pub fn record_compression(&self, original_size: usize, compressed_size: usize, quantized: bool) {
+    pub fn record_compression(&self, original_size: usize, compressed_size: usize, _quantized: bool) {
         self.total_tensors_compressed.fetch_add(1, Ordering::Relaxed);
         let saved = original_size.saturating_sub(compressed_size);
         self.total_bytes_saved.fetch_add(saved as u64, Ordering::Relaxed);
@@ -585,7 +585,7 @@ mod tests {
         
         // Verify range is correct
         for &q in &quantized {
-            assert!(q >= -127 && q <= 127);
+            assert!((q as i32) >= -127 && (q as i32) <= 127);
         }
         
         // Dequantize
@@ -701,7 +701,7 @@ mod tests {
         let _ = TensorTransport::compress_with_quantization(&data, metadata, 3).unwrap();
         
         // Get stats
-        let (total, saved, ratio) = TensorTransport::get_compression_stats();
+        let (total, _saved, ratio) = TensorTransport::get_compression_stats();
         
         // Verify stats are non-zero
         assert!(total > 0, "total tensors compressed should be > 0");

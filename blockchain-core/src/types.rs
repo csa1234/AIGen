@@ -403,6 +403,12 @@ impl From<bincode::Error> for BlockchainError {
     }
 }
 
+impl From<BlockchainError> for genesis::GenesisError {
+    fn from(err: BlockchainError) -> Self {
+        genesis::GenesisError::InvalidAddress(err.to_string())
+    }
+}
+
 impl From<serde_json::Error> for BlockchainError {
     fn from(err: serde_json::Error) -> Self {
         BlockchainError::SerializationError(err.to_string())
