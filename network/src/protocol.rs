@@ -189,6 +189,38 @@ pub enum NetworkMessage {
     },
     /// Pipeline inference messages for block-based distributed execution
     PipelineInference(Vec<u8>), // Serialized PipelineMessage from distributed-inference crate
+    /// Federated learning: Training burst broadcast when buffer >= 900
+    TrainingBurst {
+        model_id: String,
+        buffer_size: usize,
+        trigger_timestamp: i64,
+    },
+    /// Federated learning: Encrypted delta share sent peer-to-peer
+    DeltaShare {
+        node_id: String,
+        share_index: u32,
+        encrypted_share: Vec<u8>,
+        recipient_node: String,
+        round_id: Uuid,
+    },
+    /// Federated learning: Aggregated share sent to aggregator node
+    AggregatedShare {
+        node_id: String,
+        aggregated_share: Vec<u8>,
+        round_id: Uuid,
+    },
+    /// Federated learning: Final averaged delta broadcast by aggregator
+    GlobalDelta {
+        round_id: Uuid,
+        delta_avg: Vec<u8>,
+        signature: Vec<u8>,
+    },
+    /// Federated learning: PoI proof for training round
+    TrainingProof {
+        round_id: Uuid,
+        poi_proof: consensus::PoIProof,
+        participants: Vec<String>,
+    },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -227,7 +259,13 @@ impl NetworkMessage {
             NetworkMessage::ReassignFragment { .. } => 160,
             NetworkMessage::BidAnnouncement { .. } => 85, // Medium priority for bids
             NetworkMessage::Ping | NetworkMessage::Pong => 10,
-            NetworkMessage::PipelineInference(_) => 150, // High priority for pipeline messages
+            NetworkMessage::PipelineInference(_) => 150,
+            // Federated learning messages (150-180 range)
+            NetworkMessage::TrainingBurst { .. } => 170,
+            NetworkMessage::DeltaShare { .. } => 165,
+            NetworkMessage::AggregatedShare { .. } => 160,
+            NetworkMessage::GlobalDelta { .. } => 175,
+            NetworkMessage::TrainingProof { .. } => 155,
         }
     }
 

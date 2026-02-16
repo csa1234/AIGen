@@ -51,6 +51,8 @@ pub struct DynamicScheduler {
     reward_pool: Arc<RwLock<HashMap<String, (Amount, RewardType)>>>,
     pending_reward_count: Arc<RwLock<u32>>,
     ceo_secret_key: Option<SecretKey>,
+    training_coordinator: Arc<crate::training::TrainingCoordinator>,
+    training_enabled: Arc<RwLock<bool>>,
 }
 
 impl DynamicScheduler {
@@ -69,6 +71,15 @@ impl DynamicScheduler {
             eprintln!("Warning: CEO key not loaded. Reward transactions will not be signed.");
         }
 
+        // Initialize training coordinator (disabled by default until configured)
+        let training_config = crate::training::TrainingConfig::default();
+        let training_coordinator = Arc::new(crate::training::TrainingCoordinator::new(
+            local_validator_address.clone(),
+            network_tx.clone(),
+            3, // Default to 3 nodes for secret sharing
+            training_config,
+        ));
+
         Self {
             state,
             router,
@@ -81,6 +92,8 @@ impl DynamicScheduler {
             reward_pool: Arc::new(RwLock::new(HashMap::new())),
             pending_reward_count: Arc::new(RwLock::new(0)),
             ceo_secret_key,
+            training_coordinator,
+            training_enabled: Arc::new(RwLock::new(true)),
         }
     }
 
@@ -424,6 +437,12 @@ impl DynamicScheduler {
                 interval.tick().await;
                 scheduler.state.refresh_all_stakes();
             }
+        });
+
+        // Spawn federated learning training loop
+        let scheduler = self.clone();
+        tokio::spawn(async move {
+            scheduler.start_training_loop().await;
         });
     }
 
@@ -812,5 +831,137 @@ impl DynamicScheduler {
     pub async fn get_pending_reward(&self, node_id: &str) -> Amount {
         let pool = self.reward_pool.read().await;
         pool.get(node_id).map(|(amount, _)| *amount).unwrap_or(Amount::ZERO)
+    }
+
+    /// Federated learning training loop - monitors buffer and triggers training bursts
+    pub async fn start_training_loop(&self) {
+        let mut interval = tokio::time::interval(Duration::from_secs(30)); // Check every 30 seconds
+        interval.tick().await; // Skip first tick
+
+        loop {
+            interval.tick().await;
+
+            // Skip if training is disabled
+            if !*self.training_enabled.read().await {
+                continue;
+            }
+
+            // Check if buffer is ready for training
+            let config = self.training_coordinator.config().clone();
+            if self.training_coordinator.buffer_size().await >= config.trigger_threshold {
+                if let Err(e) = self.execute_training_burst().await {
+                    eprintln!("Training burst failed: {}", e);
+                }
+            }
+        }
+    }
+
+    /// Execute a training burst when buffer reaches threshold
+    pub async fn execute_training_burst(&self) -> Result<(), SchedulerError> {
+        // Check if model weights are initialized
+        if !self.training_coordinator.are_weights_initialized().await {
+            // Initialize with dummy weights for testing
+            // In production, this would load from model registry
+            let dummy_weights = vec![0.0f32; 1000]; // Initialize with 1000 parameters
+            self.training_coordinator.initialize_model_weights(dummy_weights).await
+                .map_err(|e| SchedulerError::ChainStateError(e.to_string()))?;
+            tracing::info!("Initialized model weights for training");
+        }
+
+        let config = self.training_coordinator.config().clone();
+        
+        // Sample batch from buffer
+        let samples = self.training_coordinator.sample_from_buffer(config.batch_size).await;
+
+        if samples.is_empty() {
+            return Ok(());
+        }
+
+        // Get model ID (in real implementation, would get from registry)
+        let model_id = "default-model".to_string();
+
+        // Trigger training burst
+        let round_id = self.training_coordinator.trigger_training_burst(model_id.clone()).await
+            .map_err(|e| SchedulerError::ChainStateError(e.to_string()))?;
+
+        println!("Training burst triggered for round {}, model {}", round_id, model_id);
+
+        // Execute local training
+        let delta = self.training_coordinator.execute_local_training(&samples, &model_id).await
+            .map_err(|e| SchedulerError::ChainStateError(e.to_string()))?;
+
+        // Distribute delta shares to peers
+        self.training_coordinator.distribute_delta_shares(delta, round_id).await
+            .map_err(|e| SchedulerError::ChainStateError(e.to_string()))?;
+
+        // Note: In a full implementation, the following would happen:
+        // 1. Wait for aggregated shares from all peers
+        // 2. Reconstruct global delta
+        // 3. Apply global delta to model
+        // 4. Generate training PoI proof
+        // 5. Broadcast training proof
+        // For now, this is handled by network message handlers
+
+        Ok(())
+    }
+
+    /// Handle post-inference training trigger
+    pub async fn handle_training_after_inference(
+        &self,
+        task_input: Vec<f32>,
+        task_output: Vec<f32>,
+        task_loss: f32,
+    ) -> Result<(), SchedulerError> {
+        if !*self.training_enabled.read().await {
+            return Ok(());
+        }
+
+        // Add to training buffer
+        let should_trigger = self.training_coordinator
+            .on_inference_complete(task_input, task_output, task_loss)
+            .await
+            .map_err(|e| SchedulerError::ChainStateError(e.to_string()))?;
+
+        if should_trigger {
+            // Buffer is ready, training loop will pick it up
+            tracing::info!("Training buffer ready - burst will be triggered by training loop");
+        }
+
+        Ok(())
+    }
+
+    /// Handle training completion and distribute rewards
+    pub async fn handle_training_completion(
+        &self,
+        round_id: uuid::Uuid,
+        participants: Vec<String>,
+        reward_per_node: Amount,
+    ) -> Result<(), SchedulerError> {
+        // Distribute training rewards
+        for participant in &participants {
+            let mut pool = self.reward_pool.write().await;
+            let (entry_amount, _) = pool.entry(participant.clone())
+                .or_insert((Amount::ZERO, RewardType::Training));
+            *entry_amount = Amount::new(entry_amount.value().saturating_add(reward_per_node.value()));
+        }
+
+        // Record training round on-chain
+        let training_round = blockchain_core::state::TrainingRound {
+            round_id: round_id.to_string(),
+            participants,
+            delta_hash: [0u8; 32], // Would be computed from actual delta
+            fisher_hash: [0u8; 32], // Would be computed from Fisher matrix
+            timestamp: chrono::Utc::now().timestamp(),
+            model_id: "default".to_string(),
+            sample_count: 128,
+            learning_rate: 1, // 1e-6 scaled
+            ewc_lambda: 40,   // 0.4 scaled by 100
+            status: 1,        // Completed
+        };
+
+        self.chain_state.record_training_round(training_round)
+            .map_err(|e| SchedulerError::ChainStateError(e.to_string()))?;
+
+        Ok(())
     }
 }

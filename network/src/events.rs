@@ -67,6 +67,15 @@ pub enum NetworkEvent {
         layer_range: (u32, u32),
         timestamp: i64,
     },
+    /// Training share received from peer (encrypted DeltaShareBundle)
+    TrainingShareReceived {
+        round_id: Uuid,
+        sender_node_id: String,
+        encrypted_bundle: Vec<u8>,
+        nonce: Vec<u8>,
+        sender_pubkey: Vec<u8>,
+        signature: Vec<u8>,
+    },
     ShutdownSignal,
     ReputationUpdate(PeerId, i32),
 }

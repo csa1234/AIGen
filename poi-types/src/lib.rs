@@ -20,6 +20,7 @@ pub enum WorkType {
     GradientDescent,
     Inference,
     DistributedInference,
+    Training,
 }
 
 /// Compression method for gradient data

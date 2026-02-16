@@ -43,6 +43,35 @@ impl Default for DistributedInferenceConfig {
     }
 }
 
+/// Training configuration for federated learning
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct TrainingConfig {
+    pub enabled: bool,
+    pub buffer_size: usize,        // Default: 1000
+    pub trigger_threshold: usize,  // Default: 900
+    pub batch_size: usize,         // Default: 128
+    pub learning_rate: f32,        // Default: 1e-6
+    pub epochs: u32,               // Default: 1
+    pub ewc_lambda: f32,           // Default: 0.4
+    pub replay_ratio: f32,         // Default: 0.01 (1%)
+}
+
+impl Default for TrainingConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            buffer_size: 1000,
+            trigger_threshold: 900,
+            batch_size: 128,
+            learning_rate: 1e-6,
+            epochs: 1,
+            ewc_lambda: 0.4,
+            replay_ratio: 0.01,
+        }
+    }
+}
+
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct NodeConfiguration {
     pub node_id: String,
@@ -61,6 +90,8 @@ pub struct NodeConfiguration {
     pub keypair_path: PathBuf,
     #[serde(default)]
     pub distributed: DistributedInferenceConfig,
+    #[serde(default)]
+    pub training: TrainingConfig,
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -585,6 +616,7 @@ impl Default for NodeConfiguration {
             rpc: RpcConfig::default(),
             keypair_path: crate::keypair::default_keypair_path(&data_dir),
             distributed: DistributedInferenceConfig::default(),
+            training: TrainingConfig::default(),
         }
     }
 }

@@ -225,6 +225,7 @@ pub struct RewardTx {
 pub enum RewardType {
     Compute,
     Storage,
+    Training,
 }
 
 impl RewardTx {

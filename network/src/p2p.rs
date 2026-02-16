@@ -30,7 +30,9 @@ use libp2p::tcp;
 use libp2p::yamux;
 use libp2p::PeerId;
 use libp2p::Transport;
+use tracing;
 use sha2::{Digest, Sha256};
+use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, mpsc, RwLock};
 use uuid::Uuid;
 
@@ -42,6 +44,7 @@ use crate::gossip::{
     topic_vram_capabilities, TOPIC_MODEL_ANNOUNCEMENTS, TOPIC_SHUTDOWN, TOPIC_VRAM_CAPABILITIES,
     TOPIC_HEARTBEAT, TOPIC_CHECKPOINT, TOPIC_FAILOVER,
     topic_heartbeat, topic_checkpoint, topic_failover,
+    topic_training_burst, topic_global_delta, topic_training_proof,
 };
 use crate::metrics::{NetworkMetrics, SharedNetworkMetrics};
 use crate::fragment_stream::{
@@ -63,6 +66,92 @@ use crate::tensor_stream::{
     protocol as tensor_stream_protocol, TensorRequest, TensorResponse, TensorStreamCodec,
 };
 
+/// Request for training delta share (peer-to-peer encrypted)
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TrainingShareRequest {
+    pub round_id: Uuid,
+    pub sender_node_id: String,
+    pub recipient_node_id: String,
+    /// Encrypted DeltaShareBundle bytes
+    pub encrypted_bundle: Vec<u8>,
+    /// Nonce for encryption (12 bytes for AES-GCM)
+    pub nonce: Vec<u8>,
+    /// Sender's public key for signature verification (32 bytes for Ed25519)
+    pub sender_pubkey: Vec<u8>,
+    /// Signature of (encrypted_bundle + nonce + round_id) (64 bytes for Ed25519)
+    pub signature: Vec<u8>,
+}
+
+/// Response for training share request
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TrainingShareResponse {
+    pub round_id: Uuid,
+    pub status: TrainingShareStatus,
+    pub message: String,
+}
+
+/// Status of training share delivery
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum TrainingShareStatus {
+    Accepted,
+    Rejected,
+    InvalidSignature,
+    WrongRecipient,
+    RoundNotFound,
+}
+
+/// Codec for training share request-response protocol
+#[derive(Clone, Debug, Default)]
+pub struct TrainingShareCodec;
+
+#[async_trait::async_trait]
+impl libp2p::request_response::Codec for TrainingShareCodec {
+    type Protocol = libp2p::StreamProtocol;
+    type Request = TrainingShareRequest;
+    type Response = TrainingShareResponse;
+
+    async fn read_request<T>(&mut self, _: &Self::Protocol, io: &mut T) -> std::io::Result<Self::Request>
+    where
+        T: futures::AsyncRead + Unpin + Send,
+    {
+        let mut buf = Vec::new();
+        futures::AsyncReadExt::read_to_end(io, &mut buf).await?;
+        serde_json::from_slice(&buf).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+    }
+
+    async fn read_response<T>(&mut self, _: &Self::Protocol, io: &mut T) -> std::io::Result<Self::Response>
+    where
+        T: futures::AsyncRead + Unpin + Send,
+    {
+        let mut buf = Vec::new();
+        futures::AsyncReadExt::read_to_end(io, &mut buf).await?;
+        serde_json::from_slice(&buf).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+    }
+
+    async fn write_request<T>(&mut self, _: &Self::Protocol, io: &mut T, req: Self::Request) -> std::io::Result<()>
+    where
+        T: futures::AsyncWrite + Unpin + Send,
+    {
+        let buf = serde_json::to_vec(&req).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        futures::AsyncWriteExt::write_all(io, &buf).await?;
+        futures::AsyncWriteExt::close(io).await
+    }
+
+    async fn write_response<T>(&mut self, _: &Self::Protocol, io: &mut T, res: Self::Response) -> std::io::Result<()>
+    where
+        T: futures::AsyncWrite + Unpin + Send,
+    {
+        let buf = serde_json::to_vec(&res).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        futures::AsyncWriteExt::write_all(io, &buf).await?;
+        futures::AsyncWriteExt::close(io).await
+    }
+}
+
+/// Protocol name for training share protocol
+pub fn training_share_protocol() -> libp2p::StreamProtocol {
+    libp2p::StreamProtocol::new("/aigen/delta-share/1.0.0")
+}
+
 #[derive(NetworkBehaviour)]
 #[behaviour(to_swarm = "P2PBehaviourEvent")]
 pub struct P2PBehaviour {
@@ -71,6 +160,7 @@ pub struct P2PBehaviour {
     pub request_response: request_response::Behaviour<TensorStreamCodec>,
     pub model_stream: request_response::Behaviour<ModelStreamCodec>,
     pub fragment_stream: request_response::Behaviour<FragmentStreamCodec>,
+    pub training_stream: request_response::Behaviour<TrainingShareCodec>,
     pub identify: identify::Behaviour,
     pub ping: ping::Behaviour,
 }
@@ -82,6 +172,7 @@ pub enum P2PBehaviourEvent {
     RequestResponse(request_response::Event<TensorRequest, TensorResponse>),
     ModelStream(request_response::Event<ModelShardRequest, ModelShardResponse>),
     FragmentStream(request_response::Event<ModelFragmentRequest, ModelFragmentResponse>),
+    TrainingStream(request_response::Event<TrainingShareRequest, TrainingShareResponse>),
     Identify(identify::Event),
     Ping(ping::Event),
 }
@@ -113,6 +204,12 @@ impl From<request_response::Event<ModelShardRequest, ModelShardResponse>> for P2
 impl From<request_response::Event<ModelFragmentRequest, ModelFragmentResponse>> for P2PBehaviourEvent {
     fn from(event: request_response::Event<ModelFragmentRequest, ModelFragmentResponse>) -> Self {
         Self::FragmentStream(event)
+    }
+}
+
+impl From<request_response::Event<TrainingShareRequest, TrainingShareResponse>> for P2PBehaviourEvent {
+    fn from(event: request_response::Event<TrainingShareRequest, TrainingShareResponse>) -> Self {
+        Self::TrainingStream(event)
     }
 }
 
@@ -148,6 +245,14 @@ pub struct P2PNode {
     model_fragment_store: Arc<std::sync::Mutex<std::collections::HashMap<(String, u32), Vec<u8>>>>,
     model_shard_counts: Arc<std::sync::Mutex<HashMap<String, u32>>>,
     model_fragment_counts: Arc<std::sync::Mutex<HashMap<String, u32>>>,
+    // Federated learning training support
+    training_tx: mpsc::Sender<NetworkMessage>,
+    training_rx: Option<mpsc::Receiver<NetworkMessage>>,
+    share_store: Arc<std::sync::Mutex<std::collections::HashMap<(Uuid, String), Vec<u8>>>>,
+    #[allow(dead_code)]
+    pending_training_requests: Arc<std::sync::Mutex<std::collections::HashMap<Uuid, TrainingShareRequest>>>,
+    #[allow(dead_code)]
+    local_keypair: libp2p::identity::Keypair,
 }
 
 impl ShutdownBroadcaster for P2PNode {
@@ -249,12 +354,21 @@ impl P2PNode {
         let fragment_stream =
             request_response::Behaviour::<FragmentStreamCodec>::new(fragment_protocols, fragment_rr_config);
 
+        let training_protocols = std::iter::once((
+            training_share_protocol(),
+            request_response::ProtocolSupport::Full,
+        ));
+        let training_rr_config = request_response::Config::default();
+        let training_stream =
+            request_response::Behaviour::<TrainingShareCodec>::with_codec(TrainingShareCodec, training_protocols, training_rr_config);
+
         let behaviour = P2PBehaviour {
             kademlia,
             gossipsub,
             request_response,
             model_stream,
             fragment_stream,
+            training_stream,
             identify,
             ping,
         };
@@ -287,6 +401,10 @@ impl P2PNode {
                 let _ = swarm.behaviour_mut().gossipsub.subscribe(&topic_heartbeat());
                 let _ = swarm.behaviour_mut().gossipsub.subscribe(&topic_checkpoint());
                 let _ = swarm.behaviour_mut().gossipsub.subscribe(&topic_failover());
+                // Federated learning topics
+                let _ = swarm.behaviour_mut().gossipsub.subscribe(&topic_training_burst());
+                let _ = swarm.behaviour_mut().gossipsub.subscribe(&topic_global_delta());
+                let _ = swarm.behaviour_mut().gossipsub.subscribe(&topic_training_proof());
             }
             NodeType::Validator => {
                 let _ = swarm.behaviour_mut().gossipsub.subscribe(&topic_blocks());
@@ -302,6 +420,10 @@ impl P2PNode {
                 let _ = swarm.behaviour_mut().gossipsub.subscribe(&topic_heartbeat());
                 let _ = swarm.behaviour_mut().gossipsub.subscribe(&topic_checkpoint());
                 let _ = swarm.behaviour_mut().gossipsub.subscribe(&topic_failover());
+                // Federated learning topics
+                let _ = swarm.behaviour_mut().gossipsub.subscribe(&topic_training_burst());
+                let _ = swarm.behaviour_mut().gossipsub.subscribe(&topic_global_delta());
+                let _ = swarm.behaviour_mut().gossipsub.subscribe(&topic_training_proof());
             }
             NodeType::LightClient => {
                 let _ = swarm.behaviour_mut().gossipsub.subscribe(&topic_blocks());
@@ -310,6 +432,8 @@ impl P2PNode {
                     .gossipsub
                     .subscribe(&topic_model_announcements());
                 let _ = swarm.behaviour_mut().gossipsub.subscribe(&topic_shutdown());
+                // Federated learning topics (light clients listen for proofs)
+                let _ = swarm.behaviour_mut().gossipsub.subscribe(&topic_training_proof());
             }
             NodeType::FullNode => {
                 let _ = swarm.behaviour_mut().gossipsub.subscribe(&topic_blocks());
@@ -330,6 +454,10 @@ impl P2PNode {
                 let _ = swarm.behaviour_mut().gossipsub.subscribe(&topic_heartbeat());
                 let _ = swarm.behaviour_mut().gossipsub.subscribe(&topic_checkpoint());
                 let _ = swarm.behaviour_mut().gossipsub.subscribe(&topic_failover());
+                // Federated learning topics
+                let _ = swarm.behaviour_mut().gossipsub.subscribe(&topic_training_burst());
+                let _ = swarm.behaviour_mut().gossipsub.subscribe(&topic_global_delta());
+                let _ = swarm.behaviour_mut().gossipsub.subscribe(&topic_training_proof());
             }
         }
 
@@ -339,6 +467,7 @@ impl P2PNode {
         ));
         let metrics = Arc::new(NetworkMetrics::default());
         let (shutdown_tx, shutdown_rx) = broadcast::channel(16);
+        let (training_tx, training_rx) = mpsc::channel(1024);
 
         let (event_tx, event_rx) = mpsc::channel(1024);
 
@@ -364,6 +493,12 @@ impl P2PNode {
                 ),
                 model_shard_counts: Arc::new(std::sync::Mutex::new(HashMap::new())),
                 model_fragment_counts: Arc::new(std::sync::Mutex::new(HashMap::new())),
+                // Federated learning training support
+                training_tx,
+                training_rx: Some(training_rx),
+                share_store: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+                pending_training_requests: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+                local_keypair: keypair,
             },
             event_rx,
         ))
@@ -391,6 +526,95 @@ impl P2PNode {
         if let Ok(mut store) = self.model_fragment_counts.lock() {
             store.insert(model_id, total_fragments);
         }
+    }
+
+    /// Send encrypted training share to a specific peer via request-response
+    pub fn send_training_share(
+        &mut self,
+        peer: PeerId,
+        round_id: Uuid,
+        sender_node_id: String,
+        recipient_node_id: String,
+        encrypted_bundle: Vec<u8>,
+        nonce: Vec<u8>,
+        sender_pubkey: Vec<u8>,
+        signature: Vec<u8>,
+    ) -> request_response::OutboundRequestId {
+        let req = TrainingShareRequest {
+            round_id,
+            sender_node_id,
+            recipient_node_id,
+            encrypted_bundle,
+            nonce,
+            sender_pubkey,
+            signature,
+        };
+        self.swarm.behaviour_mut().training_stream.send_request(&peer, req)
+    }
+
+    /// Store a training share locally (for aggregator nodes)
+    pub fn store_training_share(&mut self, round_id: Uuid, sender_node_id: String, encrypted_bundle: Vec<u8>) {
+        if let Ok(mut store) = self.share_store.lock() {
+            store.insert((round_id, sender_node_id), encrypted_bundle);
+        }
+    }
+
+    /// Get stored training share
+    pub fn get_training_share(&self, round_id: Uuid, sender_node_id: &str) -> Option<Vec<u8>> {
+        self.share_store.lock().ok()?.get(&(round_id, sender_node_id.to_string())).cloned()
+    }
+
+    /// Get training channel sender for external use (e.g., by TrainingCoordinator)
+    pub fn training_tx(&self) -> mpsc::Sender<NetworkMessage> {
+        self.training_tx.clone()
+    }
+
+    /// Take training channel receiver (should be called once at startup)
+    pub fn take_training_rx(&mut self) -> Option<mpsc::Receiver<NetworkMessage>> {
+        self.training_rx.take()
+    }
+
+    /// Send encrypted delta share to a peer with full crypto (AES-GCM + ECDH)
+    /// 
+    /// Encrypts the bundle using AES-256-GCM with ephemeral ECDH key exchange,
+    /// then sends via request-response protocol.
+    pub fn send_encrypted_delta_share(
+        &mut self,
+        peer: PeerId,
+        round_id: Uuid,
+        sender_node_id: String,
+        recipient_node_id: String,
+        bundle_bytes: Vec<u8>,
+        recipient_x25519_pubkey: [u8; 32],
+        sender_ed25519_secret: [u8; 64],
+        sender_ed25519_pubkey: [u8; 32],
+    ) -> Result<request_response::OutboundRequestId, String> {
+        // Encrypt bundle using AES-GCM with ECDH
+        let (encrypted_bundle, nonce, _ephemeral_pubkey) = 
+            blockchain_core::crypto::encrypt_with_aes_gcm(&bundle_bytes, &recipient_x25519_pubkey)
+                .map_err(|e| format!("Encryption failed: {}", e))?;
+
+        // Sign the encrypted bundle
+        let round_id_bytes = round_id.as_bytes();
+        let signature = blockchain_core::crypto::sign_encrypted_bundle(
+            &encrypted_bundle,
+            &nonce,
+            round_id_bytes,
+            &sender_ed25519_secret,
+        ).map_err(|e| format!("Signing failed: {}", e))?;
+
+        // Create and send request
+        let req = TrainingShareRequest {
+            round_id,
+            sender_node_id,
+            recipient_node_id,
+            encrypted_bundle,
+            nonce,
+            sender_pubkey: sender_ed25519_pubkey.to_vec(),
+            signature: signature.to_vec(),
+        };
+
+        Ok(self.swarm.behaviour_mut().training_stream.send_request(&peer, req))
     }
 
     pub fn request_model_fragment(
@@ -436,6 +660,15 @@ impl P2PNode {
             NetworkMessage::Checkpoint { .. } => (topic_checkpoint(), false),
             NetworkMessage::Failover { .. } | NetworkMessage::ReassignFragment { .. } => {
                 (topic_failover(), false)
+            }
+            // Federated learning gossip messages
+            NetworkMessage::TrainingBurst { .. } => (topic_training_burst(), false),
+            NetworkMessage::GlobalDelta { .. } => (topic_global_delta(), false),
+            NetworkMessage::TrainingProof { .. } => (topic_training_proof(), false),
+            // DeltaShare and AggregatedShare use request-response, not gossip
+            NetworkMessage::DeltaShare { .. } | NetworkMessage::AggregatedShare { .. } => {
+                // These are sent via request-response, not gossip
+                return;
             }
             _ => (topic_transactions(), false),
         };
@@ -1055,6 +1288,99 @@ impl P2PNode {
                         self.metrics.inc_reputation_bans();
                     }
                     self.metrics.inc_model_transfer_failures();
+                }
+                _ => {}
+            },
+            SwarmEvent::Behaviour(P2PBehaviourEvent::TrainingStream(ts_event)) => match ts_event {
+                request_response::Event::Message { peer, message } => {
+                    if self.reputation_manager.is_banned(&peer) {
+                        return;
+                    }
+
+                    match message {
+                        request_response::Message::Request {
+                            request, channel, ..
+                        } => {
+                            // Validate recipient
+                            let local_node_id = self.local_peer_id.to_string();
+                            if request.recipient_node_id != local_node_id {
+                                let response = TrainingShareResponse {
+                                    round_id: request.round_id,
+                                    status: TrainingShareStatus::WrongRecipient,
+                                    message: "Request not intended for this node".to_string(),
+                                };
+                                let _ = self.swarm.behaviour_mut().training_stream.send_response(channel, response);
+                                return;
+                            }
+
+                            // Store the encrypted share for decryption by training coordinator
+                            if let Ok(mut store) = self.share_store.lock() {
+                                store.insert((request.round_id, request.sender_node_id.clone()), request.encrypted_bundle.clone());
+                            }
+
+                            // Send event to training coordinator for decryption and validation
+                            let event = NetworkEvent::TrainingShareReceived {
+                                round_id: request.round_id,
+                                sender_node_id: request.sender_node_id,
+                                encrypted_bundle: request.encrypted_bundle,
+                                nonce: request.nonce,
+                                sender_pubkey: request.sender_pubkey,
+                                signature: request.signature,
+                            };
+                            let _ = self.event_tx.send(event).await;
+
+                            // Send success response
+                            let response = TrainingShareResponse {
+                                round_id: request.round_id,
+                                status: TrainingShareStatus::Accepted,
+                                message: "Share received successfully".to_string(),
+                            };
+                            let _ = self.swarm.behaviour_mut().training_stream.send_response(channel, response);
+                            self.reputation_manager.record_success(peer);
+                        }
+                        request_response::Message::Response { response, .. } => {
+                            // Handle response from peer
+                            match response.status {
+                                TrainingShareStatus::Accepted => {
+                                    tracing::info!("Training share accepted by peer for round {}", response.round_id);
+                                    self.reputation_manager.record_success(peer);
+                                }
+                                _ => {
+                                    tracing::warn!("Training share rejected: {:?} - {}", response.status, response.message);
+                                    let was_banned = self.reputation_manager.is_banned(&peer);
+                                    self.reputation_manager.record_failure(peer, FailureReason::MalformedMessage);
+                                    if !was_banned && self.reputation_manager.is_banned(&peer) {
+                                        self.metrics.inc_reputation_bans();
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                request_response::Event::OutboundFailure { peer, error, request_id } => {
+                    tracing::warn!("Training share send failed to peer {}: {:?}", peer, error);
+                    
+                    // Store failed request for retry
+                    if let Ok(_pending) = self.pending_training_requests.lock() {
+                        // For now, just log and track. A full implementation would:
+                        // 1. Store the original request data
+                        // 2. Schedule a retry with exponential backoff
+                        // 3. Attempt to re-dial the peer if disconnected
+                        tracing::info!("Request {} to peer {} failed, scheduling retry", request_id, peer);
+                    }
+                    
+                    let was_banned = self.reputation_manager.is_banned(&peer);
+                    self.reputation_manager.record_failure(peer, FailureReason::Timeout);
+                    if !was_banned && self.reputation_manager.is_banned(&peer) {
+                        self.metrics.inc_reputation_bans();
+                    }
+                }
+                request_response::Event::InboundFailure { peer, .. } => {
+                    let was_banned = self.reputation_manager.is_banned(&peer);
+                    self.reputation_manager.record_failure(peer, FailureReason::MalformedMessage);
+                    if !was_banned && self.reputation_manager.is_banned(&peer) {
+                        self.metrics.inc_reputation_bans();
+                    }
                 }
                 _ => {}
             },

@@ -26,6 +26,10 @@ pub const TOPIC_HEARTBEAT: &str = "/aigen/heartbeat/1.0.0";
 pub const TOPIC_CHECKPOINT: &str = "/aigen/checkpoint/1.0.0";
 pub const TOPIC_FAILOVER: &str = "/aigen/failover/1.0.0";
 pub const TOPIC_BLOCK_PREFIX: &str = "/aigen/block/";
+// Federated learning topics
+pub const TOPIC_TRAINING_BURST: &str = "/aigen/training-burst/1.0.0";
+pub const TOPIC_GLOBAL_DELTA: &str = "/aigen/global-delta/1.0.0";
+pub const TOPIC_TRAINING_PROOF: &str = "/aigen/training-proof/1.0.0";
 
 /// Generate topic for a specific block ID
 pub fn topic_block(block_id: u32) -> Topic {
@@ -132,12 +136,28 @@ pub fn topic_failover() -> Topic {
     Topic::new(TOPIC_FAILOVER)
 }
 
-/// GossipManager for handling heartbeat and checkpoint propagation
+/// Federated learning topic helpers
+pub fn topic_training_burst() -> Topic {
+    Topic::new(TOPIC_TRAINING_BURST)
+}
+
+pub fn topic_global_delta() -> Topic {
+    Topic::new(TOPIC_GLOBAL_DELTA)
+}
+
+pub fn topic_training_proof() -> Topic {
+    Topic::new(TOPIC_TRAINING_PROOF)
+}
+
+/// GossipManager for handling heartbeat, checkpoint, and federated learning propagation
 pub struct GossipManager {
     local_peer_id: libp2p::PeerId,
     heartbeat_topic: Topic,
     checkpoint_topic: Topic,
     failover_topic: Topic,
+    training_burst_topic: Topic,
+    global_delta_topic: Topic,
+    training_proof_topic: Topic,
 }
 
 impl GossipManager {
@@ -147,10 +167,13 @@ impl GossipManager {
             heartbeat_topic: topic_heartbeat(),
             checkpoint_topic: topic_checkpoint(),
             failover_topic: topic_failover(),
+            training_burst_topic: topic_training_burst(),
+            global_delta_topic: topic_global_delta(),
+            training_proof_topic: topic_training_proof(),
         }
     }
 
-    /// Subscribe to heartbeat and checkpoint topics
+    /// Subscribe to heartbeat, checkpoint, and federated learning topics
     pub fn subscribe_topics(
         &self,
         gossipsub: &mut libp2p::gossipsub::Behaviour,
@@ -158,6 +181,9 @@ impl GossipManager {
         gossipsub.subscribe(&self.heartbeat_topic)?;
         gossipsub.subscribe(&self.checkpoint_topic)?;
         gossipsub.subscribe(&self.failover_topic)?;
+        gossipsub.subscribe(&self.training_burst_topic)?;
+        gossipsub.subscribe(&self.global_delta_topic)?;
+        gossipsub.subscribe(&self.training_proof_topic)?;
         Ok(())
     }
 
@@ -174,6 +200,21 @@ impl GossipManager {
     /// Get the failover topic
     pub fn failover_topic(&self) -> Topic {
         self.failover_topic.clone()
+    }
+
+    /// Get the training burst topic
+    pub fn training_burst_topic(&self) -> Topic {
+        self.training_burst_topic.clone()
+    }
+
+    /// Get the global delta topic
+    pub fn global_delta_topic(&self) -> Topic {
+        self.global_delta_topic.clone()
+    }
+
+    /// Get the training proof topic
+    pub fn training_proof_topic(&self) -> Topic {
+        self.training_proof_topic.clone()
     }
 
     /// Get local peer ID

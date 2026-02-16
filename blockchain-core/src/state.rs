@@ -86,6 +86,46 @@ pub struct ModelUpgradeProposalState {
     pub auto_approved: bool, // NEW: track if auto-approved by stakers
 }
 
+/// Training round state for federated learning tracking
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TrainingRound {
+    /// Unique round identifier
+    pub round_id: String, // Uuid stored as string
+    /// Participating node addresses
+    pub participants: Vec<String>,
+    /// Hash of the averaged delta (for verification)
+    pub delta_hash: [u8; 32],
+    /// Hash of Fisher matrix stored in IPFS
+    pub fisher_hash: [u8; 32],
+    /// Timestamp when round was completed
+    pub timestamp: i64,
+    /// Model ID that was trained
+    pub model_id: String,
+    /// Number of training samples used
+    pub sample_count: u64,
+    /// Learning rate used
+    pub learning_rate: u64, // Scaled by 1e6 for precision
+    /// EWC lambda value (scaled by 100)
+    pub ewc_lambda: u32,
+    /// Status: 0=Pending, 1=Completed, 2=Failed
+    pub status: u8,
+}
+
+/// Fisher matrix metadata for EWC
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct FisherMatrixState {
+    /// Model ID this Fisher matrix belongs to
+    pub model_id: String,
+    /// IPFS hash where the full Fisher matrix is stored
+    pub ipfs_hash: String,
+    /// Hash of the matrix data for verification
+    pub data_hash: [u8; 32],
+    /// Timestamp when computed
+    pub computed_at: i64,
+    /// Block height when recorded
+    pub block_height: u64,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GovernanceVote {
     pub proposal_id: String,
@@ -136,6 +176,8 @@ pub struct ChainStateSnapshot {
     pub governance_votes: Vec<GovernanceVote>,
     pub stakes: BTreeMap<Address, StakeState>,
     pub constitution: Option<ConstitutionState>,
+    pub training_rounds: BTreeMap<String, TrainingRound>,
+    pub fisher_matrices: BTreeMap<String, FisherMatrixState>,
 }
 
 #[derive(Debug, Default)]
@@ -148,6 +190,8 @@ pub struct ChainState {
     stakes: RwLock<BTreeMap<Address, StakeState>>,
     validator_reward_address: RwLock<Address>,
     constitution: RwLock<Option<ConstitutionState>>,
+    training_rounds: RwLock<BTreeMap<String, TrainingRound>>,
+    fisher_matrices: RwLock<BTreeMap<String, FisherMatrixState>>,
 }
 
 impl Clone for ChainState {
@@ -160,6 +204,8 @@ impl Clone for ChainState {
         let stakes = self.stakes.read().clone();
         let validator_reward_address = self.validator_reward_address.read().clone();
         let constitution = self.constitution.read().clone();
+        let training_rounds = self.training_rounds.read().clone();
+        let fisher_matrices = self.fisher_matrices.read().clone();
         ChainState {
             accounts: RwLock::new(accounts),
             subscriptions: RwLock::new(subscriptions),
@@ -169,6 +215,8 @@ impl Clone for ChainState {
             stakes: RwLock::new(stakes),
             validator_reward_address: RwLock::new(validator_reward_address),
             constitution: RwLock::new(constitution),
+            training_rounds: RwLock::new(training_rounds),
+            fisher_matrices: RwLock::new(fisher_matrices),
         }
     }
 }
@@ -184,6 +232,8 @@ impl ChainState {
             stakes: RwLock::new(BTreeMap::new()),
             validator_reward_address: RwLock::new(CEO_WALLET.to_string()),
             constitution: RwLock::new(None),
+            training_rounds: RwLock::new(BTreeMap::new()),
+            fisher_matrices: RwLock::new(BTreeMap::new()),
         }
     }
 
@@ -196,6 +246,8 @@ impl ChainState {
             governance_votes: self.governance_votes.read().clone(),
             stakes: self.stakes.read().clone(),
             constitution: self.constitution.read().clone(),
+            training_rounds: self.training_rounds.read().clone(),
+            fisher_matrices: self.fisher_matrices.read().clone(),
         }
     }
 
@@ -207,6 +259,8 @@ impl ChainState {
         *self.governance_votes.write() = snapshot.governance_votes;
         *self.stakes.write() = snapshot.stakes;
         *self.constitution.write() = snapshot.constitution;
+        *self.training_rounds.write() = snapshot.training_rounds;
+        *self.fisher_matrices.write() = snapshot.fisher_matrices;
     }
 
     /// Set constitution state (CEO-only operation)
@@ -916,6 +970,58 @@ impl ChainState {
         }
 
         Ok(())
+    }
+
+    /// Record a training round on-chain
+    pub fn record_training_round(&self, round: TrainingRound) -> Result<(), BlockchainError> {
+        let mut training_rounds = self.training_rounds.write();
+        training_rounds.insert(round.round_id.clone(), round);
+        Ok(())
+    }
+
+    /// Get a training round by ID
+    pub fn get_training_round(&self, round_id: &str) -> Option<TrainingRound> {
+        self.training_rounds.read().get(round_id).cloned()
+    }
+
+    /// List all training rounds for a model
+    pub fn list_training_rounds_for_model(&self, model_id: &str) -> Vec<TrainingRound> {
+        self.training_rounds
+            .read()
+            .values()
+            .filter(|r| r.model_id == model_id)
+            .cloned()
+            .collect()
+    }
+
+    /// List all completed training rounds
+    pub fn list_completed_training_rounds(&self) -> Vec<TrainingRound> {
+        self.training_rounds
+            .read()
+            .values()
+            .filter(|r| r.status == 1)
+            .cloned()
+            .collect()
+    }
+
+    /// Store Fisher matrix metadata on-chain
+    pub fn record_fisher_matrix(&self, fisher: FisherMatrixState) -> Result<(), BlockchainError> {
+        let mut fisher_matrices = self.fisher_matrices.write();
+        fisher_matrices.insert(fisher.model_id.clone(), fisher);
+        Ok(())
+    }
+
+    /// Get Fisher matrix metadata for a model
+    pub fn get_fisher_matrix(&self, model_id: &str) -> Option<FisherMatrixState> {
+        self.fisher_matrices.read().get(model_id).cloned()
+    }
+
+    /// Get Fisher matrix hash (for on-chain verification)
+    pub fn get_fisher_matrix_hash(&self, model_id: &str) -> Option<[u8; 32]> {
+        self.fisher_matrices
+            .read()
+            .get(model_id)
+            .map(|f| f.data_hash)
     }
 }
 
