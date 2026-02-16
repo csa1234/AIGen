@@ -22,6 +22,8 @@ use crate::rpc::types::{
     ModelUpgradeResponse, RejectUpgradeRequest, RpcError, ShutdownRequest, SipActionRequest,
     SipActionResponse, SipStatusResponse, SubmitGovVoteRequest, SuccessResponse, GovVoteResponse,
     ApproveStakerProposalRequest, VetoStakerProposalRequest,
+    UpdateConstitutionRequest, ConstitutionStatusResponse, CheckTextComplianceRequest,
+    CheckTextComplianceResponse, ViolationResponse,
 };
 
 fn verify_ceo_request(message: &[u8], signature_hex: &str) -> Result<CeoSignature, RpcError> {
@@ -80,6 +82,15 @@ pub trait CeoRpc {
 
     #[method(name = "vetoStakerProposal")]
     async fn veto_staker_proposal(&self, request: VetoStakerProposalRequest) -> Result<ModelUpgradeResponse, RpcError>;
+
+    #[method(name = "updateConstitution")]
+    async fn update_constitution(&self, request: UpdateConstitutionRequest) -> Result<SuccessResponse, RpcError>;
+
+    #[method(name = "getConstitutionStatus")]
+    async fn get_constitution_status(&self) -> Result<ConstitutionStatusResponse, RpcError>;
+
+    #[method(name = "checkTextCompliance")]
+    async fn check_text_compliance(&self, request: CheckTextComplianceRequest) -> Result<CheckTextComplianceResponse, RpcError>;
 }
 
 #[derive(Clone)]
@@ -655,6 +666,91 @@ impl CeoRpcServer for CeoRpcMethods {
             success: true,
             proposal_id: request.proposal_id,
             status: "vetoed".to_string(),
+        })
+    }
+
+    async fn update_constitution(&self, request: UpdateConstitutionRequest) -> Result<SuccessResponse, RpcError> {
+        // Verify CEO signature
+        let bc = self.blockchain.lock().await;
+        let network_magic = bc.genesis_config.network_magic;
+        let msg = format!(
+            "update_constitution:{}:{}:{}",
+            network_magic, request.timestamp, request.ipfs_cid
+        ).into_bytes();
+        verify_ceo_request(&msg, &request.signature)?;
+
+        println!("CEO updating constitution with IPFS CID: {}", request.ipfs_cid);
+
+        // Create constitution state
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        
+        let state = blockchain_core::state::ConstitutionState {
+            version: 1,
+            ipfs_hash: request.ipfs_cid.clone(),
+            principles_hash: genesis::compute_constitution_hash(),
+            updated_at: now,
+            updated_by: genesis::CEO_WALLET.to_string(),
+        };
+
+        // Update chain state
+        bc.state.set_constitution(state);
+
+        println!("Constitution updated successfully");
+
+        Ok(SuccessResponse {
+            success: true,
+            message: "Constitution updated successfully".to_string(),
+        })
+    }
+
+    async fn get_constitution_status(&self) -> Result<ConstitutionStatusResponse, RpcError> {
+        // Public endpoint - no auth required
+        let bc = self.blockchain.lock().await;
+        
+        if let Some(state) = bc.state.get_constitution() {
+            Ok(ConstitutionStatusResponse {
+                version: state.version,
+                ipfs_cid: state.ipfs_hash.clone(),
+                principles_hash: hex::encode(state.principles_hash),
+                updated_at: state.updated_at,
+                updated_by: state.updated_by.clone(),
+                active: true,
+            })
+        } else {
+            // No constitution set yet
+            Ok(ConstitutionStatusResponse {
+                version: 0,
+                ipfs_cid: String::new(),
+                principles_hash: String::new(),
+                updated_at: 0,
+                updated_by: String::new(),
+                active: false,
+            })
+        }
+    }
+
+    async fn check_text_compliance(&self, request: CheckTextComplianceRequest) -> Result<CheckTextComplianceResponse, RpcError> {
+        // Public endpoint - no auth required
+        let violations = genesis::check_constitutional_compliance(&request.text);
+        
+        let violation_responses: Vec<ViolationResponse> = violations.iter().map(|v| {
+            ViolationResponse {
+                principle_id: v.principle_id,
+                category: v.category.clone(),
+                principle_text: v.principle_text.clone(),
+                matched_pattern: v.matched_pattern.clone(),
+                matched_text: v.matched_text.clone(),
+                position: v.position,
+            }
+        }).collect();
+
+        Ok(CheckTextComplianceResponse {
+            compliant: violations.is_empty(),
+            violations: violation_responses,
+            total_violations: violations.len(),
         })
     }
 }

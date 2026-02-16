@@ -1147,3 +1147,43 @@ pub fn parse_stake_role(s: &str) -> Result<blockchain_core::state::StakeRole, Rp
         _ => Err(RpcError::InvalidParams("invalid stake role".to_string())),
     }
 }
+
+// Constitution RPC Types
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct UpdateConstitutionRequest {
+    pub ipfs_cid: String,
+    pub signature: String,
+    pub timestamp: i64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ConstitutionStatusResponse {
+    pub version: u32,
+    pub ipfs_cid: String,
+    pub principles_hash: String,
+    pub updated_at: i64,
+    pub updated_by: String,
+    pub active: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CheckTextComplianceRequest {
+    pub text: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ViolationResponse {
+    pub principle_id: u32,
+    pub category: String,
+    pub principle_text: String,
+    pub matched_pattern: String,
+    pub matched_text: String,
+    pub position: usize,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CheckTextComplianceResponse {
+    pub compliant: bool,
+    pub violations: Vec<ViolationResponse>,
+    pub total_violations: usize,
+}

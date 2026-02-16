@@ -16,3 +16,5 @@ sha2 = { workspace = true }
 hex = { workspace = true }
 thiserror = { workspace = true }
 once_cell = { workspace = true }
+regex = { workspace = true }
+sha3 = { workspace = true }

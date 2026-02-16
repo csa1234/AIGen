@@ -198,6 +198,40 @@ pub fn check_and_auto_approve(
         }
     }
     
+    // Run constitutional filter BEFORE vote threshold evaluation
+    if let Some(model_output) = &proposal.model_output_sample {
+        let violations = crate::constitution::check_constitutional_compliance(model_output);
+        if !violations.is_empty() {
+            // Record violations on proposal
+            let mut updated = proposal.clone();
+            updated.constitutional_violations = violations.iter()
+                .map(|v| format!("Principle {} ({}): {}", v.principle_id, v.category, v.principle_text))
+                .collect();
+            updated.constitution_version = Some(1); // Current constitution version
+            
+            // Mark status as vetoed/rejected
+            registry.statuses.insert(
+                proposal_id.to_string(),
+                SipStatus::Vetoed,
+            );
+            registry.proposals.insert(proposal_id.to_string(), updated);
+            persist_registry(&registry)?;
+            
+            eprintln!(
+                "SIP {} rejected due to {} constitutional violation(s)",
+                proposal_id,
+                violations.len()
+            );
+            for v in &violations {
+                eprintln!(
+                    "  - Principle {} ({}): {}",
+                    v.principle_id, v.category, v.principle_text
+                );
+            }
+            return Ok(false); // Rejected due to constitutional violations
+        }
+    }
+    
     // Check staker vote threshold using config values
     let meets_threshold = chain_state.check_auto_approve_threshold(
         proposal_id,
@@ -261,4 +295,25 @@ pub fn can_deploy_sip(proposal_id: &str) -> bool {
 pub fn get_sip_status(proposal_id: &str) -> Option<SipStatus> {
     let registry = SIP_REGISTRY.lock().expect("sip registry mutex poisoned");
     registry.statuses.get(proposal_id).cloned()
+}
+
+/// Check if model output is constitutionally compliant
+/// Returns true if compliant, false if violations found
+pub fn check_model_output_compliance(output: &str) -> Result<bool, GenesisError> {
+    let violations = crate::constitution::check_constitutional_compliance(output);
+    if violations.is_empty() {
+        Ok(true)
+    } else {
+        eprintln!(
+            "Constitutional violations detected: {}",
+            violations.len()
+        );
+        for v in &violations {
+            eprintln!(
+                "  - Principle {} ({}): {}",
+                v.principle_id, v.category, v.principle_text
+            );
+        }
+        Ok(false)
+    }
 }

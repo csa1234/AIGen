@@ -38,6 +38,15 @@ impl Default for AccountState {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ConstitutionState {
+    pub version: u32,
+    pub ipfs_hash: String,
+    pub principles_hash: [u8; 32],
+    pub updated_at: i64,
+    pub updated_by: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SubscriptionState {
     pub user_address: String,
     pub tier: u8,
@@ -126,6 +135,7 @@ pub struct ChainStateSnapshot {
     pub model_proposals: BTreeMap<String, ModelUpgradeProposalState>,
     pub governance_votes: Vec<GovernanceVote>,
     pub stakes: BTreeMap<Address, StakeState>,
+    pub constitution: Option<ConstitutionState>,
 }
 
 #[derive(Debug, Default)]
@@ -137,6 +147,7 @@ pub struct ChainState {
     governance_votes: RwLock<Vec<GovernanceVote>>,
     stakes: RwLock<BTreeMap<Address, StakeState>>,
     validator_reward_address: RwLock<Address>,
+    constitution: RwLock<Option<ConstitutionState>>,
 }
 
 impl Clone for ChainState {
@@ -148,6 +159,7 @@ impl Clone for ChainState {
         let governance_votes = self.governance_votes.read().clone();
         let stakes = self.stakes.read().clone();
         let validator_reward_address = self.validator_reward_address.read().clone();
+        let constitution = self.constitution.read().clone();
         ChainState {
             accounts: RwLock::new(accounts),
             subscriptions: RwLock::new(subscriptions),
@@ -156,6 +168,7 @@ impl Clone for ChainState {
             governance_votes: RwLock::new(governance_votes),
             stakes: RwLock::new(stakes),
             validator_reward_address: RwLock::new(validator_reward_address),
+            constitution: RwLock::new(constitution),
         }
     }
 }
@@ -170,6 +183,7 @@ impl ChainState {
             governance_votes: RwLock::new(Vec::new()),
             stakes: RwLock::new(BTreeMap::new()),
             validator_reward_address: RwLock::new(CEO_WALLET.to_string()),
+            constitution: RwLock::new(None),
         }
     }
 
@@ -181,6 +195,7 @@ impl ChainState {
             model_proposals: self.model_proposals.read().clone(),
             governance_votes: self.governance_votes.read().clone(),
             stakes: self.stakes.read().clone(),
+            constitution: self.constitution.read().clone(),
         }
     }
 
@@ -191,6 +206,26 @@ impl ChainState {
         *self.model_proposals.write() = snapshot.model_proposals;
         *self.governance_votes.write() = snapshot.governance_votes;
         *self.stakes.write() = snapshot.stakes;
+        *self.constitution.write() = snapshot.constitution;
+    }
+
+    /// Set constitution state (CEO-only operation)
+    pub fn set_constitution(&self, state: ConstitutionState) {
+        *self.constitution.write() = Some(state);
+    }
+
+    /// Get constitution state
+    pub fn get_constitution(&self) -> Option<ConstitutionState> {
+        self.constitution.read().clone()
+    }
+
+    /// Verify constitution hash matches expected
+    pub fn verify_constitution_hash(&self, expected_hash: [u8; 32]) -> bool {
+        if let Some(ref state) = *self.constitution.read() {
+            state.principles_hash == expected_hash
+        } else {
+            false
+        }
     }
 
     pub fn set_validator_reward_address(&self, address: Address) {

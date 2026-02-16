@@ -79,6 +79,23 @@ The node will automatically register the model on startup. See [SETUP.md](SETUP.
 - **[Economic Tiers](docs/ECONOMIC_TIERS.md)** - Subscription tiers
 - **[AI Models](docs/AI_MODELS.md)** - AI model management
 
+## Constitutional Governance
+
+AIGEN implements a **Constitutional Filtering System** based on 135 biblical principles that automatically reviews AI model outputs before deployment:
+
+- **135 Biblical Principles** organized into 10 categories (Love & Compassion, Truth & Integrity, Peace & Non-Violence, etc.)
+- **Automated Content Moderation** using regex pattern matching
+- **Immutable Constitution** stored on IPFS with hash verification on-chain
+- **CEO Override** maintains absolute authority while ensuring accountability
+
+The constitution is integrated into the auto-approval pipeline:
+1. Model outputs are scanned against all 135 principles
+2. Violations result in automatic rejection
+3. Clean outputs proceed to staker vote threshold check
+4. CEO can manually override any decision with on-chain justification
+
+See [docs/constitution.md](docs/constitution.md) for complete documentation.
+
 ## Critical Prime Directive
 
 As specified in `spec.md`, the Genesis Key provides:

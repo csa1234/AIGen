@@ -58,6 +58,9 @@ pub struct SipProposal {
     pub ceo_approved: bool,
     pub auto_approved: bool,     // NEW: true if auto-approved by staker consensus
     pub approved_at: Option<i64>, // NEW: timestamp when approved (manual or auto)
+    pub model_output_sample: Option<String>, // NEW: Sample output for constitutional review
+    pub constitutional_violations: Vec<String>, // NEW: Violation descriptions if rejected
+    pub constitution_version: Option<u32>, // NEW: Version of constitution used for review
 }
 
 impl SipProposal {

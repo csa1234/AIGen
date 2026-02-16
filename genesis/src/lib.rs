@@ -16,7 +16,8 @@
 
 pub mod authority;
 pub mod config;
-pub mod governance_config; // Add this line
+pub mod constitution;
+pub mod governance_config;
 pub mod shutdown;
 pub mod types;
 pub mod veto;
@@ -25,6 +26,21 @@ pub use crate::authority::{
     is_ceo_wallet, verify_ceo_signature, verify_ceo_transaction, CeoAuthority, CeoTransactable,
 };
 pub use crate::config::{GenesisConfig, CEO_PUBLIC_KEY_HEX, CEO_WALLET};
+pub use crate::constitution::{
+    check_constitutional_compliance,
+    compute_constitution_hash,
+    serialize_constitution,
+    get_principles_by_category,
+    Principle,
+    PrincipleCategory,
+    Violation,
+    ViolationAction,
+    CONSTITUTION,
+    CONSTITUTIONAL_FILTER,
+    ConstitutionalFilter,
+    ConstitutionState,
+    MAX_SCAN_LENGTH,
+};
 pub use crate::governance_config::GovernanceConfig;
 pub use crate::shutdown::{
     check_shutdown, emergency_shutdown, is_shutdown, shutdown_registry, ShutdownRegistry,
@@ -33,4 +49,5 @@ pub use crate::types::{CeoSignature, GenesisError, ShutdownCommand, SipProposal,
 pub use crate::veto::{
     approve_sip, can_deploy_sip, check_and_auto_approve, get_sip_status, submit_sip, veto_sip,
     trigger_auto_approval_check, AutoApproveConfig, SipRegistry, SipStatus, ChainStateProvider,
+    check_model_output_compliance,
 };

@@ -585,30 +585,49 @@ fn test_calculate_reward_rejects_invalid_difficulty() {
     };
     let timestamp = chrono::Utc::now().timestamp();
     
-    // Use a fixed nonce of 0 that won't meet the difficulty requirement
+    // Use a fixed nonce of 0
     let nonce: u64 = 0;
-    let difficulty: u64 = 10000; // High difficulty that nonce=0 won't satisfy
     
-    // Compute work_hash with the invalid nonce
+    // Compute work_hash with nonce=0
     let payload = poi_proof_work_payload_bytes(
         &miner_address,
         work_type,
         input_hash,
         &output_data,
         &metadata,
-        difficulty,
+        1, // temporary difficulty for payload (doesn't affect hash computation for work_hash)
         timestamp,
         nonce,
     );
     let work_hash_vec = blockchain_core::hash_data(&payload);
     let work_hash: [u8; 32] = work_hash_vec.try_into().expect("Hash should be 32 bytes");
     
+    // Compute a difficulty that is guaranteed to fail validation
+    // validate_work_difficulty requires: value <= u128::MAX / difficulty
+    // To fail, we need: value > u128::MAX / difficulty
+    // Therefore: difficulty > u128::MAX / value
+    let value = u128::from_be_bytes(work_hash[..16].try_into().unwrap());
+    let difficulty = if value == 0 {
+        u64::MAX // If value is 0, any difficulty > 0 will fail since 0 > target is never true
+    } else {
+        // Calculate difficulty that guarantees failure: u128::MAX / value + 1
+        let calculated = u128::MAX / value + 1;
+        // Cap at u64::MAX to avoid overflow
+        calculated.min(u64::MAX as u128) as u64
+    };
+    
+    // Verify this difficulty will actually fail (should return Err)
+    assert!(
+        validate_work_difficulty(&work_hash, difficulty).is_err(),
+        "Expected calculated difficulty to fail validation"
+    );
+    
     // Create verification data with the distributed proof
     let verification_data = serde_json::json!({
         "distributed_task_proof": distributed_proof
     });
     
-    // Create a PoI proof with nonce=0 and high difficulty
+    // Create a PoI proof with the computed difficulty that is guaranteed to fail
     let poi = PoIProof::new(
         work_hash,
         miner_address,

@@ -21,6 +21,10 @@ path = "src/bin/sign_sip_approval.rs"
 name = "setup-test-model"
 path = "src/bin/setup_test_model.rs"
 
+[[bin]]
+name = "initialize-constitution"
+path = "src/bin/initialize_constitution.rs"
+
 [dependencies]
 genesis = { path = "../genesis" }
 blockchain-core = { path = "../blockchain-core" }
