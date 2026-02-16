@@ -61,6 +61,8 @@ pub struct SipProposal {
     pub model_output_sample: Option<String>, // NEW: Sample output for constitutional review
     pub constitutional_violations: Vec<String>, // NEW: Violation descriptions if rejected
     pub constitution_version: Option<u32>, // NEW: Version of constitution used for review
+    pub benevolence_score: Option<f32>, // NEW: ML-based benevolence scoring (0.0-1.0)
+    pub benevolence_model_version: Option<String>, // NEW: Version of benevolence model used
 }
 
 impl SipProposal {

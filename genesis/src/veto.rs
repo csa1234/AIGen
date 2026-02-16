@@ -9,6 +9,7 @@
 // Contact: Cesar Saguier Antebi
 
 use crate::authority::verify_ceo_signature;
+use crate::benevolence::get_benevolence_model;
 use crate::governance_config::GovernanceConfig;
 use crate::shutdown::is_shutdown;
 use crate::types::{CeoSignature, GenesisError, SipProposal};
@@ -18,6 +19,8 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Mutex;
+use tokio::runtime::Handle;
+use std::thread;
 
 /// Trait for chain state operations needed by genesis
 pub trait ChainStateProvider {
@@ -232,6 +235,58 @@ pub fn check_and_auto_approve(
         }
     }
     
+    // Check benevolence model (ML-based constitutional compliance scoring)
+    // Comment 1: Benevolence scoring is never applied in auto-approval
+    let mut current_proposal = proposal.clone(); // Clone for updates
+    
+    if let Some(sample) = &current_proposal.model_output_sample {
+        let model = match get_benevolence_model() {
+            Ok(m) => m,
+            Err(e) => {
+                eprintln!("Benevolence model not available for SIP {}, requiring CEO review: {}", proposal_id, e);
+                return Ok(false);
+            }
+        };
+
+        // Run async score_output using a runtime handle
+        let handle = Handle::current();
+        let sample_text = sample.clone();
+        let model_clone = model.clone();
+
+        let score_result = thread::spawn(move || {
+            handle.block_on(async {
+                model_clone.score_output(&sample_text).await
+            })
+        }).join().unwrap_or_else(|_| Err(crate::benevolence::BenevolenceError::InferenceError("Thread panicked".to_string())));
+
+        match score_result {
+            Ok(score_data) => {
+                // Persist score
+                current_proposal.benevolence_score = Some(score_data.score);
+                current_proposal.benevolence_model_version = Some(score_data.model_version);
+
+                // Update registry with score info
+                registry.proposals.insert(proposal_id.to_string(), current_proposal.clone());
+                persist_registry(&registry)?;
+
+                // Check threshold
+                let threshold = model.threshold();
+                if score_data.score < threshold {
+                    eprintln!("SIP {} benevolence score {} below threshold {}, requiring CEO review", proposal_id, score_data.score, threshold);
+                    return Ok(false);
+                }
+            },
+            Err(e) => {
+                eprintln!("Benevolence scoring failed for SIP {}: {}, requiring CEO review", proposal_id, e);
+                return Ok(false);
+            }
+        }
+    } else {
+        // Return or require CEO review if sample is missing
+        eprintln!("SIP {} missing model output sample, requiring CEO review", proposal_id);
+        return Ok(false);
+    }
+    
     // Check staker vote threshold using config values
     let meets_threshold = chain_state.check_auto_approve_threshold(
         proposal_id,
@@ -241,7 +296,7 @@ pub fn check_and_auto_approve(
     
     if meets_threshold {
         // Auto-approve
-        let mut updated = proposal.clone();
+        let mut updated = current_proposal.clone(); // Use updated proposal with score
         updated.ceo_approved = true; // Mark as approved
         updated.auto_approved = true; // Mark as auto-approved
         updated.approved_at = Some(

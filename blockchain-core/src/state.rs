@@ -145,6 +145,25 @@ pub struct ReplayBufferState {
     pub block_height: u64,
 }
 
+/// Benevolence model metadata for ML-based constitutional compliance
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct BenevolenceModelState {
+    /// Unique model identifier
+    pub model_id: String,
+    /// IPFS CID where the ONNX model is stored
+    pub ipfs_cid: String,
+    /// SHA3-256 hash of the model file for verification
+    pub model_hash: [u8; 32],
+    /// Model version string
+    pub version: String,
+    /// Benevolence threshold (0.0-1.0)
+    pub threshold: f32,
+    /// Timestamp when model was deployed
+    pub deployed_at: i64,
+    /// Address that deployed the model
+    pub deployed_by: String,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GovernanceVote {
     pub proposal_id: String,
@@ -198,6 +217,7 @@ pub struct ChainStateSnapshot {
     pub training_rounds: BTreeMap<String, TrainingRound>,
     pub fisher_matrices: BTreeMap<String, FisherMatrixState>,
     pub replay_buffers: BTreeMap<String, ReplayBufferState>,
+    pub benevolence_models: BTreeMap<String, BenevolenceModelState>,
 }
 
 #[derive(Debug, Default)]
@@ -213,6 +233,7 @@ pub struct ChainState {
     training_rounds: RwLock<BTreeMap<String, TrainingRound>>,
     fisher_matrices: RwLock<BTreeMap<String, FisherMatrixState>>,
     replay_buffers: RwLock<BTreeMap<String, ReplayBufferState>>,
+    benevolence_models: RwLock<BTreeMap<String, BenevolenceModelState>>,
 }
 
 impl Clone for ChainState {
@@ -228,6 +249,7 @@ impl Clone for ChainState {
         let training_rounds = self.training_rounds.read().clone();
         let fisher_matrices = self.fisher_matrices.read().clone();
         let replay_buffers = self.replay_buffers.read().clone();
+        let benevolence_models = self.benevolence_models.read().clone();
         ChainState {
             accounts: RwLock::new(accounts),
             subscriptions: RwLock::new(subscriptions),
@@ -240,6 +262,7 @@ impl Clone for ChainState {
             training_rounds: RwLock::new(training_rounds),
             fisher_matrices: RwLock::new(fisher_matrices),
             replay_buffers: RwLock::new(replay_buffers),
+            benevolence_models: RwLock::new(benevolence_models),
         }
     }
 }
@@ -258,6 +281,7 @@ impl ChainState {
             training_rounds: RwLock::new(BTreeMap::new()),
             fisher_matrices: RwLock::new(BTreeMap::new()),
             replay_buffers: RwLock::new(BTreeMap::new()),
+            benevolence_models: RwLock::new(BTreeMap::new()),
         }
     }
 
@@ -273,6 +297,7 @@ impl ChainState {
             training_rounds: self.training_rounds.read().clone(),
             fisher_matrices: self.fisher_matrices.read().clone(),
             replay_buffers: self.replay_buffers.read().clone(),
+            benevolence_models: self.benevolence_models.read().clone(),
         }
     }
 
@@ -287,6 +312,7 @@ impl ChainState {
         *self.training_rounds.write() = snapshot.training_rounds;
         *self.fisher_matrices.write() = snapshot.fisher_matrices;
         *self.replay_buffers.write() = snapshot.replay_buffers;
+        *self.benevolence_models.write() = snapshot.benevolence_models;
     }
 
     /// Set constitution state (CEO-only operation)
@@ -1085,6 +1111,43 @@ impl ChainState {
     /// Get replay buffer metadata for continual learning
     pub fn get_replay_buffer_metadata(&self, model_id: &str) -> Option<ReplayBufferState> {
         self.replay_buffers.read().get(model_id).cloned()
+    }
+
+    /// Register a new benevolence model version on-chain
+    pub fn store_benevolence_model(&self, model_id: String, ipfs_cid: String, hash: [u8; 32], version: String, threshold: f32, deployed_by: String) -> Result<(), BlockchainError> {
+        let state = BenevolenceModelState {
+            model_id: model_id.clone(),
+            ipfs_cid,
+            model_hash: hash,
+            version,
+            threshold,
+            deployed_at: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs() as i64,
+            deployed_by,
+        };
+        let mut benevolence_models = self.benevolence_models.write();
+        benevolence_models.insert(model_id, state);
+        Ok(())
+    }
+
+    /// Get benevolence model metadata by model ID
+    pub fn get_benevolence_model(&self, model_id: &str) -> Option<BenevolenceModelState> {
+        self.benevolence_models.read().get(model_id).cloned()
+    }
+
+    /// Get the latest (most recently deployed) benevolence model
+    pub fn get_latest_benevolence_model(&self) -> Option<BenevolenceModelState> {
+        self.benevolence_models.read()
+            .values()
+            .max_by_key(|m| m.deployed_at)
+            .cloned()
+    }
+
+    /// List all benevolence models
+    pub fn list_benevolence_models(&self) -> Vec<BenevolenceModelState> {
+        self.benevolence_models.read().values().cloned().collect()
     }
 }
 

@@ -15,6 +15,7 @@
 //! as described in the CRITICAL PRIME DIRECTIVE of `spec.md`.
 
 pub mod authority;
+pub mod benevolence;
 pub mod config;
 pub mod constitution;
 pub mod governance_config;
@@ -24,6 +25,14 @@ pub mod veto;
 
 pub use crate::authority::{
     is_ceo_wallet, verify_ceo_signature, verify_ceo_transaction, CeoAuthority, CeoTransactable,
+};
+pub use crate::benevolence::{
+    BenevolenceModel,
+    BenevolenceScore,
+    BenevolenceModelConfig,
+    BenevolenceError,
+    get_benevolence_model,
+    initialize_benevolence_model,
 };
 pub use crate::config::{GenesisConfig, CEO_PUBLIC_KEY_HEX, CEO_WALLET};
 pub use crate::constitution::{

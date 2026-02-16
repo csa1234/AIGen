@@ -139,7 +139,7 @@ pub fn shutdown_registry() -> ShutdownRegistry {
         SHUTDOWN_REGISTRY
             .lock()
             .expect("shutdown registry mutex poisoned")
-            .clone();
+            .clone()
     }
 }
 
