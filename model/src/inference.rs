@@ -1780,6 +1780,9 @@ pub struct InferenceEngine {
     cache: Arc<ModelCache>,
     metrics: SharedInferenceMetrics,
     ad_manager: Option<Arc<AdManager>>,
+    continual_learning: Option<Arc<crate::ContinualLearningManager>>,
+    /// Training trigger callback - called when buffer reaches threshold
+    training_trigger: Option<Arc<dyn Fn(String, Vec<f32>, Vec<f32>, f32) -> bool + Send + Sync>>,
 }
 
 impl InferenceEngine {
@@ -1790,6 +1793,8 @@ impl InferenceEngine {
         max_memory_bytes: usize,
         num_threads: usize,
         ad_manager: Option<Arc<AdManager>>,
+        continual_learning: Option<Arc<crate::ContinualLearningManager>>,
+        training_trigger: Option<Arc<dyn Fn(String, Vec<f32>, Vec<f32>, f32) -> bool + Send + Sync>>,
     ) -> Self {
         let metrics = Arc::new(InferenceMetrics::default());
         let cache = Arc::new(ModelCache::new(
@@ -1804,7 +1809,17 @@ impl InferenceEngine {
             cache,
             metrics,
             ad_manager,
+            continual_learning,
+            training_trigger,
         }
+    }
+
+    /// Set the training trigger callback
+    pub fn set_training_trigger(
+        &mut self,
+        trigger: Arc<dyn Fn(String, Vec<f32>, Vec<f32>, f32) -> bool + Send + Sync>,
+    ) {
+        self.training_trigger = Some(trigger);
     }
 
     pub fn cache(&self) -> Arc<ModelCache> {
@@ -1840,6 +1855,10 @@ impl InferenceEngine {
         ensure_running()?;
         let start = Instant::now();
         let model = self.cache.get_or_load(model_id).await?;
+        
+        // Clone inputs for continual learning before they're moved
+        let input_flat: Vec<f32> = inputs.iter().flat_map(|t| t.data.clone()).collect();
+        
         let result = model.run_inference(inputs);
         let elapsed_ms = start.elapsed().as_millis() as u64;
         self.metrics.observe_inference_time_ms(elapsed_ms);
@@ -1847,6 +1866,35 @@ impl InferenceEngine {
         match result {
             Ok(outputs) => {
                 self.metrics.inc_inference_runs();
+
+                // Post-inference continual learning hook
+                let mut should_trigger = false;
+                if let Some(cl_manager) = self.continual_learning.as_ref() {
+                    // Compute loss (placeholder - in production, use actual loss from model)
+                    let loss = 0.1f32; // TODO: extract from model output or compute from ground truth
+
+                    // Flatten outputs to Vec<f32>
+                    let output_flat: Vec<f32> = outputs.iter().flat_map(|o| o.data.clone()).collect();
+
+                    // Record inference for continual learning
+                    if let Err(e) = cl_manager.record_inference(model_id, input_flat.clone(), output_flat.clone(), loss).await {
+                        log::warn!("Failed to record inference for continual learning: {}", e);
+                    }
+
+                    // Check if buffer is ready for training trigger
+                    if cl_manager.is_buffer_ready(model_id) {
+                        should_trigger = true;
+                        log::info!("Buffer ready for model {} - training should be triggered", model_id);
+                    }
+
+                    // Invoke training trigger callback if set
+                    if should_trigger {
+                        if let Some(trigger) = self.training_trigger.as_ref() {
+                            let _ = trigger(model_id.to_string(), input_flat, output_flat, loss);
+                        }
+                    }
+                }
+
                 if let Some(ad_manager) = self.ad_manager.as_ref() {
                     match ad_manager.should_inject_ad(user_address) {
                         Ok(true) => match ad_manager.inject_ad_into_outputs(

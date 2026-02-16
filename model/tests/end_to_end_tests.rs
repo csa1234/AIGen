@@ -96,6 +96,8 @@ async fn complete_node_like_flow_with_identity_model() {
         (size as usize) * 2,
         1,
         None,
+        None,
+        None,
     );
     let model = engine
         .cache()
@@ -131,6 +133,8 @@ async fn multi_model_lru_eviction_and_switching() {
         limit,
         1,
         None,
+        None,
+        None,
     );
     engine.cache().get_or_load("model-a").await.unwrap();
     engine.cache().get_or_load("model-b").await.unwrap();
@@ -158,6 +162,8 @@ async fn subscription_and_quota_deduction_on_inference() {
         harness.cache_dir(),
         (size as usize) * 2,
         1,
+        None,
+        None,
         None,
     );
     let user = "0xaaaa0000000000000000000000000000000000aa";
@@ -191,6 +197,8 @@ async fn batch_then_inference_flow() {
         harness.cache_dir(),
         (size as usize) * 2,
         1,
+        None,
+        None,
         None,
     ));
     let manager = Arc::new(TierManager::with_default_configs(Arc::new(
@@ -304,6 +312,8 @@ async fn shutdown_during_inference_graceful() {
         harness.cache_dir(),
         (size as usize) * 2,
         1,
+        None,
+        None,
         None,
     );
     let input = InferenceTensor {

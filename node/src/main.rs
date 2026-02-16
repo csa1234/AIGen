@@ -690,6 +690,8 @@ async fn run_node(
         cfg.model.max_memory_mb.saturating_mul(1024 * 1024),
         cfg.model.num_threads,
         Some(ad_manager.clone()),
+        None,
+        None,
     ));
     if let Err(err) = set_global_inference_engine(inference_engine.clone()) {
         eprintln!("failed to register inference engine: {}", err);
@@ -724,6 +726,7 @@ async fn run_node(
         local_validator_address,
         model_registry.clone(),
         chain_state.clone(),
+        None, // ContinualLearningManager - initialized separately if needed
     ));
 
     // Initialize HeartbeatManager

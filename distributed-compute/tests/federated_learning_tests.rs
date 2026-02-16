@@ -11,6 +11,7 @@
 //! Federated Learning integration tests
 
 use distributed_compute::secret_sharing::{SecretSharingManager, SecretSharingError};
+#[allow(deprecated)]
 use distributed_compute::training::{TrainingBuffer, DeltaComputation, InferenceSample, FisherMatrix};
 
 #[test]
@@ -76,7 +77,9 @@ fn test_delta_aggregation() {
 }
 
 #[test]
+#[allow(deprecated)]
 fn test_training_buffer_trigger() {
+    #[allow(deprecated)]
     let mut buffer = TrainingBuffer::new(1000, 0.01);
     
     // Fill buffer to 900 (trigger threshold)
@@ -98,7 +101,9 @@ fn test_training_buffer_trigger() {
 }
 
 #[test]
+#[allow(deprecated)]
 fn test_training_buffer_fifo() {
+    #[allow(deprecated)]
     let mut buffer = TrainingBuffer::new(10, 0.01);
     
     // Add 15 samples
@@ -147,10 +152,12 @@ fn test_delta_application() {
 }
 
 #[test]
+#[allow(deprecated)]
 fn test_ewc_regularization() {
     let diagonal = vec![0.1, 0.2, 0.3, 0.4, 0.5];
     let old_params = vec![1.0, 2.0, 3.0, 4.0, 5.0];
     
+    #[allow(deprecated)]
     let fisher = FisherMatrix {
         diagonal: diagonal.clone(),
         old_params: old_params.clone(),
@@ -188,10 +195,12 @@ fn test_quantization_roundtrip() {
 }
 
 #[test]
+#[allow(deprecated)]
 fn test_fisher_matrix_serialization() {
     let diagonal = vec![0.1, 0.2, 0.3];
     let old_params = vec![1.0, 2.0, 3.0];
     
+    #[allow(deprecated)]
     let fisher = FisherMatrix {
         diagonal,
         old_params,

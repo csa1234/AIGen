@@ -60,6 +60,8 @@ mod chat_completion_tests {
             64 * 1024 * 1024,
             1,
             Some(ad_manager),
+            None,
+            None,
         ));
         let batch_queue = Arc::new(BatchQueue::new(
             tier_manager.clone(),

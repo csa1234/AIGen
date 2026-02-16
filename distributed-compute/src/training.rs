@@ -11,9 +11,9 @@
 //! Federated learning training infrastructure
 //!
 //! Implements:
-//! - TrainingBuffer for storing inference samples
+//! - TrainingBuffer for storing inference samples (deprecated: use ContinualLearningManager)
 //! - DeltaComputation for computing and applying weight deltas
-//! - EWC (Elastic Weight Consolidation) for continual learning
+//! - EWC (Elastic Weight Consolidation) for continual learning (delegated to ContinualLearningManager)
 //! - TrainingCoordinator for orchestrating federated training rounds
 
 use crate::secret_sharing::{
@@ -27,6 +27,9 @@ use tokio::sync::{mpsc, RwLock};
 use uuid::Uuid;
 
 /// Inference sample stored in training buffer
+/// 
+/// Deprecated: Use `model::continual_learning::InferenceSample` instead.
+/// Kept for backward compatibility during transition.
 #[derive(Clone, Debug)]
 pub struct InferenceSample {
     /// Input tensor (serialized)
@@ -39,10 +42,37 @@ pub struct InferenceSample {
     pub timestamp: i64,
 }
 
+impl From<model::continual_learning::InferenceSample> for InferenceSample {
+    fn from(s: model::continual_learning::InferenceSample) -> Self {
+        Self {
+            input: s.input,
+            output: s.output,
+            loss: s.loss,
+            timestamp: s.timestamp,
+        }
+    }
+}
+
+impl From<InferenceSample> for model::continual_learning::InferenceSample {
+    fn from(s: InferenceSample) -> Self {
+        Self {
+            input: s.input,
+            output: s.output,
+            loss: s.loss,
+            timestamp: s.timestamp,
+        }
+    }
+}
+
 /// Training buffer for storing inference samples
+/// 
+/// Deprecated: Use `ContinualLearningManager` replay buffers instead.
+/// This struct is kept for backward compatibility but delegates to CL manager.
+#[deprecated(since = "0.2.0", note = "Use ContinualLearningManager replay buffers instead")]
+#[allow(deprecated)]
 pub struct TrainingBuffer {
     /// FIFO buffer storing (input, output, loss) tuples
-    buffer: VecDeque<InferenceSample>,
+    buffer: std::collections::VecDeque<InferenceSample>,
     /// Maximum buffer size (default: 1000)
     max_size: usize,
     /// Replay buffer (1% historical samples for catastrophic forgetting prevention)
@@ -51,6 +81,7 @@ pub struct TrainingBuffer {
     replay_ratio: f32,
 }
 
+#[allow(deprecated)]
 impl TrainingBuffer {
     /// Create new training buffer
     pub fn new(max_size: usize, replay_ratio: f32) -> Self {
@@ -109,7 +140,12 @@ impl TrainingBuffer {
 }
 
 /// Fisher matrix for EWC (Elastic Weight Consolidation)
-#[derive(Clone, Debug)]
+/// 
+/// Deprecated: Use `model::continual_learning::FisherMatrix` instead.
+/// Kept for backward compatibility during transition.
+#[deprecated(since = "0.2.0", note = "Use model::continual_learning::FisherMatrix instead")]
+#[derive(Clone)]
+#[allow(deprecated)]
 pub struct FisherMatrix {
     /// Diagonal Fisher information (importance weights per parameter)
     pub diagonal: Vec<f32>,
@@ -121,6 +157,7 @@ pub struct FisherMatrix {
     pub ipfs_hash: Option<String>,
 }
 
+#[allow(deprecated)]
 impl FisherMatrix {
     /// Compute EWC regularization loss: lambda/2 * sum(F_i * (theta_i - theta_old_i)^2)
     pub fn ewc_loss(&self, delta: &[f32], lambda: f32) -> f32 {
@@ -307,7 +344,11 @@ impl ShareAggregationBuffer {
 
 /// Training coordinator for orchestrating federated learning
 pub struct TrainingCoordinator {
-    /// Local training buffer
+    /// Continual Learning manager (unified buffer and Fisher matrix handling)
+    /// When None, uses legacy local_buffer (deprecated path)
+    cl_manager: Option<Arc<model::ContinualLearningManager>>,
+    /// Legacy local training buffer (deprecated, kept for backward compatibility)
+    #[allow(deprecated)]
     local_buffer: Arc<RwLock<TrainingBuffer>>,
     /// Secret sharing manager
     secret_sharing: SecretSharingManager,
@@ -317,7 +358,8 @@ pub struct TrainingCoordinator {
     model_weights: Arc<RwLock<Vec<f32>>>,
     /// Share aggregation buffer
     share_buffer: Arc<ShareAggregationBuffer>,
-    /// Fisher matrices per model
+    /// Legacy Fisher matrices per model (deprecated, use CL manager instead)
+    #[allow(deprecated)]
     fisher_matrices: Arc<DashMap<String, FisherMatrix>>,
     /// Training configuration
     config: TrainingConfig,
@@ -334,10 +376,41 @@ impl TrainingCoordinator {
         network_tx: mpsc::Sender<NetworkMessage>,
         total_nodes: usize,
         config: TrainingConfig,
+        cl_manager: Option<Arc<model::ContinualLearningManager>>,
     ) -> Self {
+        #[allow(deprecated)]
         let buffer = TrainingBuffer::new(config.buffer_size, config.replay_ratio);
 
         Self {
+            cl_manager,
+            local_buffer: Arc::new(RwLock::new(buffer)),
+            secret_sharing: SecretSharingManager::new(total_nodes),
+            network_tx,
+            model_weights: Arc::new(RwLock::new(Vec::new())),
+            share_buffer: Arc::new(ShareAggregationBuffer::new()),
+            fisher_matrices: Arc::new(DashMap::new()),
+            config,
+            node_id,
+            current_round: Arc::new(RwLock::new(None)),
+        }
+    }
+
+    /// Create new training coordinator without CL manager (legacy mode)
+    /// 
+    /// Deprecated: Use `new` with cl_manager parameter instead
+    #[deprecated(since = "0.2.0", note = "Use new with cl_manager parameter instead")]
+    #[allow(deprecated)]
+    pub fn new_legacy(
+        node_id: String,
+        network_tx: mpsc::Sender<NetworkMessage>,
+        total_nodes: usize,
+        config: TrainingConfig,
+    ) -> Self {
+        #[allow(deprecated)]
+        let buffer = TrainingBuffer::new(config.buffer_size, config.replay_ratio);
+
+        Self {
+            cl_manager: None,
             local_buffer: Arc::new(RwLock::new(buffer)),
             secret_sharing: SecretSharingManager::new(total_nodes),
             network_tx,
@@ -351,6 +424,8 @@ impl TrainingCoordinator {
     }
 
     /// Called when inference completes - adds to buffer and checks trigger
+    /// 
+    /// Delegates to ContinualLearningManager when available, otherwise uses legacy buffer.
     pub async fn on_inference_complete(
         &self,
         input: Vec<f32>,
@@ -361,6 +436,28 @@ impl TrainingCoordinator {
             return Ok(false);
         }
 
+        // Delegate to CL manager if available
+        if let Some(cl_manager) = self.cl_manager.as_ref() {
+            // Use default model_id for now (can be parameterized in future)
+            let model_id = "default-model";
+            
+            // Record inference in CL manager's buffer
+            if let Err(e) = cl_manager.record_inference(model_id, input, output, loss).await {
+                tracing::warn!("Failed to record inference in CL manager: {}", e);
+                return Ok(false);
+            }
+
+            // Check if buffer is ready via CL manager
+            let is_ready = cl_manager.is_buffer_ready(model_id);
+            
+            if is_ready && self.current_round.read().await.is_none() {
+                return Ok(true); // Signal that training should be triggered
+            }
+            
+            return Ok(false);
+        }
+
+        // Legacy path: use local buffer
         let sample = InferenceSample {
             input,
             output,
@@ -399,6 +496,8 @@ impl TrainingCoordinator {
     }
 
     /// Execute local training and return delta
+    /// 
+    /// When CL manager is available, uses it for EWC loss and Fisher matrix computation.
     pub async fn execute_local_training(
         &self,
         samples: &[InferenceSample],
@@ -429,21 +528,57 @@ impl TrainingCoordinator {
             *weight -= self.config.learning_rate * gradient;
         }
 
-        // Apply EWC regularization if Fisher matrix exists
-        if let Some(fisher) = self.fisher_matrices.get(model_id) {
+        // Apply EWC regularization if CL manager or local Fisher matrix exists
+        let ewc_applied = if let Some(cl_manager) = self.cl_manager.as_ref() {
+            // Use CL manager for EWC loss
             let delta = DeltaComputation::compute_delta(&old_weights, &new_weights);
-            let ewc_penalty = fisher.ewc_loss(&delta, self.config.ewc_lambda);
+            let ewc_penalty = cl_manager.get_ewc_loss(model_id, &delta);
             
-            // Add EWC penalty to weights (simplified)
-            for (i, weight) in new_weights.iter_mut().enumerate() {
-                if i < fisher.diagonal.len() && i < fisher.old_params.len() {
-                    let penalty = self.config.ewc_lambda * fisher.diagonal[i] * (delta[i]);
-                    *weight -= self.config.learning_rate * penalty;
+            if ewc_penalty > 0.0 {
+                // Load Fisher matrix from CL manager
+                match cl_manager.load_fisher(model_id).await {
+                    Ok(Some(fisher)) => {
+                        // Apply EWC penalty using CL manager's Fisher
+                        for (i, weight) in new_weights.iter_mut().enumerate() {
+                            if i < fisher.diagonal.len() && i < fisher.old_params.len() {
+                                let penalty = self.config.ewc_lambda * fisher.diagonal[i] * (delta[i]);
+                                *weight -= self.config.learning_rate * penalty;
+                            }
+                        }
+                        tracing::info!("Applied EWC regularization via CL manager with lambda={}, penalty={}", 
+                            self.config.ewc_lambda, ewc_penalty);
+                        true
+                    }
+                    _ => false,
                 }
+            } else {
+                false
             }
+        } else {
+            // Legacy path: use local Fisher matrices
+            #[allow(deprecated)]
+            if let Some(fisher) = self.fisher_matrices.get(model_id) {
+                let delta = DeltaComputation::compute_delta(&old_weights, &new_weights);
+                let ewc_penalty = fisher.ewc_loss(&delta, self.config.ewc_lambda);
+                
+                // Add EWC penalty to weights (simplified)
+                for (i, weight) in new_weights.iter_mut().enumerate() {
+                    if i < fisher.diagonal.len() && i < fisher.old_params.len() {
+                        let penalty = self.config.ewc_lambda * fisher.diagonal[i] * (delta[i]);
+                        *weight -= self.config.learning_rate * penalty;
+                    }
+                }
 
-            tracing::info!("Applied EWC regularization with lambda={}, penalty={}", 
-                self.config.ewc_lambda, ewc_penalty);
+                tracing::info!("Applied EWC regularization (legacy) with lambda={}, penalty={}", 
+                    self.config.ewc_lambda, ewc_penalty);
+                true
+            } else {
+                false
+            }
+        };
+
+        if !ewc_applied {
+            tracing::debug!("No EWC regularization applied for model {}", model_id);
         }
 
         // Compute delta
@@ -456,6 +591,68 @@ impl TrainingCoordinator {
         }
 
         Ok(delta)
+    }
+
+    /// Compute and store Fisher matrix using CL manager
+    /// 
+    /// Returns the hash of the stored Fisher matrix on success.
+    pub async fn compute_and_store_fisher(
+        &self,
+        model_id: &str,
+    ) -> Result<[u8; 32], TrainingError> {
+        let cl_manager = self.cl_manager.as_ref()
+            .ok_or_else(|| TrainingError::ClManagerNotAvailable)?;
+
+        // Get training samples from CL manager
+        let config = cl_manager.config();
+        let samples = cl_manager.get_training_samples(model_id, config.batch_size);
+        
+        if samples.is_empty() {
+            return Err(TrainingError::NoSamplesAvailable);
+        }
+
+        // Get current model weights
+        let weights = self.model_weights.read().await.clone();
+        
+        if weights.is_empty() {
+            return Err(TrainingError::ModelNotLoaded);
+        }
+
+        // Compute and store Fisher matrix via CL manager
+        match cl_manager.compute_and_store_fisher(model_id, &samples, &weights).await {
+            Ok(hash) => {
+                tracing::info!("Computed and stored Fisher matrix for model {} with hash {}", 
+                    model_id, hex::encode(&hash));
+                Ok(hash)
+            }
+            Err(e) => {
+                tracing::error!("Failed to compute Fisher matrix: {}", e);
+                Err(TrainingError::FisherComputationFailed(e.to_string()))
+            }
+        }
+    }
+
+    /// Persist replay buffer to IPFS and store metadata on-chain
+    /// 
+    /// Returns the (data_hash, ipfs_cid) tuple for reference.
+    pub async fn persist_replay_buffer(
+        &self,
+        model_id: &str,
+    ) -> Result<([u8; 32], String), TrainingError> {
+        let cl_manager = self.cl_manager.as_ref()
+            .ok_or_else(|| TrainingError::ClManagerNotAvailable)?;
+
+        match cl_manager.persist_replay_buffer(model_id).await {
+            Ok((hash, cid)) => {
+                tracing::info!("Persisted replay buffer for model {}: hash={}, cid={}", 
+                    model_id, hex::encode(&hash), cid);
+                Ok((hash, cid))
+            }
+            Err(e) => {
+                tracing::error!("Failed to persist replay buffer: {}", e);
+                Err(TrainingError::ReplayBufferPersistFailed(e.to_string()))
+            }
+        }
     }
 
     /// Distribute delta shares to all peers via secret sharing using P2P request-response
@@ -602,6 +799,7 @@ impl TrainingCoordinator {
     }
 
     /// Compute Fisher matrix for EWC
+    #[allow(deprecated)]
     pub async fn compute_fisher_matrix(
         &self,
         model_id: String,
@@ -646,13 +844,41 @@ impl TrainingCoordinator {
     }
 
     /// Get current buffer size
+    /// 
+    /// Delegates to CL manager when available, otherwise uses legacy buffer.
     pub async fn buffer_size(&self) -> usize {
-        self.local_buffer.read().await.len()
+        if let Some(cl_manager) = self.cl_manager.as_ref() {
+            cl_manager.get_buffer_size("default-model")
+        } else {
+            self.local_buffer.read().await.len()
+        }
+    }
+
+    /// Check if buffer is ready for training
+    /// 
+    /// Delegates to CL manager when available.
+    pub fn is_buffer_ready(&self, model_id: &str) -> bool {
+        if let Some(cl_manager) = self.cl_manager.as_ref() {
+            cl_manager.is_buffer_ready(model_id)
+        } else {
+            // Legacy path - would need async, so return false here
+            // The actual check happens in on_inference_complete
+            false
+        }
     }
 
     /// Sample batch from buffer (public accessor)
+    /// 
+    /// Delegates to CL manager when available, otherwise uses legacy buffer.
     pub async fn sample_from_buffer(&self, n: usize) -> Vec<InferenceSample> {
-        self.local_buffer.read().await.sample_batch(n)
+        if let Some(cl_manager) = self.cl_manager.as_ref() {
+            cl_manager.get_training_samples("default-model", n)
+                .into_iter()
+                .map(|s| s.into())
+                .collect()
+        } else {
+            self.local_buffer.read().await.sample_batch(n)
+        }
     }
 
     /// Get training config
@@ -690,6 +916,12 @@ impl TrainingCoordinator {
     pub async fn are_weights_initialized(&self) -> bool {
         !self.model_weights.read().await.is_empty()
     }
+
+    /// Get current model weights (for continual learning integration)
+    pub async fn get_model_weights(&self) -> Vec<f32> {
+        self.model_weights.read().await.clone()
+    }
+
 }
 
 /// Training error types
@@ -709,14 +941,24 @@ pub enum TrainingError {
     ReconstructionFailed(String),
     #[error("invalid delta magnitude: L2 norm = {0}")]
     InvalidDeltaMagnitude(f32),
+    #[error("continual learning manager not available")]
+    ClManagerNotAvailable,
+    #[error("no samples available for Fisher computation")]
+    NoSamplesAvailable,
+    #[error("Fisher matrix computation failed: {0}")]
+    FisherComputationFailed(String),
+    #[error("replay buffer persistence failed: {0}")]
+    ReplayBufferPersistFailed(String),
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use super::*;
     use tokio::sync::mpsc;
 
     #[test]
+    #[allow(deprecated)]
     fn test_training_buffer() {
         let mut buffer = TrainingBuffer::new(10, 0.01);
         
@@ -769,6 +1011,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(deprecated)]
     async fn test_training_coordinator() {
         let (tx, _rx) = mpsc::channel(100);
         let config = TrainingConfig::default();
@@ -777,6 +1020,7 @@ mod tests {
             tx,
             3,
             config,
+            None, // No CL manager for legacy test
         );
 
         assert!(!coordinator.config.enabled);

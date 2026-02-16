@@ -33,6 +33,8 @@ rand = "0.8"
 toml = "0.8"
 zstd = { workspace = true }
 sha3 = { workspace = true }
+blake3 = "1.5"
+chrono = { workspace = true }
 bytemuck = { version = "1.14", features = ["derive"] }
 
 [dev-dependencies]

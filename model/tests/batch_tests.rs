@@ -115,7 +115,7 @@ fn test_engine(registry: Arc<ModelRegistry>) -> Arc<InferenceEngine> {
     let cache_root = std::env::temp_dir().join(format!("aigen-cache-{}", Uuid::new_v4()));
     let storage = Arc::new(LocalStorage::new(storage_root));
     Arc::new(InferenceEngine::new(
-        registry, storage, cache_root, 10_000_000, 1, None,
+        registry, storage, cache_root, 10_000_000, 1, None, None, None,
     ))
 }
 

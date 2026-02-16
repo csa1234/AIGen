@@ -7,6 +7,7 @@ use consensus::validator::{ValidatorRegistry, select_validators_weighted};
 use consensus::poi::{PoIProof, calculate_poi_reward, verify_distributed_task};
 use network::protocol::NetworkMessage;
 use model::registry::ModelRegistry;
+use model::ContinualLearningManager;
 use blockchain_core::types::Amount;
 use blockchain_core::state::ChainState;
 use blockchain_core::{RewardTx, RewardType};
@@ -52,6 +53,8 @@ pub struct DynamicScheduler {
     pending_reward_count: Arc<RwLock<u32>>,
     ceo_secret_key: Option<SecretKey>,
     training_coordinator: Arc<crate::training::TrainingCoordinator>,
+    /// Continual Learning manager for unified buffer and Fisher matrix handling
+    cl_manager: Option<Arc<ContinualLearningManager>>,
     training_enabled: Arc<RwLock<bool>>,
 }
 
@@ -64,6 +67,7 @@ impl DynamicScheduler {
         local_validator_address: String,
         registry: Arc<ModelRegistry>,
         chain_state: Arc<ChainState>,
+        cl_manager: Option<Arc<ContinualLearningManager>>,
     ) -> Self {
         // Load CEO secret key from file if available
         let ceo_secret_key = Self::load_ceo_key();
@@ -71,13 +75,14 @@ impl DynamicScheduler {
             eprintln!("Warning: CEO key not loaded. Reward transactions will not be signed.");
         }
 
-        // Initialize training coordinator (disabled by default until configured)
+        // Initialize training coordinator with CL manager
         let training_config = crate::training::TrainingConfig::default();
         let training_coordinator = Arc::new(crate::training::TrainingCoordinator::new(
             local_validator_address.clone(),
             network_tx.clone(),
             3, // Default to 3 nodes for secret sharing
             training_config,
+            cl_manager.clone(),
         ));
 
         Self {
@@ -93,6 +98,7 @@ impl DynamicScheduler {
             pending_reward_count: Arc::new(RwLock::new(0)),
             ceo_secret_key,
             training_coordinator,
+            cl_manager,
             training_enabled: Arc::new(RwLock::new(true)),
         }
     }
@@ -846,9 +852,17 @@ impl DynamicScheduler {
                 continue;
             }
 
-            // Check if buffer is ready for training
-            let config = self.training_coordinator.config().clone();
-            if self.training_coordinator.buffer_size().await >= config.trigger_threshold {
+            // Check if buffer is ready for training via CL manager if available
+            let buffer_ready = if let Some(cl_manager) = self.cl_manager.as_ref() {
+                // Use CL manager's buffer readiness check
+                cl_manager.is_buffer_ready("default-model")
+            } else {
+                // Fall back to training coordinator's buffer check
+                let config = self.training_coordinator.config().clone();
+                self.training_coordinator.buffer_size().await >= config.trigger_threshold
+            };
+
+            if buffer_ready {
                 if let Err(e) = self.execute_training_burst().await {
                     eprintln!("Training burst failed: {}", e);
                 }
@@ -869,8 +883,8 @@ impl DynamicScheduler {
         }
 
         let config = self.training_coordinator.config().clone();
-        
-        // Sample batch from buffer
+
+        // Sample batch from buffer (via CL manager if available)
         let samples = self.training_coordinator.sample_from_buffer(config.batch_size).await;
 
         if samples.is_empty() {
@@ -886,9 +900,43 @@ impl DynamicScheduler {
 
         println!("Training burst triggered for round {}, model {}", round_id, model_id);
 
-        // Execute local training
+        // Execute local training (uses CL manager for EWC if available)
         let delta = self.training_coordinator.execute_local_training(&samples, &model_id).await
             .map_err(|e| SchedulerError::ChainStateError(e.to_string()))?;
+
+        // Compute and store Fisher matrix using CL manager
+        let fisher_hash = if self.cl_manager.is_some() {
+            match self.training_coordinator.compute_and_store_fisher(&model_id).await {
+                Ok(hash) => {
+                    tracing::info!("Computed and stored Fisher matrix with hash {} for model {}",
+                        hex::encode(&hash), model_id);
+                    hash
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to compute and store Fisher matrix: {}", e);
+                    [0u8; 32]
+                }
+            }
+        } else {
+            [0u8; 32]
+        };
+
+        // Persist replay buffer to IPFS and store metadata on-chain
+        let replay_buffer_hash = if self.cl_manager.is_some() {
+            match self.training_coordinator.persist_replay_buffer(&model_id).await {
+                Ok((hash, cid)) => {
+                    tracing::info!("Persisted replay buffer for model {}: hash={}, cid={}",
+                        model_id, hex::encode(&hash), cid);
+                    hash
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to persist replay buffer: {}", e);
+                    [0u8; 32]
+                }
+            }
+        } else {
+            [0u8; 32]
+        };
 
         // Distribute delta shares to peers
         self.training_coordinator.distribute_delta_shares(delta, round_id).await
@@ -902,10 +950,39 @@ impl DynamicScheduler {
         // 5. Broadcast training proof
         // For now, this is handled by network message handlers
 
+        // Record training completion with Fisher and replay buffer hashes
+        // This would typically be called after receiving all aggregated shares
+        // For now, we record immediately with the computed hashes
+        let participants = vec![self.local_validator_address.clone()];
+        
+        // Record training round with hashes
+        let training_round = blockchain_core::state::TrainingRound {
+            round_id: round_id.to_string(),
+            participants: participants.clone(),
+            delta_hash: [0u8; 32], // Would be computed from actual delta
+            fisher_hash,
+            replay_buffer_hash,
+            timestamp: chrono::Utc::now().timestamp(),
+            model_id: model_id.clone(),
+            sample_count: samples.len() as u64,
+            learning_rate: 1, // 1e-6 scaled
+            ewc_lambda: 40,   // 0.4 scaled by 100
+            status: 1,        // Completed
+        };
+
+        self.chain_state.record_training_round(training_round)
+            .map_err(|e| SchedulerError::ChainStateError(e.to_string()))?;
+
+        tracing::info!("Training burst completed for round {}: fisher_hash={}, replay_buffer_hash={}",
+            round_id, hex::encode(&fisher_hash), hex::encode(&replay_buffer_hash));
+
         Ok(())
     }
 
     /// Handle post-inference training trigger
+    /// 
+    /// Records inference sample for continual learning and triggers training when buffer is ready.
+    /// Delegates to ContinualLearningManager when available for unified buffer management.
     pub async fn handle_training_after_inference(
         &self,
         task_input: Vec<f32>,
@@ -916,15 +993,31 @@ impl DynamicScheduler {
             return Ok(());
         }
 
-        // Add to training buffer
+        // Use CL manager for unified buffer management when available
+        if let Some(cl_manager) = self.cl_manager.as_ref() {
+            // Record inference directly in CL manager's buffer
+            let model_id = "default-model";
+            if let Err(e) = cl_manager.record_inference(model_id, task_input, task_output, task_loss).await {
+                tracing::warn!("Failed to record inference in CL manager: {}", e);
+            } else {
+                tracing::debug!("Recorded inference for model {} in CL buffer", model_id);
+                
+                // Check if buffer is ready via CL manager
+                if cl_manager.is_buffer_ready(model_id) {
+                    tracing::info!("Training buffer ready for model {} - burst will be triggered by training loop", model_id);
+                }
+            }
+            return Ok(());
+        }
+
+        // Legacy path: Use TrainingCoordinator for buffer management
         let should_trigger = self.training_coordinator
-            .on_inference_complete(task_input, task_output, task_loss)
+            .on_inference_complete(task_input.clone(), task_output.clone(), task_loss)
             .await
             .map_err(|e| SchedulerError::ChainStateError(e.to_string()))?;
 
         if should_trigger {
-            // Buffer is ready, training loop will pick it up
-            tracing::info!("Training buffer ready - burst will be triggered by training loop");
+            tracing::info!("Training buffer ready (legacy path) - burst will be triggered by training loop");
         }
 
         Ok(())
@@ -945,12 +1038,13 @@ impl DynamicScheduler {
             *entry_amount = Amount::new(entry_amount.value().saturating_add(reward_per_node.value()));
         }
 
-        // Record training round on-chain
+        // Record training round on-chain with all required fields
         let training_round = blockchain_core::state::TrainingRound {
             round_id: round_id.to_string(),
             participants,
             delta_hash: [0u8; 32], // Would be computed from actual delta
             fisher_hash: [0u8; 32], // Would be computed from Fisher matrix
+            replay_buffer_hash: [0u8; 32], // Would be computed from replay buffer
             timestamp: chrono::Utc::now().timestamp(),
             model_id: "default".to_string(),
             sample_count: 128,

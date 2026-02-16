@@ -48,6 +48,8 @@ async fn test_verification_cache_roundtrip() {
         (size as usize) * 2,
         1,
         None,
+        None,
+        None,
     );
     let cache = VerificationCache::new(8);
 
@@ -297,6 +299,8 @@ async fn test_load_model_from_shards() {
         (size as usize) * 2,
         1,
         None,
+        None,
+        None,
     );
 
     let model = engine
@@ -321,6 +325,8 @@ async fn test_inference_execution() {
         harness.cache_dir(),
         (size as usize) * 2,
         1,
+        None,
+        None,
         None,
     );
 
@@ -349,6 +355,8 @@ async fn test_cache_hit_miss() {
         harness.cache_dir(),
         (size as usize) * 2,
         1,
+        None,
+        None,
         None,
     );
 
@@ -393,6 +401,8 @@ async fn test_lru_eviction() {
         limit,
         1,
         None,
+        None,
+        None,
     );
 
     engine
@@ -436,6 +446,8 @@ async fn test_core_model_protection() {
         limit,
         1,
         None,
+        None,
+        None,
     );
 
     engine
@@ -472,6 +484,8 @@ async fn test_concurrent_inference() {
         harness.cache_dir(),
         (size as usize) * 2,
         1,
+        None,
+        None,
         None,
     ));
 
@@ -510,6 +524,8 @@ async fn test_shutdown_blocks_inference() {
         (size as usize) * 2,
         1,
         None,
+        None,
+        None,
     );
 
     let command = signed_shutdown_command(1);
@@ -539,6 +555,8 @@ async fn test_metrics_tracking() {
         harness.cache_dir(),
         (size as usize) * 2,
         1,
+        None,
+        None,
         None,
     );
 

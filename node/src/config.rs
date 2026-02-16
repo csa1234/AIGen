@@ -72,6 +72,27 @@ impl Default for TrainingConfig {
     }
 }
 
+/// Continual learning configuration for federated continual learning
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct ContinualLearningConfig {
+    pub enabled: bool,
+    pub replay_ratio: f32,           // Default: 0.01 (1%)
+    pub ewc_lambda: f32,             // Default: 0.4
+    pub fisher_update_interval: usize, // Default: 10
+}
+
+impl Default for ContinualLearningConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            replay_ratio: 0.01,
+            ewc_lambda: 0.4,
+            fisher_update_interval: 10,
+        }
+    }
+}
+
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct NodeConfiguration {
     pub node_id: String,
@@ -92,6 +113,8 @@ pub struct NodeConfiguration {
     pub distributed: DistributedInferenceConfig,
     #[serde(default)]
     pub training: TrainingConfig,
+    #[serde(default)]
+    pub continual_learning: ContinualLearningConfig,
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -617,6 +640,7 @@ impl Default for NodeConfiguration {
             keypair_path: crate::keypair::default_keypair_path(&data_dir),
             distributed: DistributedInferenceConfig::default(),
             training: TrainingConfig::default(),
+            continual_learning: ContinualLearningConfig::default(),
         }
     }
 }

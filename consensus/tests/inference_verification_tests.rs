@@ -330,6 +330,8 @@ async fn setup_engine() -> Arc<InferenceEngine> {
                 (size as usize) * 2,
                 1,
                 None,
+                None,
+                None,
             ));
             let _ = set_global_inference_engine(engine.clone());
             let _ = set_inference_verification_config(InferenceVerificationConfig {

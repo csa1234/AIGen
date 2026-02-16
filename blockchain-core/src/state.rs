@@ -97,6 +97,8 @@ pub struct TrainingRound {
     pub delta_hash: [u8; 32],
     /// Hash of Fisher matrix stored in IPFS
     pub fisher_hash: [u8; 32],
+    /// Hash of replay buffer stored in IPFS
+    pub replay_buffer_hash: [u8; 32],
     /// Timestamp when round was completed
     pub timestamp: i64,
     /// Model ID that was trained
@@ -122,6 +124,23 @@ pub struct FisherMatrixState {
     pub data_hash: [u8; 32],
     /// Timestamp when computed
     pub computed_at: i64,
+    /// Block height when recorded
+    pub block_height: u64,
+}
+
+/// Replay buffer metadata for continual learning
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ReplayBufferState {
+    /// Model ID this replay buffer belongs to
+    pub model_id: String,
+    /// IPFS hash where the full replay buffer is stored
+    pub ipfs_hash: String,
+    /// Hash of the buffer data for verification
+    pub data_hash: [u8; 32],
+    /// Timestamp when persisted
+    pub persisted_at: i64,
+    /// Number of samples in the buffer
+    pub sample_count: usize,
     /// Block height when recorded
     pub block_height: u64,
 }
@@ -167,7 +186,7 @@ pub enum StakeRole {
     Both,       // MIN_STAKE_TRAINING = 5000
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ChainStateSnapshot {
     pub accounts: BTreeMap<Address, AccountState>,
     pub subscriptions: BTreeMap<Address, SubscriptionState>,
@@ -178,6 +197,7 @@ pub struct ChainStateSnapshot {
     pub constitution: Option<ConstitutionState>,
     pub training_rounds: BTreeMap<String, TrainingRound>,
     pub fisher_matrices: BTreeMap<String, FisherMatrixState>,
+    pub replay_buffers: BTreeMap<String, ReplayBufferState>,
 }
 
 #[derive(Debug, Default)]
@@ -192,6 +212,7 @@ pub struct ChainState {
     constitution: RwLock<Option<ConstitutionState>>,
     training_rounds: RwLock<BTreeMap<String, TrainingRound>>,
     fisher_matrices: RwLock<BTreeMap<String, FisherMatrixState>>,
+    replay_buffers: RwLock<BTreeMap<String, ReplayBufferState>>,
 }
 
 impl Clone for ChainState {
@@ -206,6 +227,7 @@ impl Clone for ChainState {
         let constitution = self.constitution.read().clone();
         let training_rounds = self.training_rounds.read().clone();
         let fisher_matrices = self.fisher_matrices.read().clone();
+        let replay_buffers = self.replay_buffers.read().clone();
         ChainState {
             accounts: RwLock::new(accounts),
             subscriptions: RwLock::new(subscriptions),
@@ -217,6 +239,7 @@ impl Clone for ChainState {
             constitution: RwLock::new(constitution),
             training_rounds: RwLock::new(training_rounds),
             fisher_matrices: RwLock::new(fisher_matrices),
+            replay_buffers: RwLock::new(replay_buffers),
         }
     }
 }
@@ -234,6 +257,7 @@ impl ChainState {
             constitution: RwLock::new(None),
             training_rounds: RwLock::new(BTreeMap::new()),
             fisher_matrices: RwLock::new(BTreeMap::new()),
+            replay_buffers: RwLock::new(BTreeMap::new()),
         }
     }
 
@@ -248,6 +272,7 @@ impl ChainState {
             constitution: self.constitution.read().clone(),
             training_rounds: self.training_rounds.read().clone(),
             fisher_matrices: self.fisher_matrices.read().clone(),
+            replay_buffers: self.replay_buffers.read().clone(),
         }
     }
 
@@ -261,6 +286,7 @@ impl ChainState {
         *self.constitution.write() = snapshot.constitution;
         *self.training_rounds.write() = snapshot.training_rounds;
         *self.fisher_matrices.write() = snapshot.fisher_matrices;
+        *self.replay_buffers.write() = snapshot.replay_buffers;
     }
 
     /// Set constitution state (CEO-only operation)
@@ -1022,6 +1048,43 @@ impl ChainState {
             .read()
             .get(model_id)
             .map(|f| f.data_hash)
+    }
+
+    /// Record a Fisher matrix for continual learning (internal method)
+    pub fn store_fisher_matrix_internal(&self, model_id: String, ipfs_hash: String, data_hash: [u8; 32], timestamp: i64) {
+        let state = FisherMatrixState {
+            model_id,
+            ipfs_hash,
+            data_hash,
+            computed_at: timestamp,
+            block_height: 0,
+        };
+        let mut fisher_matrices = self.fisher_matrices.write();
+        fisher_matrices.insert(state.model_id.clone(), state);
+    }
+
+    /// Get Fisher matrix metadata for continual learning
+    pub fn get_fisher_matrix_for_cl(&self, model_id: &str) -> Option<FisherMatrixState> {
+        self.fisher_matrices.read().get(model_id).cloned()
+    }
+
+    /// Record a replay buffer for continual learning (internal method)
+    pub fn store_replay_buffer_metadata(&self, model_id: String, ipfs_hash: String, data_hash: [u8; 32], timestamp: i64, sample_count: usize) {
+        let state = ReplayBufferState {
+            model_id,
+            ipfs_hash,
+            data_hash,
+            persisted_at: timestamp,
+            sample_count,
+            block_height: 0,
+        };
+        let mut replay_buffers = self.replay_buffers.write();
+        replay_buffers.insert(state.model_id.clone(), state);
+    }
+
+    /// Get replay buffer metadata for continual learning
+    pub fn get_replay_buffer_metadata(&self, model_id: &str) -> Option<ReplayBufferState> {
+        self.replay_buffers.read().get(model_id).cloned()
     }
 }
 

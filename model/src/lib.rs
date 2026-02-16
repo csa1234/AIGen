@@ -16,6 +16,7 @@
 
 pub mod ads;
 pub mod batch;
+pub mod continual_learning;
 pub mod inference;
 pub mod registry;
 pub mod sharding;
@@ -52,3 +53,9 @@ pub use verification::{
     VerificationCache, VerificationError, DEFAULT_VERIFICATION_CACHE_CAPACITY,
     DEFAULT_VERIFICATION_EPSILON,
 };
+pub use continual_learning::{
+    ContinualLearningConfig, ContinualLearningError, ReplayBuffer,
+    FisherMatrix, InferenceSample, ContinualLearningChainState,
+};
+pub type ContinualLearningManager = continual_learning::ContinualLearningManager<blockchain_core::state::ChainState, crate::storage::IpfsStorage>;
+pub use blockchain_core::state::FisherMatrixState;
