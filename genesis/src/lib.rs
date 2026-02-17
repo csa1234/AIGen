@@ -19,6 +19,7 @@ pub mod benevolence;
 pub mod config;
 pub mod constitution;
 pub mod governance_config;
+pub mod safety_oracle;
 pub mod shutdown;
 pub mod types;
 pub mod veto;
@@ -51,12 +52,23 @@ pub use crate::constitution::{
     MAX_SCAN_LENGTH,
 };
 pub use crate::governance_config::GovernanceConfig;
+pub use crate::safety_oracle::{
+    SafetyOracleConfig,
+    SafetyVote,
+    SafetyOracleResult,
+    SafetyOracleError,
+    evaluate_safety,
+    initialize_safety_oracle,
+    get_safety_oracle_config,
+};
 pub use crate::shutdown::{
     check_shutdown, emergency_shutdown, is_shutdown, shutdown_registry, ShutdownRegistry,
 };
-pub use crate::types::{CeoSignature, GenesisError, ShutdownCommand, SipProposal, WalletAddress};
+pub use crate::types::{CeoSignature, GenesisError, ShutdownCommand, SipProposal, WalletAddress, SipStatus};
 pub use crate::veto::{
     approve_sip, can_deploy_sip, check_and_auto_approve, get_sip_status, submit_sip, veto_sip,
-    trigger_auto_approval_check, AutoApproveConfig, SipRegistry, SipStatus, ChainStateProvider,
-    check_model_output_compliance,
+    trigger_auto_approval_check, AutoApproveConfig, SipRegistry, ChainStateProvider,
+    check_model_output_compliance, CEO_VETO_WINDOW_SECONDS, check_ceo_veto_window,
+    process_expired_veto_windows, verify_poi_training_proof, get_rejection_logs,
+    list_pending_ceo_window, TrainingRoundInfo, ModelApprovalRecord, G8Recommendation,
 };

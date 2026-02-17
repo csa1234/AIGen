@@ -13,6 +13,7 @@
 pub mod block;
 pub mod chain;
 pub mod crypto;
+pub mod g8_scheduler;
 pub mod state;
 pub mod transaction;
 pub mod types;

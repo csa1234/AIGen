@@ -47,6 +47,21 @@ fn validate_wallet_address(addr: &str) -> Result<(), GenesisError> {
     Ok(())
 }
 
+/// Status of a SIP proposal in the governance lifecycle.
+#[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq, Hash)]
+pub enum SipStatus {
+    /// Proposal is pending review and voting
+    Pending,
+    /// Proposal has been approved (either manually by CEO or auto-approved with expired veto window)
+    Approved,
+    /// Proposal has been vetoed by CEO
+    Vetoed,
+    /// Proposal has been deployed to the network
+    Deployed,
+    /// Proposal was auto-approved by staker consensus, awaiting CEO 24h veto window expiration
+    AutoApprovedPendingCeoWindow,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SipProposal {
     pub proposal_hash: [u8; 32],
@@ -63,15 +78,42 @@ pub struct SipProposal {
     pub constitution_version: Option<u32>, // NEW: Version of constitution used for review
     pub benevolence_score: Option<f32>, // NEW: ML-based benevolence scoring (0.0-1.0)
     pub benevolence_model_version: Option<String>, // NEW: Version of benevolence model used
+    pub safety_oracle_votes: Option<String>, // NEW: JSON-serialized SafetyOracleResult
+    /// SHA3-256 hash of the training proof JSON for PoI validation
+    pub training_proof_hash: Option<[u8; 32]>,
+    /// UUID reference to on-chain TrainingRound in ChainState
+    pub training_round_id: Option<String>,
+    /// JSON string of the training proof for PoI validation
+    pub training_proof_json: Option<String>,
+    /// Model ID associated with this proposal for PoI validation
+    pub model_id: Option<String>,
+    /// Unix timestamp when auto-approval occurred
+    pub auto_approved_at: Option<i64>,
+    /// Unix timestamp (auto_approved_at + 24h) for CEO veto window expiration
+    pub ceo_veto_deadline: Option<i64>,
+    /// Detailed rejection reasons for CEO review (constitutional violations, benevolence failures, oracle rejections, PoI failures)
+    pub rejection_logs: Vec<String>,
+    /// Current status of the proposal
+    pub status: SipStatus,
 }
 
 impl SipProposal {
+    /// Creates the message to be signed for approval.
+    /// Includes training proof hash if present for cryptographic verification.
     pub fn message_to_sign_for_approval(&self) -> Vec<u8> {
-        format!("sip_approve:{}:{:x?}", self.proposal_id, self.proposal_hash).into_bytes()
+        let training_proof_part = self.training_proof_hash
+            .map(|h| format!(":{:x?}", h))
+            .unwrap_or_default();
+        format!("sip_approve:{}:{:x?}{}", self.proposal_id, self.proposal_hash, training_proof_part).into_bytes()
     }
 
+    /// Creates the message to be signed for veto.
+    /// Includes training proof hash if present for cryptographic verification.
     pub fn message_to_sign_for_veto(&self) -> Vec<u8> {
-        format!("sip_veto:{}:{:x?}", self.proposal_id, self.proposal_hash).into_bytes()
+        let training_proof_part = self.training_proof_hash
+            .map(|h| format!(":{:x?}", h))
+            .unwrap_or_default();
+        format!("sip_veto:{}:{:x?}{}", self.proposal_id, self.proposal_hash, training_proof_part).into_bytes()
     }
 }
 

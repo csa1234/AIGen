@@ -9,6 +9,30 @@ fn default_voting_period() -> u64 {
     168 // 7 days default
 }
 
+fn default_g8_min_stake_percentage() -> f64 {
+    0.1 // 0.1% of supply
+}
+
+fn default_g8_term_years() -> u32 {
+    2
+}
+
+fn default_g8_cooloff_years() -> u32 {
+    1
+}
+
+fn default_g8_quorum() -> u8 {
+    5
+}
+
+fn default_g8_compensation_base() -> u64 {
+    10_000 // AIGEN tokens
+}
+
+fn default_g8_compensation_bonus() -> u64 {
+    2_000 // AIGEN tokens
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GovernanceConfig {
@@ -17,6 +41,24 @@ pub struct GovernanceConfig {
     pub min_participation_percentage: f64,
     #[serde(default = "default_voting_period")]
     pub voting_period_hours: u64,
+    #[serde(default = "default_g8_enabled")]
+    pub g8_enabled: bool,
+    #[serde(default = "default_g8_min_stake_percentage")]
+    pub g8_min_stake_percentage: f64,
+    #[serde(default = "default_g8_term_years")]
+    pub g8_term_years: u32,
+    #[serde(default = "default_g8_cooloff_years")]
+    pub g8_cooloff_years: u32,
+    #[serde(default = "default_g8_quorum")]
+    pub g8_quorum: u8,
+    #[serde(default = "default_g8_compensation_base")]
+    pub g8_compensation_base: u64,
+    #[serde(default = "default_g8_compensation_bonus")]
+    pub g8_compensation_bonus: u64,
+}
+
+fn default_g8_enabled() -> bool {
+    true
 }
 
 impl Default for GovernanceConfig {
@@ -26,6 +68,13 @@ impl Default for GovernanceConfig {
             min_approval_percentage: 80.0,
             min_participation_percentage: 50.0,
             voting_period_hours: 168, // 7 days
+            g8_enabled: true,
+            g8_min_stake_percentage: 0.1,
+            g8_term_years: 2,
+            g8_cooloff_years: 1,
+            g8_quorum: 5,
+            g8_compensation_base: 10_000,
+            g8_compensation_bonus: 2_000,
         }
     }
 }

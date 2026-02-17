@@ -507,6 +507,369 @@ pub fn hash_claim_stake_tx(tx: &ClaimStakeTx) -> TxHash {
     TxHash(hasher.finalize().into())
 }
 
+/// Register as G8 Safety Committee candidate
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RegisterG8CandidateTx {
+    pub candidate: String,
+    pub background_check_hash: [u8; 32],
+    pub expertise_statement: String,
+    pub timestamp: Timestamp,
+    pub signature: Signature,
+    pub tx_hash: TxHash,
+}
+
+impl RegisterG8CandidateTx {
+    pub fn new(
+        candidate: String,
+        background_check_hash: [u8; 32],
+        expertise_statement: String,
+        timestamp: i64,
+    ) -> Result<Self, GenesisError> {
+        check_shutdown()?;
+        validate_address(&candidate)?;
+
+        if expertise_statement.len() > 500 {
+            return Err(GenesisError::InvalidAddress("Expertise statement must be <= 500 chars".to_string()));
+        }
+
+        let mut tx = RegisterG8CandidateTx {
+            candidate,
+            background_check_hash,
+            expertise_statement,
+            timestamp: Timestamp(timestamp),
+            signature: Signature::from([0u8; 64]),
+            tx_hash: TxHash([0u8; 32]),
+        };
+        tx.update_hash();
+        Ok(tx)
+    }
+
+    fn update_hash(&mut self) {
+        self.tx_hash = hash_register_g8_tx(self);
+    }
+
+    pub fn sign(mut self, secret_key: &SecretKey) -> Self {
+        let signature = sign_message(self.tx_hash.0.as_ref(), secret_key);
+        self.signature = signature;
+        self
+    }
+
+    pub fn validate(&self) -> Result<(), BlockchainError> {
+        validate_address(&self.candidate)?;
+        if self.expertise_statement.len() > 500 {
+            return Err(BlockchainError::InvalidTransaction);
+        }
+        if self.timestamp.value() < 0 {
+            return Err(BlockchainError::InvalidTimestamp);
+        }
+        Ok(())
+    }
+}
+
+pub fn hash_register_g8_tx(tx: &RegisterG8CandidateTx) -> TxHash {
+    use sha3::{Digest, Sha3_256};
+    let mut hasher = Sha3_256::new();
+    hasher.update(tx.candidate.as_bytes());
+    hasher.update(&tx.background_check_hash);
+    hasher.update(tx.expertise_statement.as_bytes());
+    hasher.update(&tx.timestamp.value().to_le_bytes());
+    TxHash(hasher.finalize().into())
+}
+
+/// Vote for G8 candidate
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct VoteG8Tx {
+    pub voter: String,
+    pub election_id: String,
+    pub candidate_address: String,
+    pub timestamp: Timestamp,
+    pub signature: Signature,
+    pub tx_hash: TxHash,
+}
+
+impl VoteG8Tx {
+    pub fn new(
+        voter: String,
+        election_id: String,
+        candidate_address: String,
+        timestamp: i64,
+    ) -> Result<Self, GenesisError> {
+        check_shutdown()?;
+        validate_address(&voter)?;
+        validate_address(&candidate_address)?;
+
+        let mut tx = VoteG8Tx {
+            voter,
+            election_id,
+            candidate_address,
+            timestamp: Timestamp(timestamp),
+            signature: Signature::from([0u8; 64]),
+            tx_hash: TxHash([0u8; 32]),
+        };
+        tx.update_hash();
+        Ok(tx)
+    }
+
+    fn update_hash(&mut self) {
+        self.tx_hash = hash_vote_g8_tx(self);
+    }
+
+    pub fn sign(mut self, secret_key: &SecretKey) -> Self {
+        let signature = sign_message(self.tx_hash.0.as_ref(), secret_key);
+        self.signature = signature;
+        self
+    }
+
+    pub fn validate(&self) -> Result<(), BlockchainError> {
+        validate_address(&self.voter)?;
+        validate_address(&self.candidate_address)?;
+        if self.timestamp.value() < 0 {
+            return Err(BlockchainError::InvalidTimestamp);
+        }
+        Ok(())
+    }
+}
+
+pub fn hash_vote_g8_tx(tx: &VoteG8Tx) -> TxHash {
+    use sha3::{Digest, Sha3_256};
+    let mut hasher = Sha3_256::new();
+    hasher.update(tx.voter.as_bytes());
+    hasher.update(tx.election_id.as_bytes());
+    hasher.update(tx.candidate_address.as_bytes());
+    hasher.update(&tx.timestamp.value().to_le_bytes());
+    TxHash(hasher.finalize().into())
+}
+
+/// Record G8 meeting (CEO-signed)
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RecordG8MeetingTx {
+    pub meeting_id: String,
+    pub attendees: Vec<String>,
+    pub minutes_ipfs_hash: String,
+    pub timestamp: Timestamp,
+    pub ceo_signature: Option<CeoSignature>,
+    pub tx_hash: TxHash,
+}
+
+impl RecordG8MeetingTx {
+    pub fn new(
+        meeting_id: String,
+        attendees: Vec<String>,
+        minutes_ipfs_hash: String,
+        timestamp: i64,
+    ) -> Result<Self, GenesisError> {
+        check_shutdown()?;
+
+        let mut tx = RecordG8MeetingTx {
+            meeting_id,
+            attendees,
+            minutes_ipfs_hash,
+            timestamp: Timestamp(timestamp),
+            ceo_signature: None,
+            tx_hash: TxHash([0u8; 32]),
+        };
+        tx.update_hash();
+        Ok(tx)
+    }
+
+    fn update_hash(&mut self) {
+        self.tx_hash = hash_g8_meeting_tx(self);
+    }
+
+    pub fn sign_with_ceo(mut self, ceo_signature: CeoSignature) -> Self {
+        self.ceo_signature = Some(ceo_signature);
+        self
+    }
+
+    pub fn validate(&self) -> Result<(), BlockchainError> {
+        for attendee in &self.attendees {
+            validate_address(attendee)?;
+        }
+        if self.timestamp.value() < 0 {
+            return Err(BlockchainError::InvalidTimestamp);
+        }
+        Ok(())
+    }
+}
+
+impl CeoTransactable for RecordG8MeetingTx {
+    fn sender_address(&self) -> &str {
+        CEO_WALLET
+    }
+
+    fn is_priority(&self) -> bool {
+        true
+    }
+
+    fn ceo_signature(&self) -> Option<&CeoSignature> {
+        self.ceo_signature.as_ref()
+    }
+
+    fn message_to_sign(&self) -> Vec<u8> {
+        self.tx_hash.0.to_vec()
+    }
+}
+
+pub fn hash_g8_meeting_tx(tx: &RecordG8MeetingTx) -> TxHash {
+    use sha3::{Digest, Sha3_256};
+    let mut hasher = Sha3_256::new();
+    hasher.update(tx.meeting_id.as_bytes());
+    for attendee in &tx.attendees {
+        hasher.update(attendee.as_bytes());
+    }
+    hasher.update(tx.minutes_ipfs_hash.as_bytes());
+    hasher.update(&tx.timestamp.value().to_le_bytes());
+    TxHash(hasher.finalize().into())
+}
+
+/// Remove G8 member (CEO-signed)
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RemoveG8MemberTx {
+    pub member_address: String,
+    pub reason: String,
+    pub timestamp: Timestamp,
+    pub ceo_signature: Option<CeoSignature>,
+    pub tx_hash: TxHash,
+}
+
+impl RemoveG8MemberTx {
+    pub fn new(
+        member_address: String,
+        reason: String,
+        timestamp: i64,
+    ) -> Result<Self, GenesisError> {
+        check_shutdown()?;
+        validate_address(&member_address)?;
+
+        if reason.len() < 50 {
+            return Err(GenesisError::InvalidAddress("Removal reason must be >= 50 chars".to_string()));
+        }
+
+        let mut tx = RemoveG8MemberTx {
+            member_address,
+            reason,
+            timestamp: Timestamp(timestamp),
+            ceo_signature: None,
+            tx_hash: TxHash([0u8; 32]),
+        };
+        tx.update_hash();
+        Ok(tx)
+    }
+
+    fn update_hash(&mut self) {
+        self.tx_hash = hash_remove_g8_tx(self);
+    }
+
+    pub fn sign_with_ceo(mut self, ceo_signature: CeoSignature) -> Self {
+        self.ceo_signature = Some(ceo_signature);
+        self
+    }
+
+    pub fn validate(&self) -> Result<(), BlockchainError> {
+        validate_address(&self.member_address)?;
+        if self.reason.len() < 50 {
+            return Err(BlockchainError::InvalidTransaction);
+        }
+        if self.timestamp.value() < 0 {
+            return Err(BlockchainError::InvalidTimestamp);
+        }
+        Ok(())
+    }
+}
+
+impl CeoTransactable for RemoveG8MemberTx {
+    fn sender_address(&self) -> &str {
+        CEO_WALLET
+    }
+
+    fn is_priority(&self) -> bool {
+        true
+    }
+
+    fn ceo_signature(&self) -> Option<&CeoSignature> {
+        self.ceo_signature.as_ref()
+    }
+
+    fn message_to_sign(&self) -> Vec<u8> {
+        self.tx_hash.0.to_vec()
+    }
+}
+
+pub fn hash_remove_g8_tx(tx: &RemoveG8MemberTx) -> TxHash {
+    use sha3::{Digest, Sha3_256};
+    let mut hasher = Sha3_256::new();
+    hasher.update(tx.member_address.as_bytes());
+    hasher.update(tx.reason.as_bytes());
+    hasher.update(&tx.timestamp.value().to_le_bytes());
+    TxHash(hasher.finalize().into())
+}
+
+/// BlockTransaction enum wraps all transaction types for inclusion in blocks
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum BlockTransaction {
+    /// Standard value transfer transaction
+    Transfer(Transaction),
+    /// Reward distribution transaction (CEO-signed)
+    Reward(RewardTx),
+    /// Stake tokens for validator/compute participation
+    Stake(StakeTx),
+    /// Initiate unstaking with cooldown
+    Unstake(UnstakeTx),
+    /// Claim unstaked tokens after cooldown
+    ClaimStake(ClaimStakeTx),
+    /// Register as G8 Safety Committee candidate
+    RegisterG8Candidate(RegisterG8CandidateTx),
+    /// Vote for G8 candidate
+    VoteG8(VoteG8Tx),
+    /// Record G8 meeting (CEO-signed)
+    RecordG8Meeting(RecordG8MeetingTx),
+    /// Remove G8 member (CEO-signed)
+    RemoveG8Member(RemoveG8MemberTx),
+}
+
+impl BlockTransaction {
+    /// Get the transaction hash for this block transaction
+    pub fn tx_hash(&self) -> TxHash {
+        match self {
+            BlockTransaction::Transfer(tx) => tx.tx_hash,
+            BlockTransaction::Reward(tx) => tx.tx_hash,
+            BlockTransaction::Stake(tx) => tx.tx_hash,
+            BlockTransaction::Unstake(tx) => tx.tx_hash,
+            BlockTransaction::ClaimStake(tx) => tx.tx_hash,
+            BlockTransaction::RegisterG8Candidate(tx) => tx.tx_hash,
+            BlockTransaction::VoteG8(tx) => tx.tx_hash,
+            BlockTransaction::RecordG8Meeting(tx) => tx.tx_hash,
+            BlockTransaction::RemoveG8Member(tx) => tx.tx_hash,
+        }
+    }
+
+    /// Validate the transaction
+    pub fn validate(&self) -> Result<(), BlockchainError> {
+        match self {
+            BlockTransaction::Transfer(tx) => tx.validate(),
+            BlockTransaction::Reward(tx) => tx.validate(),
+            BlockTransaction::Stake(tx) => tx.validate(),
+            BlockTransaction::Unstake(tx) => tx.validate(),
+            BlockTransaction::ClaimStake(tx) => tx.validate(),
+            BlockTransaction::RegisterG8Candidate(tx) => tx.validate(),
+            BlockTransaction::VoteG8(tx) => tx.validate(),
+            BlockTransaction::RecordG8Meeting(tx) => tx.validate(),
+            BlockTransaction::RemoveG8Member(tx) => tx.validate(),
+        }
+    }
+
+    /// Check if this is a CEO-signed transaction
+    pub fn is_ceo_signed(&self) -> bool {
+        match self {
+            BlockTransaction::Transfer(tx) => tx.is_ceo_transaction(),
+            BlockTransaction::Reward(tx) => tx.is_authorized(),
+            BlockTransaction::RecordG8Meeting(tx) => tx.ceo_signature.is_some(),
+            BlockTransaction::RemoveG8Member(tx) => tx.ceo_signature.is_some(),
+            _ => false,
+        }
+    }
+}
+
 #[derive(Default, Debug)]
 pub struct TransactionPool {
     pending: VecDeque<Transaction>,

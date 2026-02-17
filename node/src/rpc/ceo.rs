@@ -170,7 +170,8 @@ impl CeoRpcServer for CeoRpcMethods {
             .map_err(|e| RpcError::InvalidParams(format!("invalid signature bytes: {e}")))?;
         let ceo_sig = genesis::CeoSignature(sig);
 
-        genesis::approve_sip(&request.proposal_id, ceo_sig)
+        let bc = self.blockchain.lock().await;
+        genesis::approve_sip(&request.proposal_id, ceo_sig, &bc.state)
             .map_err(|e| RpcError::Internal(e.to_string()))?;
 
         Ok(SipActionResponse {
@@ -192,7 +193,8 @@ impl CeoRpcServer for CeoRpcMethods {
             .map_err(|e| RpcError::InvalidParams(format!("invalid signature bytes: {e}")))?;
         let ceo_sig = genesis::CeoSignature(sig);
 
-        genesis::veto_sip(&request.proposal_id, ceo_sig)
+        let bc = self.blockchain.lock().await;
+        genesis::veto_sip(&request.proposal_id, ceo_sig, &bc.state)
             .map_err(|e| RpcError::Internal(e.to_string()))?;
 
         Ok(SipActionResponse {
@@ -210,6 +212,7 @@ impl CeoRpcServer for CeoRpcMethods {
             genesis::SipStatus::Approved => "Approved",
             genesis::SipStatus::Vetoed => "Vetoed",
             genesis::SipStatus::Deployed => "Deployed",
+            genesis::SipStatus::AutoApprovedPendingCeoWindow => "AutoApprovedPendingCeoWindow",
         }
         .to_string();
 

@@ -164,6 +164,39 @@ pub struct BenevolenceModelState {
     pub deployed_by: String,
 }
 
+/// On-chain record of model approval for governance transparency
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct ModelApprovalRecord {
+    /// Proposal ID being recorded
+    pub proposal_id: String,
+    /// Model ID associated with this proposal
+    pub model_id: String,
+    /// Status: 0=Pending, 1=Approved, 2=Rejected, 3=AutoApprovedPendingCeoWindow, 4=Vetoed
+    pub status: u8,
+    /// Whether this was auto-approved by staker consensus
+    pub auto_approved: bool,
+    /// Unix timestamp when auto-approval occurred
+    pub auto_approved_at: Option<i64>,
+    /// Unix timestamp for CEO veto deadline (auto_approved_at + 24h)
+    pub ceo_veto_deadline: Option<i64>,
+    /// Unix timestamp when finally approved
+    pub approved_at: Option<i64>,
+    /// Unix timestamp when rejected
+    pub rejected_at: Option<i64>,
+    /// Detailed rejection reasons for CEO review
+    pub rejection_logs: Vec<String>,
+    /// Constitutional violations found during review
+    pub constitutional_violations: Vec<String>,
+    /// Benevolence model score (0.0-1.0)
+    pub benevolence_score: Option<f32>,
+    /// JSON-serialized safety oracle votes
+    pub safety_oracle_votes: Option<String>,
+    /// SHA3-256 hash of training proof JSON
+    pub training_proof_hash: Option<[u8; 32]>,
+    /// UUID reference to on-chain TrainingRound
+    pub training_round_id: Option<String>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GovernanceVote {
     pub proposal_id: String,
@@ -205,6 +238,75 @@ pub enum StakeRole {
     Both,       // MIN_STAKE_TRAINING = 5000
 }
 
+/// G8 Safety Committee - Advisory governance body
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct G8MemberState {
+    pub member_address: String,
+    pub elected_at: i64,
+    pub term_end: i64,
+    pub stake_at_election: Amount,
+    pub background_check_hash: [u8; 32],
+    pub expertise_areas: Vec<String>,
+    pub meetings_attended: u32,
+    pub violations_reported: u32,
+    pub removed: bool,
+    pub removal_reason: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct G8Candidate {
+    pub address: String,
+    pub stake_amount: Amount,
+    pub background_check_hash: [u8; 32],
+    pub expertise_statement: String,
+    pub registered_at: i64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct G8Vote {
+    pub voter_address: String,
+    pub candidate_address: String,
+    pub vote_weight: u64,
+    pub timestamp: i64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct G8ElectionState {
+    pub election_id: String,
+    pub start_timestamp: i64,
+    pub end_timestamp: i64,
+    pub candidates: Vec<G8Candidate>,
+    pub votes: BTreeMap<String, Vec<G8Vote>>,
+    pub status: u8,
+    pub elected_members: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct G8Recommendation {
+    pub recommendation_id: String,
+    pub meeting_id: String,
+    pub proposal_id: Option<String>,
+    pub title: String,
+    pub description: String,
+    pub category: String,
+    pub votes_for: u8,
+    pub votes_against: u8,
+    pub votes_abstain: u8,
+    pub submitted_to_ceo: bool,
+    pub ceo_response: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct G8MeetingState {
+    pub meeting_id: String,
+    pub scheduled_at: i64,
+    pub attendees: Vec<String>,
+    pub quorum_met: bool,
+    pub topics: Vec<String>,
+    pub recommendations: Vec<G8Recommendation>,
+    pub minutes_ipfs_hash: String,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ChainStateSnapshot {
     pub accounts: BTreeMap<Address, AccountState>,
@@ -218,6 +320,10 @@ pub struct ChainStateSnapshot {
     pub fisher_matrices: BTreeMap<String, FisherMatrixState>,
     pub replay_buffers: BTreeMap<String, ReplayBufferState>,
     pub benevolence_models: BTreeMap<String, BenevolenceModelState>,
+    pub model_approval_records: BTreeMap<String, ModelApprovalRecord>,
+    pub g8_members: BTreeMap<String, G8MemberState>,
+    pub g8_elections: BTreeMap<String, G8ElectionState>,
+    pub g8_meetings: BTreeMap<String, G8MeetingState>,
 }
 
 #[derive(Debug, Default)]
@@ -234,6 +340,10 @@ pub struct ChainState {
     fisher_matrices: RwLock<BTreeMap<String, FisherMatrixState>>,
     replay_buffers: RwLock<BTreeMap<String, ReplayBufferState>>,
     benevolence_models: RwLock<BTreeMap<String, BenevolenceModelState>>,
+    model_approval_records: RwLock<BTreeMap<String, ModelApprovalRecord>>,
+    g8_members: RwLock<BTreeMap<String, G8MemberState>>,
+    g8_elections: RwLock<BTreeMap<String, G8ElectionState>>,
+    g8_meetings: RwLock<BTreeMap<String, G8MeetingState>>,
 }
 
 impl Clone for ChainState {
@@ -250,6 +360,10 @@ impl Clone for ChainState {
         let fisher_matrices = self.fisher_matrices.read().clone();
         let replay_buffers = self.replay_buffers.read().clone();
         let benevolence_models = self.benevolence_models.read().clone();
+        let model_approval_records = self.model_approval_records.read().clone();
+        let g8_members = self.g8_members.read().clone();
+        let g8_elections = self.g8_elections.read().clone();
+        let g8_meetings = self.g8_meetings.read().clone();
         ChainState {
             accounts: RwLock::new(accounts),
             subscriptions: RwLock::new(subscriptions),
@@ -263,6 +377,10 @@ impl Clone for ChainState {
             fisher_matrices: RwLock::new(fisher_matrices),
             replay_buffers: RwLock::new(replay_buffers),
             benevolence_models: RwLock::new(benevolence_models),
+            model_approval_records: RwLock::new(model_approval_records),
+            g8_members: RwLock::new(g8_members),
+            g8_elections: RwLock::new(g8_elections),
+            g8_meetings: RwLock::new(g8_meetings),
         }
     }
 }
@@ -282,6 +400,10 @@ impl ChainState {
             fisher_matrices: RwLock::new(BTreeMap::new()),
             replay_buffers: RwLock::new(BTreeMap::new()),
             benevolence_models: RwLock::new(BTreeMap::new()),
+            model_approval_records: RwLock::new(BTreeMap::new()),
+            g8_members: RwLock::new(BTreeMap::new()),
+            g8_elections: RwLock::new(BTreeMap::new()),
+            g8_meetings: RwLock::new(BTreeMap::new()),
         }
     }
 
@@ -298,6 +420,10 @@ impl ChainState {
             fisher_matrices: self.fisher_matrices.read().clone(),
             replay_buffers: self.replay_buffers.read().clone(),
             benevolence_models: self.benevolence_models.read().clone(),
+            model_approval_records: self.model_approval_records.read().clone(),
+            g8_members: self.g8_members.read().clone(),
+            g8_elections: self.g8_elections.read().clone(),
+            g8_meetings: self.g8_meetings.read().clone(),
         }
     }
 
@@ -313,6 +439,10 @@ impl ChainState {
         *self.fisher_matrices.write() = snapshot.fisher_matrices;
         *self.replay_buffers.write() = snapshot.replay_buffers;
         *self.benevolence_models.write() = snapshot.benevolence_models;
+        *self.model_approval_records.write() = snapshot.model_approval_records;
+        *self.g8_members.write() = snapshot.g8_members;
+        *self.g8_elections.write() = snapshot.g8_elections;
+        *self.g8_meetings.write() = snapshot.g8_meetings;
     }
 
     /// Set constitution state (CEO-only operation)
@@ -1149,6 +1279,404 @@ impl ChainState {
     pub fn list_benevolence_models(&self) -> Vec<BenevolenceModelState> {
         self.benevolence_models.read().values().cloned().collect()
     }
+
+    // ==================== Model Approval Records ====================
+
+    /// Record a model approval on-chain
+    pub fn record_model_approval(&self, record: ModelApprovalRecord) -> Result<(), BlockchainError> {
+        self.model_approval_records.write().insert(record.proposal_id.clone(), record);
+        Ok(())
+    }
+
+    /// Get a model approval record by proposal ID
+    pub fn get_model_approval_record(&self, proposal_id: &str) -> Option<ModelApprovalRecord> {
+        self.model_approval_records.read().get(proposal_id).cloned()
+    }
+
+    /// List all proposals pending CEO veto window expiration
+    pub fn list_pending_approvals(&self) -> Vec<ModelApprovalRecord> {
+        self.model_approval_records
+            .read()
+            .values()
+            .filter(|r| r.status == 3) // AutoApprovedPendingCeoWindow
+            .cloned()
+            .collect()
+    }
+
+    /// List all rejected proposals with logs
+    pub fn list_rejected_proposals(&self) -> Vec<ModelApprovalRecord> {
+        self.model_approval_records
+            .read()
+            .values()
+            .filter(|r| r.status == 2 || r.status == 4) // Rejected or Vetoed
+            .cloned()
+            .collect()
+    }
+
+    // ==================== G8 Safety Committee ====================
+
+    /// Create a new G8 election
+    pub fn create_g8_election(&self, election_id: String, start_timestamp: i64) -> Result<(), BlockchainError> {
+        let config = genesis::GovernanceConfig::load();
+        if !config.g8_enabled {
+            return Err(BlockchainError::InvalidTransaction);
+        }
+        
+        let election = G8ElectionState {
+            election_id: election_id.clone(),
+            start_timestamp,
+            end_timestamp: start_timestamp + (48 * 60 * 60), // 48 hours
+            candidates: Vec::new(),
+            votes: BTreeMap::new(),
+            status: 0, // Open
+            elected_members: Vec::new(),
+        };
+        self.g8_elections.write().insert(election_id, election);
+        Ok(())
+    }
+
+    /// Register a candidate for G8 election
+    pub fn register_g8_candidate(&self, tx: &crate::transaction::RegisterG8CandidateTx) -> Result<(), BlockchainError> {
+        // Check stake >= 0.1% of total supply
+        let total_staked: u64 = self.stakes.read().values()
+            .map(|s| s.staked_amount.value())
+            .sum();
+        let candidate_stake = self.get_staked_amount(&tx.candidate);
+        let config = genesis::GovernanceConfig::load();
+        let min_stake = ((total_staked as f64) * config.g8_min_stake_percentage / 100.0) as u64;
+        
+        if candidate_stake.value() < min_stake {
+            return Err(BlockchainError::InsufficientStake);
+        }
+        
+        // Check not currently serving in G8
+        if let Some(member) = self.g8_members.read().get(&tx.candidate) {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs() as i64;
+            if !member.removed && member.term_end > now {
+                return Err(BlockchainError::InvalidTransaction);
+            }
+        }
+        
+        // Find open election
+        let mut elections = self.g8_elections.write();
+        let election = elections.values_mut()
+            .find(|e| e.status == 0)
+            .ok_or(BlockchainError::InvalidTransaction)?;
+        
+        // Check expertise statement length
+        if tx.expertise_statement.len() > 500 {
+            return Err(BlockchainError::InvalidTransaction);
+        }
+        
+        let candidate = G8Candidate {
+            address: tx.candidate.clone(),
+            stake_amount: candidate_stake,
+            background_check_hash: tx.background_check_hash,
+            expertise_statement: tx.expertise_statement.clone(),
+            registered_at: tx.timestamp.value(),
+        };
+        election.candidates.push(candidate);
+        Ok(())
+    }
+
+    /// Record a G8 election vote
+    pub fn record_g8_vote(&self, tx: &crate::transaction::VoteG8Tx) -> Result<(), BlockchainError> {
+        // Validate voter has stake
+        let voter_stake = self.get_staked_amount(&tx.voter);
+        if voter_stake.is_zero() {
+            return Err(BlockchainError::InvalidTransaction);
+        }
+        
+        let mut elections = self.g8_elections.write();
+        let election = elections.get_mut(&tx.election_id)
+            .ok_or(BlockchainError::InvalidTransaction)?;
+        
+        // Check election is open
+        if election.status != 0 {
+            return Err(BlockchainError::InvalidTransaction);
+        }
+        
+        // Check for duplicate vote
+        let existing_votes = election.votes.get(&tx.candidate_address);
+        if let Some(votes) = existing_votes {
+            if votes.iter().any(|v| v.voter_address == tx.voter) {
+                return Err(BlockchainError::InvalidTransaction);
+            }
+        }
+        
+        let vote = G8Vote {
+            voter_address: tx.voter.clone(),
+            candidate_address: tx.candidate_address.clone(),
+            vote_weight: voter_stake.value(),
+            timestamp: tx.timestamp.value(),
+        };
+        
+        election.votes.entry(tx.candidate_address.clone())
+            .or_default()
+            .push(vote);
+        
+        Ok(())
+    }
+
+    /// Finalize G8 election and elect top 8 candidates
+    pub fn finalize_g8_election(&self, election_id: &str) -> Result<Vec<String>, BlockchainError> {
+        let mut elections = self.g8_elections.write();
+        let election = elections.get_mut(election_id)
+            .ok_or(BlockchainError::InvalidTransaction)?;
+        
+        // Close voting
+        if election.status != 0 {
+            return Err(BlockchainError::InvalidTransaction);
+        }
+        election.status = 1; // Closed
+        
+        // Tally votes
+        let mut candidate_votes: Vec<(String, u64)> = election.votes.iter()
+            .map(|(addr, votes)| {
+                let total_weight = votes.iter().map(|v| v.vote_weight).sum();
+                (addr.clone(), total_weight)
+            })
+            .collect();
+        
+        // Sort by vote weight descending
+        candidate_votes.sort_by(|a, b| b.1.cmp(&a.1));
+        
+        // Select top 8
+        let config = genesis::GovernanceConfig::load();
+        let term_seconds = (config.g8_term_years as i64) * 365 * 24 * 60 * 60;
+        let elected: Vec<String> = candidate_votes.iter().take(8).map(|(addr, _)| addr.clone()).collect();
+        
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+        
+        // Create member states for elected candidates
+        for addr in &elected {
+            if let Some(candidate) = election.candidates.iter().find(|c| c.address == *addr) {
+                let member = G8MemberState {
+                    member_address: addr.clone(),
+                    elected_at: now,
+                    term_end: now + term_seconds,
+                    stake_at_election: candidate.stake_amount,
+                    background_check_hash: candidate.background_check_hash,
+                    expertise_areas: Vec::new(),
+                    meetings_attended: 0,
+                    violations_reported: 0,
+                    removed: false,
+                    removal_reason: None,
+                };
+                self.g8_members.write().insert(addr.clone(), member);
+            }
+        }
+        
+        election.elected_members = elected.clone();
+        election.status = 2; // Finalized
+        
+        Ok(elected)
+    }
+
+    /// Get G8 member by address
+    pub fn get_g8_member(&self, address: &str) -> Option<G8MemberState> {
+        self.g8_members.read().get(address).cloned()
+    }
+
+    /// List all active G8 members
+    pub fn list_active_g8_members(&self) -> Vec<G8MemberState> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+        
+        self.g8_members.read()
+            .values()
+            .filter(|m| !m.removed && m.term_end > now)
+            .cloned()
+            .collect()
+    }
+
+    /// Check if address is eligible for G8 election
+    pub fn check_g8_eligibility(&self, address: &str) -> Result<bool, BlockchainError> {
+        let config = genesis::GovernanceConfig::load();
+        if !config.g8_enabled {
+            return Ok(false);
+        }
+        
+        // Check stake >= 0.1% of total supply
+        let total_staked: u64 = self.stakes.read().values()
+            .map(|s| s.staked_amount.value())
+            .sum();
+        let stake = self.get_staked_amount(address);
+        let min_stake = ((total_staked as f64) * config.g8_min_stake_percentage / 100.0) as u64;
+        
+        if stake.value() < min_stake {
+            return Ok(false);
+        }
+        
+        // Check not currently serving
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+        
+        if let Some(member) = self.g8_members.read().get(address) {
+            if !member.removed && member.term_end > now {
+                return Ok(false);
+            }
+            
+            // Check cool-off period (1 year after term ended)
+            let cooloff_seconds = (config.g8_cooloff_years as i64) * 365 * 24 * 60 * 60;
+            if member.term_end + cooloff_seconds > now {
+                return Ok(false);
+            }
+        }
+        
+        Ok(true)
+    }
+
+    /// Remove G8 member (CEO only)
+    pub fn remove_g8_member(&self, tx: &crate::transaction::RemoveG8MemberTx) -> Result<(), BlockchainError> {
+        // Verify CEO signature
+        genesis::verify_ceo_transaction(tx)
+            .map_err(|_| BlockchainError::InvalidSignature)?;
+        
+        // Check reason length (min 50 chars)
+        if tx.reason.len() < 50 {
+            return Err(BlockchainError::InvalidTransaction);
+        }
+        
+        let mut members = self.g8_members.write();
+        let member = members.get_mut(&tx.member_address)
+            .ok_or(BlockchainError::InvalidTransaction)?;
+        
+        member.removed = true;
+        member.removal_reason = Some(tx.reason.clone());
+        
+        eprintln!("G8 member {} removed by CEO at timestamp {}: {}", 
+            tx.member_address, tx.timestamp.value(), tx.reason);
+        
+        Ok(())
+    }
+
+    /// Schedule a G8 meeting
+    pub fn schedule_g8_meeting(&self, meeting_id: String, scheduled_at: i64) -> Result<(), BlockchainError> {
+        let config = genesis::GovernanceConfig::load();
+        if !config.g8_enabled {
+            return Err(BlockchainError::InvalidTransaction);
+        }
+        
+        let meeting = G8MeetingState {
+            meeting_id: meeting_id.clone(),
+            scheduled_at,
+            attendees: Vec::new(),
+            quorum_met: false,
+            topics: Vec::new(),
+            recommendations: Vec::new(),
+            minutes_ipfs_hash: String::new(),
+        };
+        
+        self.g8_meetings.write().insert(meeting_id, meeting);
+        Ok(())
+    }
+
+    /// Record G8 meeting with CEO signature
+    pub fn record_g8_meeting(&self, tx: &crate::transaction::RecordG8MeetingTx) -> Result<(), BlockchainError> {
+        // Verify CEO signature
+        genesis::verify_ceo_transaction(tx)
+            .map_err(|_| BlockchainError::InvalidSignature)?;
+        
+        let config = genesis::GovernanceConfig::load();
+        let mut meetings = self.g8_meetings.write();
+        let meeting = meetings.get_mut(&tx.meeting_id)
+            .ok_or(BlockchainError::InvalidTransaction)?;
+        
+        // Check quorum (>= 5 attendees)
+        let quorum_met = tx.attendees.len() >= config.g8_quorum as usize;
+        
+        meeting.attendees = tx.attendees.clone();
+        meeting.quorum_met = quorum_met;
+        meeting.minutes_ipfs_hash = tx.minutes_ipfs_hash.clone();
+        
+        // Increment meetings_attended for each attendee
+        if quorum_met {
+            let mut members = self.g8_members.write();
+            for attendee in &tx.attendees {
+                if let Some(member) = members.get_mut(attendee) {
+                    member.meetings_attended += 1;
+                }
+            }
+        }
+        
+        Ok(())
+    }
+
+    /// Add recommendation to meeting
+    pub fn add_g8_recommendation(&self, meeting_id: &str, recommendation: G8Recommendation) -> Result<(), BlockchainError> {
+        let mut meetings = self.g8_meetings.write();
+        let meeting = meetings.get_mut(meeting_id)
+            .ok_or(BlockchainError::InvalidTransaction)?;
+        
+        if !meeting.quorum_met {
+            return Err(BlockchainError::InvalidTransaction);
+        }
+        
+        meeting.recommendations.push(recommendation);
+        Ok(())
+    }
+
+    /// Get recommendations pending CEO response
+    pub fn get_g8_recommendations_pending_ceo(&self) -> Vec<G8Recommendation> {
+        self.g8_meetings.read()
+            .values()
+            .flat_map(|m| m.recommendations.iter())
+            .filter(|r| r.submitted_to_ceo && r.ceo_response.is_none())
+            .cloned()
+            .collect()
+    }
+
+    /// Get G8 recommendations for a proposal
+    pub fn get_g8_recommendations_for_proposal(&self, proposal_id: &str) -> Vec<G8Recommendation> {
+        self.g8_meetings.read()
+            .values()
+            .flat_map(|m| m.recommendations.iter())
+            .filter(|r| r.proposal_id.as_ref() == Some(&proposal_id.to_string()) && r.votes_for >= 5)
+            .cloned()
+            .collect()
+    }
+
+    /// Calculate G8 member compensation
+    pub fn calculate_g8_compensation(&self, member_address: &str) -> Amount {
+        let config = genesis::GovernanceConfig::load();
+        let members = self.g8_members.read();
+        let member = match members.get(member_address) {
+            Some(m) => m,
+            None => return Amount::ZERO,
+        };
+        
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+        
+        // Calculate days served (capped at term length)
+        let days_served = ((now - member.elected_at).min(member.term_end - member.elected_at) / (24 * 60 * 60)) as u64;
+        let year_days = 365u64;
+        
+        // Prorated base compensation: 10,000 AIGEN/year
+        let base_compensation = (config.g8_compensation_base * days_served) / year_days;
+        
+        // Bonus: +2,000 AIGEN if no violations reported
+        let bonus = if member.violations_reported == 0 {
+            config.g8_compensation_bonus
+        } else {
+            0
+        };
+        
+        Amount::new(base_compensation + bonus)
+    }
 }
 
 impl genesis::ChainStateProvider for ChainState {
@@ -1158,10 +1686,85 @@ impl genesis::ChainStateProvider for ChainState {
         min_approval_percentage: f64,
         min_participation_percentage: f64,
     ) -> bool {
-        self.check_auto_approve_threshold(
-            proposal_id,
-            min_approval_percentage,
-            min_participation_percentage,
-        )
+        // Call the inherent method on ChainState to compute actual approval/participation
+        let tally = self.tally_votes(proposal_id);
+        tally.approval_percentage >= min_approval_percentage 
+            && tally.participation_percentage >= min_participation_percentage
+    }
+
+    fn get_training_round(&self, round_id: &str) -> Option<genesis::TrainingRoundInfo> {
+        self.training_rounds.read().get(round_id).map(|r| genesis::TrainingRoundInfo {
+            round_id: r.round_id.clone(),
+            participants: r.participants.clone(),
+            delta_hash: r.delta_hash,
+            fisher_hash: r.fisher_hash,
+            model_id: r.model_id.clone(),
+            status: r.status,
+        })
+    }
+
+    fn get_fisher_matrix_hash(&self, model_id: &str) -> Option<[u8; 32]> {
+        self.fisher_matrices.read().get(model_id).map(|m| m.data_hash)
+    }
+
+    fn record_model_approval(&self, record: genesis::ModelApprovalRecord) -> Result<(), genesis::GenesisError> {
+        let blockchain_record = ModelApprovalRecord {
+            proposal_id: record.proposal_id,
+            model_id: record.model_id,
+            status: record.status,
+            auto_approved: record.auto_approved,
+            auto_approved_at: record.auto_approved_at,
+            ceo_veto_deadline: record.ceo_veto_deadline,
+            approved_at: record.approved_at,
+            rejected_at: record.rejected_at,
+            rejection_logs: record.rejection_logs,
+            constitutional_violations: record.constitutional_violations,
+            benevolence_score: record.benevolence_score,
+            safety_oracle_votes: record.safety_oracle_votes,
+            training_proof_hash: record.training_proof_hash,
+            training_round_id: record.training_round_id,
+        };
+        self.model_approval_records.write().insert(blockchain_record.proposal_id.clone(), blockchain_record);
+        Ok(())
+    }
+
+    fn get_model_approval_record(&self, proposal_id: &str) -> Option<genesis::ModelApprovalRecord> {
+        self.model_approval_records.read().get(proposal_id).map(|r| genesis::ModelApprovalRecord {
+            proposal_id: r.proposal_id.clone(),
+            model_id: r.model_id.clone(),
+            status: r.status,
+            auto_approved: r.auto_approved,
+            auto_approved_at: r.auto_approved_at,
+            ceo_veto_deadline: r.ceo_veto_deadline,
+            approved_at: r.approved_at,
+            rejected_at: r.rejected_at,
+            rejection_logs: r.rejection_logs.clone(),
+            constitutional_violations: r.constitutional_violations.clone(),
+            benevolence_score: r.benevolence_score,
+            safety_oracle_votes: r.safety_oracle_votes.clone(),
+            training_proof_hash: r.training_proof_hash,
+            training_round_id: r.training_round_id.clone(),
+        })
+    }
+
+    fn get_g8_recommendations_for_proposal(&self, proposal_id: &str) -> Vec<genesis::G8Recommendation> {
+        self.g8_meetings.read()
+            .values()
+            .flat_map(|m| m.recommendations.iter())
+            .filter(|r| r.proposal_id.as_ref() == Some(&proposal_id.to_string()) && r.votes_for >= 5)
+            .map(|r| genesis::G8Recommendation {
+                recommendation_id: r.recommendation_id.clone(),
+                meeting_id: r.meeting_id.clone(),
+                proposal_id: r.proposal_id.clone(),
+                title: r.title.clone(),
+                description: r.description.clone(),
+                category: r.category.clone(),
+                votes_for: r.votes_for,
+                votes_against: r.votes_against,
+                votes_abstain: r.votes_abstain,
+                submitted_to_ceo: r.submitted_to_ceo,
+                ceo_response: r.ceo_response.clone(),
+            })
+            .collect()
     }
 }

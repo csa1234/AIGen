@@ -9,8 +9,9 @@
 // Contact: Cesar Saguier Antebi
 
 use crate::block::{Block, BlockVerifyContext};
+use crate::g8_scheduler::run_g8_scheduler;
 use crate::state::{AccountState, ChainState};
-use crate::transaction::{Transaction, TransactionPool};
+use crate::transaction::{BlockTransaction, Transaction, TransactionPool};
 use crate::types::{Amount, BlockchainError, ChainId, TxHash};
 use genesis::{
     approve_sip, check_shutdown, emergency_shutdown, is_ceo_wallet, is_shutdown,
@@ -51,6 +52,47 @@ fn validate_poi_difficulty(work_hash: &[u8; 32], difficulty: u64) -> Result<u64,
         return Err(BlockchainError::InvalidTransaction);
     }
     Ok(difficulty)
+}
+
+/// Apply a block transaction to the chain state, routing to appropriate handlers
+fn apply_block_transaction(state: &ChainState, tx: &BlockTransaction) -> Result<(), BlockchainError> {
+    match tx {
+        BlockTransaction::Transfer(transfer_tx) => {
+            state.apply_transaction(transfer_tx)
+        }
+        BlockTransaction::Reward(reward_tx) => {
+            state.apply_reward_transaction(reward_tx)
+        }
+        BlockTransaction::Stake(stake_tx) => {
+            state.apply_stake_transaction(stake_tx)
+        }
+        BlockTransaction::Unstake(unstake_tx) => {
+            state.apply_unstake_transaction(unstake_tx)
+        }
+        BlockTransaction::ClaimStake(claim_tx) => {
+            state.apply_claim_stake_transaction(claim_tx)
+        }
+        BlockTransaction::RegisterG8Candidate(g8_tx) => {
+            // Validate signature eligibility
+            g8_tx.validate()?;
+            state.register_g8_candidate(g8_tx)
+        }
+        BlockTransaction::VoteG8(vote_tx) => {
+            // Validate signature eligibility
+            vote_tx.validate()?;
+            state.record_g8_vote(vote_tx)
+        }
+        BlockTransaction::RecordG8Meeting(meeting_tx) => {
+            // Validate CEO signature
+            meeting_tx.validate()?;
+            state.record_g8_meeting(meeting_tx)
+        }
+        BlockTransaction::RemoveG8Member(remove_tx) => {
+            // Validate CEO signature
+            remove_tx.validate()?;
+            state.remove_g8_member(remove_tx)
+        }
+    }
 }
 
 fn calculate_poi_reward_local(proof: &ChainPoIProof) -> Result<Amount, BlockchainError> {
@@ -130,8 +172,14 @@ impl Blockchain {
             self.state
                 .set_validator_reward_address(CEO_WALLET.to_string());
 
+            // Process standard transactions
             for tx in &block.transactions {
                 self.state.apply_transaction(tx)?;
+            }
+
+            // Process extended transactions (G8 and other special txs)
+            for ext_tx in &block.extended_transactions {
+                apply_block_transaction(&self.state, ext_tx)?;
             }
 
             if block.header.ceo_signature.is_some() {
@@ -179,6 +227,13 @@ impl Blockchain {
                 .map(|b| b.header.shutdown_flag)
                 .unwrap_or(false);
 
+        // Run G8 scheduler for term-expiry triggers and auto-finalization
+        let current_time = chrono::Utc::now().timestamp();
+        if let Err(e) = run_g8_scheduler(current_time, &self.state) {
+            eprintln!("G8 scheduler error: {:?}", e);
+            // Don't fail the block for scheduler errors
+        }
+
         Ok(())
     }
 
@@ -201,6 +256,11 @@ impl Blockchain {
                 temp_state.set_validator_reward_address(CEO_WALLET.to_string());
                 for tx in &block.transactions {
                     temp_state.apply_transaction(tx)?;
+                }
+
+                // Process extended transactions (G8 and other special txs)
+                for ext_tx in &block.extended_transactions {
+                    apply_block_transaction(&temp_state, ext_tx)?;
                 }
 
                 if block.header.ceo_signature.is_some() {
@@ -310,7 +370,7 @@ impl Blockchain {
                     .ceo_signature
                     .clone()
                     .ok_or(BlockchainError::Genesis(GenesisError::InvalidSignature))?;
-                approve_sip(&proposal_id, sig)?;
+                approve_sip(&proposal_id, sig, &self.state)?;
                 Ok(())
             }
             "MINT" => {

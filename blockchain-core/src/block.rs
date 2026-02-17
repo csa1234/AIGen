@@ -9,7 +9,7 @@
 // Contact: Cesar Saguier Antebi
 
 use crate::crypto::{calculate_merkle_root, hash_block_header};
-use crate::transaction::Transaction;
+use crate::transaction::{BlockTransaction, Transaction};
 use crate::types::{Amount, BlockHash, BlockHeight, BlockVersion, BlockchainError, Timestamp};
 use genesis::{is_shutdown, verify_ceo_signature, CeoSignature, GenesisConfig, GenesisError};
 use serde::{Deserialize, Serialize};
@@ -37,6 +37,9 @@ pub struct BlockHeader {
 pub struct Block {
     pub header: BlockHeader,
     pub transactions: Vec<Transaction>,
+    /// Extended transactions supporting all transaction types including G8
+    #[serde(default)]
+    pub extended_transactions: Vec<BlockTransaction>,
     pub block_hash: BlockHash,
 }
 
@@ -65,6 +68,7 @@ impl Block {
         Block {
             header,
             transactions,
+            extended_transactions: Vec::new(),
             block_hash,
         }
     }
@@ -90,6 +94,7 @@ impl Block {
         Ok(Block {
             header,
             transactions,
+            extended_transactions: Vec::new(),
             block_hash,
         })
     }
@@ -115,6 +120,7 @@ impl Block {
         Block {
             header,
             transactions,
+            extended_transactions: Vec::new(),
             block_hash,
         }
     }
@@ -155,6 +161,10 @@ impl Block {
 
     pub fn validate_transactions(&self) -> Result<(), BlockchainError> {
         for tx in &self.transactions {
+            tx.validate()?;
+        }
+        // Also validate extended transactions (G8 and other special txs)
+        for tx in &self.extended_transactions {
             tx.validate()?;
         }
         Ok(())
