@@ -11,7 +11,7 @@
 use std::sync::Arc;
 
 use blockchain_core::Blockchain;
-use genesis::CeoSignature;
+use genesis::{CeoSignature, CeoTransactable};
 use jsonrpsee::core::async_trait;
 use jsonrpsee::proc_macros::rpc;
 use tokio::sync::Mutex;
@@ -23,7 +23,8 @@ use crate::rpc::types::{
     SipActionResponse, SipStatusResponse, SubmitGovVoteRequest, SuccessResponse, GovVoteResponse,
     ApproveStakerProposalRequest, VetoStakerProposalRequest,
     UpdateConstitutionRequest, ConstitutionStatusResponse, CheckTextComplianceRequest,
-    CheckTextComplianceResponse, ViolationResponse,
+    CheckTextComplianceResponse, ViolationResponse, RegisterModelRequest, RegisterModelResponse,
+    ListModelsResponse, ModelRegistryEntry,
 };
 
 fn verify_ceo_request(message: &[u8], signature_hex: &str) -> Result<CeoSignature, RpcError> {
@@ -91,6 +92,15 @@ pub trait CeoRpc {
 
     #[method(name = "checkTextCompliance")]
     async fn check_text_compliance(&self, request: CheckTextComplianceRequest) -> Result<CheckTextComplianceResponse, RpcError>;
+
+    #[method(name = "registerModel")]
+    async fn register_model(&self, request: RegisterModelRequest) -> Result<RegisterModelResponse, RpcError>;
+
+    #[method(name = "listRegisteredModels")]
+    async fn list_registered_models(&self) -> Result<ListModelsResponse, RpcError>;
+
+    #[method(name = "getRegisteredModel")]
+    async fn get_registered_model(&self, model_id: String) -> Result<ModelRegistryEntry, RpcError>;
 }
 
 #[derive(Clone)]
@@ -441,6 +451,8 @@ impl CeoRpcServer for CeoRpcMethods {
             minimum_tier,
             is_experimental: request.is_experimental,
             created_at: now,
+            deployment_status: model::registry::DeploymentStatus::Stable,
+            traffic_percentage: 100.0,
         };
 
         // Register model
@@ -673,39 +685,40 @@ impl CeoRpcServer for CeoRpcMethods {
     }
 
     async fn update_constitution(&self, request: UpdateConstitutionRequest) -> Result<SuccessResponse, RpcError> {
+        // Parse principles hash from hex
+        let hash_bytes = parse_hex_bytes(&request.principles_hash)?;
+        if hash_bytes.len() != 32 {
+            return Err(RpcError::InvalidParams("principles_hash must be 32 bytes".to_string()));
+        }
+        let principles_hash: [u8; 32] = hash_bytes.as_slice()
+            .try_into()
+            .map_err(|_| RpcError::InvalidParams("principles_hash must be 32 bytes".to_string()))?;
+
+        // Create the transaction
+        let tx = blockchain_core::transaction::UpdateConstitutionTx::new(
+            request.version,
+            request.ipfs_cid.clone(),
+            principles_hash,
+            request.reason.clone(),
+            request.timestamp,
+        ).map_err(|e| RpcError::Internal(format!("Failed to create tx: {}", e)))?;
+
         // Verify CEO signature
-        let bc = self.blockchain.lock().await;
-        let network_magic = bc.genesis_config.network_magic;
-        let msg = format!(
-            "update_constitution:{}:{}:{}",
-            network_magic, request.timestamp, request.ipfs_cid
-        ).into_bytes();
-        verify_ceo_request(&msg, &request.signature)?;
+        let ceo_sig = verify_ceo_request(&tx.message_to_sign(), &request.signature)?;
+        let tx = tx.sign_with_ceo(ceo_sig);
 
-        println!("CEO updating constitution with IPFS CID: {}", request.ipfs_cid);
-
-        // Create constitution state
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs() as i64)
-            .unwrap_or(0);
+        // Create BlockTransaction and add to pending pool
+        let block_tx = blockchain_core::transaction::BlockTransaction::UpdateConstitution(tx);
         
-        let state = blockchain_core::state::ConstitutionState {
-            version: 1,
-            ipfs_hash: request.ipfs_cid.clone(),
-            principles_hash: genesis::compute_constitution_hash(),
-            updated_at: now,
-            updated_by: genesis::CEO_WALLET.to_string(),
-        };
+        let mut bc = self.blockchain.lock().await;
+        bc.add_extended_transaction_to_pool(block_tx)
+            .map_err(|e| RpcError::Internal(format!("Failed to submit transaction: {}", e)))?;
 
-        // Update chain state
-        bc.state.set_constitution(state);
-
-        println!("Constitution updated successfully");
+        println!("Constitution update submitted to transaction pool");
 
         Ok(SuccessResponse {
             success: true,
-            message: "Constitution updated successfully".to_string(),
+            message: "Constitution update submitted successfully".to_string(),
         })
     }
 
@@ -754,6 +767,94 @@ impl CeoRpcServer for CeoRpcMethods {
             compliant: violations.is_empty(),
             violations: violation_responses,
             total_violations: violations.len(),
+        })
+    }
+
+    async fn register_model(&self, request: RegisterModelRequest) -> Result<RegisterModelResponse, RpcError> {
+        // Parse weights hash from hex
+        let hash_bytes = parse_hex_bytes(&request.weights_hash)?;
+        if hash_bytes.len() != 32 {
+            return Err(RpcError::InvalidParams("weights_hash must be 32 bytes".to_string()));
+        }
+        let weights_hash: [u8; 32] = hash_bytes.as_slice()
+            .try_into()
+            .map_err(|_| RpcError::InvalidParams("weights_hash must be 32 bytes".to_string()))?;
+
+        // Create the transaction
+        let tx = blockchain_core::transaction::RegisterModelTx::new(
+            request.model_id.clone(),
+            request.name,
+            request.version,
+            request.ipfs_cid,
+            weights_hash,
+            request.architecture,
+            request.minimum_tier,
+            request.is_core,
+            request.shard_count,
+            request.timestamp,
+        ).map_err(|e| RpcError::Internal(format!("Failed to create tx: {}", e)))?;
+
+        // Verify CEO signature
+        let ceo_sig = verify_ceo_request(&tx.message_to_sign(), &request.signature)?;
+        let tx = tx.sign_with_ceo(ceo_sig);
+
+        // Create BlockTransaction and add to pending pool
+        let block_tx = blockchain_core::transaction::BlockTransaction::RegisterModel(tx.clone());
+        
+        let mut bc = self.blockchain.lock().await;
+        bc.add_extended_transaction_to_pool(block_tx)
+            .map_err(|e| RpcError::Internal(format!("Failed to submit transaction: {}", e)))?;
+
+        let tx_hash = hex::encode(tx.tx_hash.0);
+
+        println!("Model {} registration submitted to transaction pool", request.model_id);
+
+        Ok(RegisterModelResponse {
+            success: true,
+            model_id: request.model_id,
+            tx_hash,
+        })
+    }
+
+    async fn list_registered_models(&self) -> Result<ListModelsResponse, RpcError> {
+        let bc = self.blockchain.lock().await;
+        let models: Vec<ModelRegistryEntry> = bc.state.list_registered_models()
+            .into_iter()
+            .map(|m| ModelRegistryEntry {
+                model_id: m.model_id,
+                name: m.name,
+                version: m.version,
+                ipfs_cid: m.ipfs_cid,
+                architecture: m.architecture,
+                minimum_tier: m.minimum_tier,
+                deployment_status: m.deployment_status,
+                traffic_percentage: m.traffic_percentage,
+                registered_at: m.registered_at,
+                is_core: m.is_core,
+                shard_count: m.shard_count,
+            })
+            .collect();
+
+        Ok(ListModelsResponse { models })
+    }
+
+    async fn get_registered_model(&self, model_id: String) -> Result<ModelRegistryEntry, RpcError> {
+        let bc = self.blockchain.lock().await;
+        let model = bc.state.get_registered_model(&model_id)
+            .ok_or_else(|| RpcError::ModelNotFound)?;
+
+        Ok(ModelRegistryEntry {
+            model_id: model.model_id,
+            name: model.name,
+            version: model.version,
+            ipfs_cid: model.ipfs_cid,
+            architecture: model.architecture,
+            minimum_tier: model.minimum_tier,
+            deployment_status: model.deployment_status,
+            traffic_percentage: model.traffic_percentage,
+            registered_at: model.registered_at,
+            is_core: model.is_core,
+            shard_count: model.shard_count,
         })
     }
 }

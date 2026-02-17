@@ -262,6 +262,8 @@ impl TestHarness {
             minimum_tier: None,
             is_experimental: false,
             created_at: now_timestamp(),
+            deployment_status: model::registry::DeploymentStatus::Stable,
+            traffic_percentage: 100.0,
         };
         self.registry
             .register_model(metadata)

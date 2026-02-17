@@ -278,6 +278,8 @@ async fn auto_register_local_models(
             minimum_tier: None,
             is_experimental: false,
             created_at,
+            deployment_status: model::registry::DeploymentStatus::Stable,
+            traffic_percentage: 100.0,
         };
         
         if let Err(e) = registry.register_model(metadata) {

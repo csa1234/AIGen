@@ -114,6 +114,8 @@ async fn run(args: Args) -> Result<()> {
         minimum_tier: None,
         is_experimental: false,
         created_at: now,
+        deployment_status: model::registry::DeploymentStatus::Stable,
+        traffic_percentage: 100.0,
     };
 
     registry.register_model(metadata)

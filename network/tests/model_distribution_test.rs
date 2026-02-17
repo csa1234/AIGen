@@ -74,6 +74,8 @@ fn register_model(
             .duration_since(UNIX_EPOCH)
             .expect("time")
             .as_secs() as i64,
+        deployment_status: model::registry::DeploymentStatus::Stable,
+        traffic_percentage: 100.0,
     };
     registry.register_model(metadata).expect("register model");
     hashes

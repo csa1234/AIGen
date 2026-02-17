@@ -18,6 +18,7 @@ use model::{
     tiers::FeatureFlag, ModelMetadata, ModelRegistry, PaymentOutcome, PaymentProvider,
     PaymentStatus, SubscriptionTier, TierConfig, TierError, TierManager,
 };
+use model::registry::DeploymentStatus;
 
 #[derive(Clone)]
 struct TestPaymentProvider {
@@ -132,6 +133,8 @@ fn sample_metadata(
         minimum_tier,
         is_experimental,
         created_at: 1,
+        deployment_status: DeploymentStatus::Stable,
+        traffic_percentage: 100.0,
     }
 }
 

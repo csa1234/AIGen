@@ -20,6 +20,7 @@ use model::{
     now_timestamp, BatchJobStatus, BatchPaymentPayload, BatchPriority, BatchQueue, InferenceEngine,
     LocalStorage, ModelMetadata, ModelRegistry, SubscriptionTier, TierManager, VolumeDiscountTracker,
 };
+use model::registry::DeploymentStatus;
 
 fn test_registry(model_id: &str, min_tier: Option<SubscriptionTier>) -> Arc<ModelRegistry> {
     let registry = Arc::new(ModelRegistry::new());
@@ -34,6 +35,8 @@ fn test_registry(model_id: &str, min_tier: Option<SubscriptionTier>) -> Arc<Mode
         minimum_tier: min_tier,
         is_experimental: false,
         created_at: 1,
+        deployment_status: DeploymentStatus::Stable,
+        traffic_percentage: 100.0,
     };
     registry.register_model(metadata).unwrap();
     registry

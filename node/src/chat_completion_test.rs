@@ -361,6 +361,8 @@ mod chat_completion_tests {
             minimum_tier: None,
             is_experimental: false,
             created_at: model::now_timestamp(),
+            deployment_status: model::registry::DeploymentStatus::Stable,
+            traffic_percentage: 100.0,
         };
         registry.register_model(meta).unwrap();
         for shard in shards.iter() {

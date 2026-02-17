@@ -1151,8 +1151,17 @@ pub fn parse_stake_role(s: &str) -> Result<blockchain_core::state::StakeRole, Rp
 // Constitution RPC Types
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct UpdateConstitutionRequest {
+    /// Constitution version number
+    pub version: u32,
+    /// IPFS CID where constitution document is stored
     pub ipfs_cid: String,
+    /// SHA3-256 hash of principles (hex-encoded)
+    pub principles_hash: String,
+    /// Reason for the update (minimum 100 characters)
+    pub reason: String,
+    /// CEO signature (hex-encoded)
     pub signature: String,
+    /// Request timestamp
     pub timestamp: i64,
 }
 
@@ -1186,4 +1195,121 @@ pub struct CheckTextComplianceResponse {
     pub compliant: bool,
     pub violations: Vec<ViolationResponse>,
     pub total_violations: usize,
+}
+
+// ============================================================================
+// Model Registry RPC Types
+// ============================================================================
+
+/// Request type for registering a model on-chain (CEO-only)
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RegisterModelRequest {
+    /// Unique model identifier
+    pub model_id: String,
+    /// Model name
+    pub name: String,
+    /// Model version
+    pub version: String,
+    /// IPFS CID where model weights are stored
+    pub ipfs_cid: String,
+    /// SHA3-256 hash of model weights (hex-encoded)
+    pub weights_hash: String,
+    /// Model architecture type (e.g., "llama4", "kimi-k2.5")
+    pub architecture: String,
+    /// Minimum subscription tier required (0=Free, 1=Basic, 2=Pro, 3=Enterprise)
+    pub minimum_tier: u8,
+    /// Whether this is a core model (required for network bootstrap)
+    pub is_core: bool,
+    /// Number of shards for distributed inference
+    pub shard_count: u32,
+    /// CEO signature (hex-encoded)
+    pub signature: String,
+    /// Request timestamp
+    pub timestamp: i64,
+}
+
+/// Response type for model registration
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RegisterModelResponse {
+    pub success: bool,
+    pub model_id: String,
+    pub tx_hash: String,
+}
+
+/// Response type for listing registered models
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ModelRegistryEntry {
+    pub model_id: String,
+    pub name: String,
+    pub version: String,
+    pub ipfs_cid: String,
+    pub architecture: String,
+    pub minimum_tier: u8,
+    pub deployment_status: u8,
+    pub traffic_percentage: f32,
+    pub registered_at: i64,
+    pub is_core: bool,
+    pub shard_count: u32,
+}
+
+/// Response type for model registry list
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ListModelsResponse {
+    pub models: Vec<ModelRegistryEntry>,
+}
+
+// ============================================================================
+// Canary Deployment RPC Types
+// ============================================================================
+
+/// Response type for canary deployment status
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CanaryDeploymentResponse {
+    pub model_id: String,
+    pub stable_version: String,
+    pub canary_version: String,
+    pub traffic_percentage: f32,
+    pub shadow_mode: bool,
+    pub deployment_start: i64,
+    pub last_increment: i64,
+    pub phase: String,
+    pub ceo_veto_deadline: Option<i64>,
+    pub ceo_vetoed: bool,
+}
+
+/// Response type for canary metrics
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CanaryMetricsResponse {
+    pub canary_requests: u64,
+    pub canary_violations: u64,
+    pub canary_benevolence_failures: u64,
+    pub canary_oracle_unsafe_votes: u64,
+    pub canary_complaints: u64,
+    pub canary_avg_latency_ms: f32,
+    pub stable_avg_latency_ms: f32,
+    pub last_benevolence_score: f32,
+    pub stable_requests: u64,
+    pub complaint_rate: f32,
+    pub latency_ratio: f32,
+}
+
+/// Response type for rollback events
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RollbackEventResponse {
+    pub model_id: String,
+    pub canary_version: String,
+    pub timestamp: i64,
+    pub reason: String,
+    pub traffic_at_rollback: f32,
+    pub metrics_snapshot: CanaryMetricsResponse,
+}
+
+/// Response type for user complaints
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ComplaintResponse {
+    pub user_id: String,
+    pub inference_id: String,
+    pub timestamp: i64,
+    pub reason: String,
+    pub model_version: String,
 }

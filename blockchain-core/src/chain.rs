@@ -55,7 +55,7 @@ fn validate_poi_difficulty(work_hash: &[u8; 32], difficulty: u64) -> Result<u64,
 }
 
 /// Apply a block transaction to the chain state, routing to appropriate handlers
-fn apply_block_transaction(state: &ChainState, tx: &BlockTransaction) -> Result<(), BlockchainError> {
+fn apply_block_transaction(state: &ChainState, tx: &BlockTransaction, block_height: u64) -> Result<(), BlockchainError> {
     match tx {
         BlockTransaction::Transfer(transfer_tx) => {
             state.apply_transaction(transfer_tx)
@@ -92,6 +92,21 @@ fn apply_block_transaction(state: &ChainState, tx: &BlockTransaction) -> Result<
             remove_tx.validate()?;
             state.remove_g8_member(remove_tx)
         }
+        BlockTransaction::RegisterModel(register_tx) => {
+            // Validate and apply model registration (CEO-signed)
+            register_tx.validate()?;
+            state.apply_register_model_tx(register_tx, block_height)
+        }
+        BlockTransaction::UpdateConstitution(constitution_tx) => {
+            // Validate and apply constitution update (CEO-signed)
+            constitution_tx.validate()?;
+            state.apply_update_constitution_tx(constitution_tx)
+        }
+        BlockTransaction::RecordTrainingRound(training_tx) => {
+            // Validate and apply training round with PoI proof verification
+            training_tx.validate()?;
+            state.apply_record_training_round_tx(training_tx)
+        }
     }
 }
 
@@ -122,6 +137,8 @@ pub struct Blockchain {
     pub chain_id: ChainId,
     pub state: ChainState,
     pub pending_transactions: TransactionPool,
+    /// Pending extended transactions (CEO-signed operations like RegisterModel, UpdateConstitution)
+    pub pending_extended_transactions: Vec<crate::transaction::BlockTransaction>,
 }
 
 impl Blockchain {
@@ -145,6 +162,7 @@ impl Blockchain {
             chain_id,
             state,
             pending_transactions: TransactionPool::new(),
+            pending_extended_transactions: Vec::new(),
         }
     }
 
@@ -179,7 +197,7 @@ impl Blockchain {
 
             // Process extended transactions (G8 and other special txs)
             for ext_tx in &block.extended_transactions {
-                apply_block_transaction(&self.state, ext_tx)?;
+                apply_block_transaction(&self.state, ext_tx, block.header.block_height.value())?;
             }
 
             if block.header.ceo_signature.is_some() {
@@ -260,7 +278,7 @@ impl Blockchain {
 
                 // Process extended transactions (G8 and other special txs)
                 for ext_tx in &block.extended_transactions {
-                    apply_block_transaction(&temp_state, ext_tx)?;
+                    apply_block_transaction(&temp_state, ext_tx, block.header.block_height.value())?;
                 }
 
                 if block.header.ceo_signature.is_some() {
@@ -336,6 +354,23 @@ impl Blockchain {
 
     pub fn get_pending_transactions(&self, limit: usize) -> Vec<Transaction> {
         self.pending_transactions.peek_n(limit)
+    }
+
+    /// Add an extended transaction (CEO-signed) to the pending pool
+    pub fn add_extended_transaction_to_pool(&mut self, tx: crate::transaction::BlockTransaction) -> Result<(), BlockchainError> {
+        tx.validate()?;
+        self.pending_extended_transactions.push(tx);
+        Ok(())
+    }
+
+    /// Get pending extended transactions for block inclusion
+    pub fn get_pending_extended_transactions(&self) -> Vec<crate::transaction::BlockTransaction> {
+        self.pending_extended_transactions.clone()
+    }
+
+    /// Clear processed extended transactions from the pool
+    pub fn clear_extended_transactions(&mut self, count: usize) {
+        self.pending_extended_transactions.drain(0..count);
     }
 
     pub fn remove_transactions_from_pool(&mut self, hashes: &[TxHash]) {

@@ -18,6 +18,7 @@ use genesis::CEO_WALLET;
 use model::{default_tier_configs, now_timestamp, SubscriptionTier, TierManager};
 use model::tiers::SubscriptionPayload;
 use model::{ModelMetadata, ModelRegistry};
+use model::registry::DeploymentStatus;
 
 fn make_tx(sender: &str, receiver: &str, amount: u64, payload: SubscriptionPayload) -> Transaction {
     let payload_bytes = serde_json::to_vec(&payload).unwrap();
@@ -185,6 +186,8 @@ fn tier_based_feature_gating_and_model_access() {
         minimum_tier: None,
         is_experimental: false,
         created_at: 1,
+        deployment_status: DeploymentStatus::Stable,
+        traffic_percentage: 100.0,
     };
     let pro_only = ModelMetadata {
         model_id: "pro-only".to_string(),
@@ -197,6 +200,8 @@ fn tier_based_feature_gating_and_model_access() {
         minimum_tier: Some(SubscriptionTier::Pro),
         is_experimental: false,
         created_at: 1,
+        deployment_status: DeploymentStatus::Stable,
+        traffic_percentage: 100.0,
     };
     registry.register_model(open).unwrap();
     registry.register_model(pro_only).unwrap();

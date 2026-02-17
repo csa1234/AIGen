@@ -48,6 +48,20 @@ impl From<GenesisError> for ModelError {
     }
 }
 
+/// Deployment status for a model version in canary rollout
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub enum DeploymentStatus {
+    /// Stable production version
+    #[default]
+    Stable,
+    /// Canary version receiving traffic
+    Canary,
+    /// Shadow mode - no traffic, background inference only
+    Shadow,
+    /// Deprecated version, no longer used
+    Deprecated,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ModelMetadata {
     pub model_id: String,
@@ -62,6 +76,12 @@ pub struct ModelMetadata {
     #[serde(default)]
     pub is_experimental: bool,
     pub created_at: i64,
+    /// Deployment status for canary rollout
+    #[serde(default)]
+    pub deployment_status: DeploymentStatus,
+    /// Traffic percentage for canary (0.0-100.0)
+    #[serde(default)]
+    pub traffic_percentage: f32,
 }
 
 impl ModelMetadata {
@@ -547,6 +567,80 @@ impl ModelRegistry {
 
     pub fn has_fragment_manifest(&self, model_id: &str) -> bool {
         self.fragments.contains_key(model_id)
+    }
+
+    // =========================================================================
+    // Canary Deployment Status Methods
+    // =========================================================================
+
+    /// Set deployment status for a model version
+    pub fn set_deployment_status(
+        &self,
+        model_id: &str,
+        status: DeploymentStatus,
+    ) -> Result<(), ModelError> {
+        check_shutdown()?;
+        let mut entry = self.models.get_mut(model_id).ok_or(ModelError::ModelNotFound)?;
+        entry.deployment_status = status;
+        Ok(())
+    }
+
+    /// Set traffic percentage for a canary model
+    pub fn set_traffic_percentage(
+        &self,
+        model_id: &str,
+        percentage: f32,
+    ) -> Result<(), ModelError> {
+        check_shutdown()?;
+        let mut entry = self.models.get_mut(model_id).ok_or(ModelError::ModelNotFound)?;
+        entry.traffic_percentage = percentage.clamp(0.0, 100.0);
+        Ok(())
+    }
+
+    /// Get all models with a specific deployment status
+    pub fn get_models_by_status(&self, status: DeploymentStatus) -> Result<Vec<ModelMetadata>, ModelError> {
+        check_shutdown()?;
+        let models: Vec<ModelMetadata> = self
+            .models
+            .iter()
+            .filter(|entry| entry.value().deployment_status == status)
+            .map(|entry| entry.value().clone())
+            .collect();
+        Ok(models)
+    }
+
+    /// Get the stable version of a model (the one with Stable status)
+    pub fn get_stable_version(&self, model_base_id: &str) -> Result<Option<ModelMetadata>, ModelError> {
+        check_shutdown()?;
+        // Find model with same base ID that has Stable status
+        let stable = self
+            .models
+            .iter()
+            .filter(|entry| {
+                let m = entry.value();
+                m.model_id.starts_with(model_base_id) && m.deployment_status == DeploymentStatus::Stable
+            })
+            .map(|entry| entry.value().clone())
+            .next();
+        Ok(stable)
+    }
+
+    /// Get the canary version of a model (the one with Canary or Shadow status)
+    pub fn get_canary_version(&self, model_base_id: &str) -> Result<Option<ModelMetadata>, ModelError> {
+        check_shutdown()?;
+        // Find model with same base ID that has Canary or Shadow status
+        let canary = self
+            .models
+            .iter()
+            .filter(|entry| {
+                let m = entry.value();
+                m.model_id.starts_with(model_base_id) 
+                    && (m.deployment_status == DeploymentStatus::Canary 
+                        || m.deployment_status == DeploymentStatus::Shadow)
+            })
+            .map(|entry| entry.value().clone())
+            .next();
+        Ok(canary)
     }
 }
 

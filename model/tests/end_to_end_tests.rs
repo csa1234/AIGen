@@ -69,6 +69,8 @@ impl TestHarness {
             minimum_tier: None,
             is_experimental: false,
             created_at: model::now_timestamp(),
+            deployment_status: model::registry::DeploymentStatus::Stable,
+            traffic_percentage: 100.0,
         };
         self.registry.register_model(metadata).unwrap();
         for shard in shards.iter() {
@@ -268,6 +270,8 @@ async fn redundancy_check_three_replication() {
         minimum_tier: None,
         is_experimental: false,
         created_at: model::now_timestamp(),
+        deployment_status: model::registry::DeploymentStatus::Stable,
+        traffic_percentage: 100.0,
     };
     registry.register_model(meta).unwrap();
     for idx in 0..2 {

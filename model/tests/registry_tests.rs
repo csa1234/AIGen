@@ -12,6 +12,7 @@ use ed25519_dalek::{Signature, Signer, SigningKey};
 use genesis::shutdown::reset_shutdown_for_tests;
 use genesis::{emergency_shutdown, CeoSignature, GenesisConfig, ShutdownCommand};
 use model::{ModelError, ModelMetadata, ModelRegistry, ModelShard};
+use model::registry::DeploymentStatus;
 use std::sync::Arc;
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -55,6 +56,8 @@ fn sample_metadata(model_id: &str, is_core_model: bool, created_at: i64) -> Mode
         minimum_tier: None,
         is_experimental: false,
         created_at,
+        deployment_status: DeploymentStatus::Stable,
+        traffic_percentage: 100.0,
     }
 }
 

@@ -24,6 +24,7 @@ use model::{
     LocalStorage, ModelMetadata, ModelRegistry, SubscriptionTier, TierConfig, TierManager,
     VolumeDiscountTracker,
 };
+use model::registry::DeploymentStatus;
 
 fn test_configs() -> HashMap<SubscriptionTier, TierConfig> {
     let mut configs = HashMap::new();
@@ -99,6 +100,8 @@ fn sample_metadata(model_id: &str, minimum_tier: Option<SubscriptionTier>) -> Mo
         minimum_tier,
         is_experimental: false,
         created_at: 1,
+        deployment_status: DeploymentStatus::Stable,
+        traffic_percentage: 100.0,
     }
 }
 

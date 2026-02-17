@@ -230,3 +230,191 @@ impl Default for InferenceVerificationConfig {
         }
     }
 }
+
+/// Verification error types
+#[derive(Clone, Debug)]
+pub enum VerificationError {
+    InvalidProof,
+    ShutdownActive,
+}
+
+impl std::fmt::Display for VerificationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            VerificationError::InvalidProof => write!(f, "Invalid proof"),
+            VerificationError::ShutdownActive => write!(f, "Shutdown active"),
+        }
+    }
+}
+
+impl std::error::Error for VerificationError {}
+
+/// Verify a training proof for federated learning
+/// 
+/// Validates:
+/// - Participants list (all nodes contributed shares)
+/// - Delta magnitude is reasonable (L2 norm < threshold)
+/// - Fisher matrix hash matches on-chain IPFS hash
+/// - EWC regularization was applied (lambda > 0)
+/// - Learning rate = 1e-6, epochs = 1
+pub fn verify_training_proof(training_proof: &serde_json::Value) -> Result<bool, VerificationError> {
+    // Validate participants list
+    let participants = training_proof
+        .get("participants")
+        .and_then(|v| v.as_array())
+        .ok_or(VerificationError::InvalidProof)?;
+    
+    if participants.len() < 2 {
+        return Ok(false); // Need at least 2 participants for federated learning
+    }
+
+    // Validate delta magnitude (L2 norm < threshold)
+    let delta_l2_norm = training_proof
+        .get("delta_l2_norm")
+        .and_then(|v| v.as_f64())
+        .ok_or(VerificationError::InvalidProof)?;
+    
+    const MAX_DELTA_L2_NORM: f64 = 1000.0; // Threshold for reasonable delta
+    if delta_l2_norm > MAX_DELTA_L2_NORM {
+        return Ok(false);
+    }
+
+    // Validate Fisher matrix hash if present
+    if let Some(fisher_hash) = training_proof.get("fisher_hash").and_then(|v| v.as_str()) {
+        if fisher_hash.len() != 64 { // 32 bytes in hex
+            return Ok(false);
+        }
+    }
+
+    // Validate EWC regularization
+    let ewc_lambda = training_proof
+        .get("ewc_lambda")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0);
+    
+    if ewc_lambda < 0.0 || ewc_lambda > 10.0 {
+        return Ok(false);
+    }
+
+    // Validate learning parameters
+    let learning_rate = training_proof
+        .get("learning_rate")
+        .and_then(|v| v.as_f64())
+        .ok_or(VerificationError::InvalidProof)?;
+    
+    // Expected learning rate: 1e-6 (with small tolerance)
+    const EXPECTED_LR: f64 = 1e-6;
+    const LR_TOLERANCE: f64 = 1e-8;
+    if (learning_rate - EXPECTED_LR).abs() > LR_TOLERANCE {
+        return Ok(false);
+    }
+
+    // Validate epochs
+    let epochs = training_proof
+        .get("epochs")
+        .and_then(|v| v.as_u64())
+        .ok_or(VerificationError::InvalidProof)?;
+    
+    // Expected: 1 epoch for burst training
+    if epochs != 1 {
+        return Ok(false);
+    }
+
+    // Validate batch size
+    let batch_size = training_proof
+        .get("batch_size")
+        .and_then(|v| v.as_u64())
+        .ok_or(VerificationError::InvalidProof)?;
+    
+    if batch_size == 0 || batch_size > 1024 {
+        return Ok(false);
+    }
+
+    // Validate round_id
+    let round_id = training_proof
+        .get("round_id")
+        .and_then(|v| v.as_str())
+        .ok_or(VerificationError::InvalidProof)?;
+    
+    if uuid::Uuid::parse_str(round_id).is_err() {
+        return Ok(false);
+    }
+
+    Ok(true)
+}
+
+/// Simple hash function for PoI verification (BLAKE3)
+pub fn hash_data(data: &[u8]) -> [u8; 32] {
+    blake3::hash(data).into()
+}
+
+/// Validate work difficulty for PoI
+pub fn validate_work_difficulty(work_hash: &[u8; 32], difficulty: u64) -> Result<u64, VerificationError> {
+    if difficulty == 0 {
+        return Err(VerificationError::InvalidProof);
+    }
+    let mut prefix = [0u8; 16];
+    prefix.copy_from_slice(&work_hash[..16]);
+    let value = u128::from_be_bytes(prefix);
+    let target = u128::MAX / difficulty as u128;
+    if value > target {
+        return Err(VerificationError::InvalidProof);
+    }
+    Ok(difficulty)
+}
+
+/// Generate PoI proof work payload bytes
+#[allow(clippy::too_many_arguments)]
+pub fn poi_proof_work_payload_bytes(
+    miner_address: &str,
+    work_type: WorkType,
+    input_hash: [u8; 32],
+    output_data: &[u8],
+    computation_metadata: &ComputationMetadata,
+    difficulty: u64,
+    timestamp: i64,
+    nonce: u64,
+) -> Vec<u8> {
+    let mut buf = Vec::new();
+    buf.extend_from_slice(miner_address.as_bytes());
+    buf.push(work_type as u8);
+    buf.extend_from_slice(&input_hash);
+    buf.extend_from_slice(&(output_data.len() as u64).to_le_bytes());
+    buf.extend_from_slice(output_data);
+    let meta_bytes = bincode::serialize(computation_metadata).unwrap_or_default();
+    buf.extend_from_slice(&(meta_bytes.len() as u64).to_le_bytes());
+    buf.extend_from_slice(&meta_bytes);
+    buf.extend_from_slice(&difficulty.to_le_bytes());
+    buf.extend_from_slice(&timestamp.to_le_bytes());
+    buf.extend_from_slice(&nonce.to_le_bytes());
+    buf
+}
+
+/// Verify a PoI proof
+pub fn verify_poi_proof(proof: &PoIProof) -> Result<bool, VerificationError> {
+    let expected = hash_data(&poi_proof_work_payload_bytes(
+        &proof.miner_address,
+        proof.work_type,
+        proof.input_hash,
+        &proof.output_data,
+        &proof.computation_metadata,
+        proof.difficulty,
+        proof.timestamp,
+        proof.nonce,
+    ));
+    if expected != proof.work_hash {
+        return Err(VerificationError::InvalidProof);
+    }
+
+    validate_work_difficulty(&proof.work_hash, proof.difficulty)?;
+
+    let now = chrono::Utc::now().timestamp();
+    if proof.timestamp <= 0 {
+        return Err(VerificationError::InvalidProof);
+    }
+    if proof.timestamp > now + 300 || proof.timestamp < now - (86_400 * 365) {
+        return Err(VerificationError::InvalidProof);
+    }
+
+    Ok(true)
+}

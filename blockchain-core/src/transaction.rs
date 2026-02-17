@@ -804,6 +804,343 @@ pub fn hash_remove_g8_tx(tx: &RemoveG8MemberTx) -> TxHash {
     TxHash(hasher.finalize().into())
 }
 
+/// Register a model on-chain (CEO-signed)
+/// 
+/// This transaction registers a new AI model in the on-chain registry.
+/// Only the CEO can submit this transaction, ensuring controlled model deployment.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RegisterModelTx {
+    /// Unique model identifier
+    pub model_id: String,
+    /// Model name
+    pub name: String,
+    /// Model version
+    pub version: String,
+    /// IPFS CID where model weights are stored
+    pub ipfs_cid: String,
+    /// SHA3-256 hash of model weights for verification
+    pub weights_hash: [u8; 32],
+    /// Model architecture type (e.g., "llama4", "kimi-k2.5")
+    pub architecture: String,
+    /// Minimum subscription tier required (0=Free, 1=Basic, 2=Pro, 3=Enterprise)
+    pub minimum_tier: u8,
+    /// Whether this is a core model (required for network bootstrap)
+    pub is_core: bool,
+    /// Number of shards for distributed inference
+    pub shard_count: u32,
+    /// Transaction timestamp
+    pub timestamp: Timestamp,
+    /// CEO signature authorizing this registration
+    pub ceo_signature: Option<CeoSignature>,
+    /// Transaction hash
+    pub tx_hash: TxHash,
+}
+
+impl RegisterModelTx {
+    /// Create a new model registration transaction
+    pub fn new(
+        model_id: String,
+        name: String,
+        version: String,
+        ipfs_cid: String,
+        weights_hash: [u8; 32],
+        architecture: String,
+        minimum_tier: u8,
+        is_core: bool,
+        shard_count: u32,
+        timestamp: i64,
+    ) -> Result<Self, GenesisError> {
+        check_shutdown()?;
+        
+        if model_id.is_empty() || name.is_empty() || version.is_empty() {
+            return Err(GenesisError::InvalidAddress("Model fields cannot be empty".to_string()));
+        }
+        
+        let mut tx = RegisterModelTx {
+            model_id,
+            name,
+            version,
+            ipfs_cid,
+            weights_hash,
+            architecture,
+            minimum_tier,
+            is_core,
+            shard_count,
+            timestamp: Timestamp(timestamp),
+            ceo_signature: None,
+            tx_hash: TxHash([0u8; 32]),
+        };
+        tx.update_hash();
+        Ok(tx)
+    }
+    
+    fn update_hash(&mut self) {
+        self.tx_hash = hash_register_model_tx(self);
+    }
+    
+    /// Sign the transaction with CEO key
+    pub fn sign_with_ceo(mut self, ceo_signature: CeoSignature) -> Self {
+        self.ceo_signature = Some(ceo_signature);
+        self
+    }
+    
+    /// Validate the transaction
+    pub fn validate(&self) -> Result<(), BlockchainError> {
+        if self.model_id.is_empty() || self.name.is_empty() {
+            return Err(BlockchainError::InvalidTransaction);
+        }
+        if self.timestamp.value() < 0 {
+            return Err(BlockchainError::InvalidTimestamp);
+        }
+        Ok(())
+    }
+}
+
+impl CeoTransactable for RegisterModelTx {
+    fn sender_address(&self) -> &str {
+        CEO_WALLET
+    }
+    
+    fn is_priority(&self) -> bool {
+        true
+    }
+    
+    fn ceo_signature(&self) -> Option<&CeoSignature> {
+        self.ceo_signature.as_ref()
+    }
+    
+    fn message_to_sign(&self) -> Vec<u8> {
+        self.tx_hash.0.to_vec()
+    }
+}
+
+/// Hash function for RegisterModelTx
+pub fn hash_register_model_tx(tx: &RegisterModelTx) -> TxHash {
+    use sha3::{Digest, Sha3_256};
+    let mut hasher = Sha3_256::new();
+    hasher.update(tx.model_id.as_bytes());
+    hasher.update(tx.name.as_bytes());
+    hasher.update(tx.version.as_bytes());
+    hasher.update(tx.ipfs_cid.as_bytes());
+    hasher.update(&tx.weights_hash);
+    hasher.update(tx.architecture.as_bytes());
+    hasher.update(&[tx.minimum_tier]);
+    hasher.update(&[tx.is_core as u8]);
+    hasher.update(&tx.shard_count.to_le_bytes());
+    hasher.update(&tx.timestamp.value().to_le_bytes());
+    TxHash(hasher.finalize().into())
+}
+
+/// Update constitution (CEO-signed)
+/// 
+/// This transaction updates the on-chain constitution with a new version.
+/// Requires CEO signature and a detailed reason for the update (minimum 100 chars).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct UpdateConstitutionTx {
+    /// Constitution version number
+    pub version: u32,
+    /// IPFS hash of the constitution document
+    pub ipfs_hash: String,
+    /// SHA3-256 hash of the principles for verification
+    pub principles_hash: [u8; 32],
+    /// Detailed reason for the update (minimum 100 characters)
+    pub reason: String,
+    /// Transaction timestamp
+    pub timestamp: Timestamp,
+    /// CEO signature authorizing this update
+    pub ceo_signature: Option<CeoSignature>,
+    /// Transaction hash
+    pub tx_hash: TxHash,
+}
+
+impl UpdateConstitutionTx {
+    /// Create a new constitution update transaction
+    pub fn new(
+        version: u32,
+        ipfs_hash: String,
+        principles_hash: [u8; 32],
+        reason: String,
+        timestamp: i64,
+    ) -> Result<Self, GenesisError> {
+        check_shutdown()?;
+        
+        if reason.len() < 100 {
+            return Err(GenesisError::InvalidAddress("Constitution update reason must be >= 100 chars".to_string()));
+        }
+        
+        let mut tx = UpdateConstitutionTx {
+            version,
+            ipfs_hash,
+            principles_hash,
+            reason,
+            timestamp: Timestamp(timestamp),
+            ceo_signature: None,
+            tx_hash: TxHash([0u8; 32]),
+        };
+        tx.update_hash();
+        Ok(tx)
+    }
+    
+    fn update_hash(&mut self) {
+        self.tx_hash = hash_update_constitution_tx(self);
+    }
+    
+    /// Sign the transaction with CEO key
+    pub fn sign_with_ceo(mut self, ceo_signature: CeoSignature) -> Self {
+        self.ceo_signature = Some(ceo_signature);
+        self
+    }
+    
+    /// Validate the transaction
+    pub fn validate(&self) -> Result<(), BlockchainError> {
+        if self.reason.len() < 100 {
+            return Err(BlockchainError::InvalidTransaction);
+        }
+        if self.timestamp.value() < 0 {
+            return Err(BlockchainError::InvalidTimestamp);
+        }
+        Ok(())
+    }
+}
+
+impl CeoTransactable for UpdateConstitutionTx {
+    fn sender_address(&self) -> &str {
+        CEO_WALLET
+    }
+    
+    fn is_priority(&self) -> bool {
+        true
+    }
+    
+    fn ceo_signature(&self) -> Option<&CeoSignature> {
+        self.ceo_signature.as_ref()
+    }
+    
+    fn message_to_sign(&self) -> Vec<u8> {
+        self.tx_hash.0.to_vec()
+    }
+}
+
+/// Hash function for UpdateConstitutionTx
+pub fn hash_update_constitution_tx(tx: &UpdateConstitutionTx) -> TxHash {
+    use sha3::{Digest, Sha3_256};
+    let mut hasher = Sha3_256::new();
+    hasher.update(&tx.version.to_le_bytes());
+    hasher.update(tx.ipfs_hash.as_bytes());
+    hasher.update(&tx.principles_hash);
+    hasher.update(tx.reason.as_bytes());
+    hasher.update(&tx.timestamp.value().to_le_bytes());
+    TxHash(hasher.finalize().into())
+}
+
+/// Record a training round with PoI proof
+/// 
+/// This transaction records a federated learning training round on-chain,
+/// requiring a valid PoI proof for verification.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RecordTrainingRoundTx {
+    /// Training round ID
+    pub round_id: String,
+    /// Model ID being trained
+    pub model_id: String,
+    /// Training round version
+    pub version: u64,
+    /// IPFS CID of the trained model weights
+    pub weights_cid: String,
+    /// SHA3-256 hash of the weights
+    pub weights_hash: [u8; 32],
+    /// Number of participating nodes
+    pub participant_count: u32,
+    /// Training loss achieved
+    pub final_loss: f64,
+    /// PoI proof JSON (serialized)
+    pub poi_proof: String,
+    /// Transaction timestamp
+    pub timestamp: Timestamp,
+    /// Signature from the training coordinator
+    pub signature: Signature,
+    /// Transaction hash
+    pub tx_hash: TxHash,
+}
+
+impl RecordTrainingRoundTx {
+    /// Create a new training round transaction
+    pub fn new(
+        round_id: String,
+        model_id: String,
+        version: u64,
+        weights_cid: String,
+        weights_hash: [u8; 32],
+        participant_count: u32,
+        final_loss: f64,
+        poi_proof: String,
+        timestamp: i64,
+    ) -> Result<Self, GenesisError> {
+        check_shutdown()?;
+        
+        if round_id.is_empty() || model_id.is_empty() {
+            return Err(GenesisError::InvalidAddress("Round ID and model ID cannot be empty".to_string()));
+        }
+        
+        let mut tx = RecordTrainingRoundTx {
+            round_id,
+            model_id,
+            version,
+            weights_cid,
+            weights_hash,
+            participant_count,
+            final_loss,
+            poi_proof,
+            timestamp: Timestamp(timestamp),
+            signature: Signature::from([0u8; 64]),
+            tx_hash: TxHash([0u8; 32]),
+        };
+        tx.update_hash();
+        Ok(tx)
+    }
+    
+    fn update_hash(&mut self) {
+        self.tx_hash = hash_record_training_round_tx(self);
+    }
+    
+    /// Sign the transaction
+    pub fn sign(mut self, secret_key: &SecretKey) -> Self {
+        let signature = sign_message(self.tx_hash.0.as_ref(), secret_key);
+        self.signature = signature;
+        self
+    }
+    
+    /// Validate the transaction
+    pub fn validate(&self) -> Result<(), BlockchainError> {
+        if self.round_id.is_empty() || self.model_id.is_empty() {
+            return Err(BlockchainError::InvalidTransaction);
+        }
+        if self.timestamp.value() < 0 {
+            return Err(BlockchainError::InvalidTimestamp);
+        }
+        if self.poi_proof.is_empty() {
+            return Err(BlockchainError::InvalidTransaction);
+        }
+        Ok(())
+    }
+}
+
+/// Hash function for RecordTrainingRoundTx
+pub fn hash_record_training_round_tx(tx: &RecordTrainingRoundTx) -> TxHash {
+    use sha3::{Digest, Sha3_256};
+    let mut hasher = Sha3_256::new();
+    hasher.update(tx.round_id.as_bytes());
+    hasher.update(tx.model_id.as_bytes());
+    hasher.update(&tx.version.to_le_bytes());
+    hasher.update(tx.weights_cid.as_bytes());
+    hasher.update(&tx.weights_hash);
+    hasher.update(&tx.participant_count.to_le_bytes());
+    hasher.update(&tx.final_loss.to_le_bytes());
+    hasher.update(tx.poi_proof.as_bytes());
+    hasher.update(&tx.timestamp.value().to_le_bytes());
+    TxHash(hasher.finalize().into())
+}
+
 /// BlockTransaction enum wraps all transaction types for inclusion in blocks
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum BlockTransaction {
@@ -825,6 +1162,12 @@ pub enum BlockTransaction {
     RecordG8Meeting(RecordG8MeetingTx),
     /// Remove G8 member (CEO-signed)
     RemoveG8Member(RemoveG8MemberTx),
+    /// Register model on-chain (CEO-signed)
+    RegisterModel(RegisterModelTx),
+    /// Update constitution (CEO-signed)
+    UpdateConstitution(UpdateConstitutionTx),
+    /// Record training round with PoI proof
+    RecordTrainingRound(RecordTrainingRoundTx),
 }
 
 impl BlockTransaction {
@@ -840,6 +1183,9 @@ impl BlockTransaction {
             BlockTransaction::VoteG8(tx) => tx.tx_hash,
             BlockTransaction::RecordG8Meeting(tx) => tx.tx_hash,
             BlockTransaction::RemoveG8Member(tx) => tx.tx_hash,
+            BlockTransaction::RegisterModel(tx) => tx.tx_hash,
+            BlockTransaction::UpdateConstitution(tx) => tx.tx_hash,
+            BlockTransaction::RecordTrainingRound(tx) => tx.tx_hash,
         }
     }
 
@@ -855,6 +1201,9 @@ impl BlockTransaction {
             BlockTransaction::VoteG8(tx) => tx.validate(),
             BlockTransaction::RecordG8Meeting(tx) => tx.validate(),
             BlockTransaction::RemoveG8Member(tx) => tx.validate(),
+            BlockTransaction::RegisterModel(tx) => tx.validate(),
+            BlockTransaction::UpdateConstitution(tx) => tx.validate(),
+            BlockTransaction::RecordTrainingRound(tx) => tx.validate(),
         }
     }
 
@@ -865,6 +1214,8 @@ impl BlockTransaction {
             BlockTransaction::Reward(tx) => tx.is_authorized(),
             BlockTransaction::RecordG8Meeting(tx) => tx.ceo_signature.is_some(),
             BlockTransaction::RemoveG8Member(tx) => tx.ceo_signature.is_some(),
+            BlockTransaction::RegisterModel(tx) => tx.ceo_signature.is_some(),
+            BlockTransaction::UpdateConstitution(tx) => tx.ceo_signature.is_some(),
             _ => false,
         }
     }

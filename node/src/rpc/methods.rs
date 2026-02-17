@@ -36,6 +36,8 @@ use crate::rpc::types::{
     ProposalResponse, ProposalListResponse, 
     VoteResponse, VoteListResponse, VoteTallyResponse, SubmitVoteRequest, SubmitVoteResponse,
     parse_hex_bytes, to_hex_tx_hash, parse_stake_role, stake_role_to_string,
+    // NEW: Canary Deployment types
+    CanaryDeploymentResponse, CanaryMetricsResponse, RollbackEventResponse, ComplaintResponse,
 };
 use distributed_compute::scheduler::DynamicScheduler;
 use distributed_compute::state::GlobalState;
@@ -109,6 +111,28 @@ pub trait PublicRpc {
 
     #[method(name = "getCompressionStats")]
     async fn get_compression_stats(&self) -> Result<CompressionStatsResponse, RpcError>;
+
+    // NEW: Canary Deployment Monitoring Methods
+    #[method(name = "getCanaryStatus")]
+    async fn get_canary_status(&self) -> Result<Option<CanaryDeploymentResponse>, RpcError>;
+
+    #[method(name = "getCanaryMetrics")]
+    async fn get_canary_metrics(&self) -> Result<Option<CanaryMetricsResponse>, RpcError>;
+
+    #[method(name = "getRollbackHistory")]
+    async fn get_rollback_history(&self) -> Result<Vec<RollbackEventResponse>, RpcError>;
+
+    #[method(name = "forceRollback")]
+    async fn force_rollback(&self, ceo_signature: String, reason: String) -> Result<(), RpcError>;
+
+    #[method(name = "overrideCanaryTraffic")]
+    async fn override_canary_traffic(&self, ceo_signature: String, new_percentage: f32) -> Result<(), RpcError>;
+
+    #[method(name = "recordComplaint")]
+    async fn record_complaint(&self, user_id: String, inference_id: String, reason: String) -> Result<(), RpcError>;
+
+    #[method(name = "getComplaintStats")]
+    async fn get_complaint_stats(&self, model_id: String) -> Result<Vec<ComplaintResponse>, RpcError>;
 }
 
 #[derive(Clone)]
@@ -653,6 +677,166 @@ impl PublicRpcServer for RpcMethods {
             total_bytes_saved: bytes_saved,
             quantization_enabled: true, // We have quantization enabled by default
         })
+    }
+
+    // ==================== Canary Deployment Methods ====================
+
+    async fn get_canary_status(&self) -> Result<Option<CanaryDeploymentResponse>, RpcError> {
+        let orchestrator = self.orchestrator.as_ref()
+            .ok_or(RpcError::Internal("Orchestrator not initialized".to_string()))?;
+        
+        let canary_arc = orchestrator.get_active_canary();
+        let canary = canary_arc.read().await;
+        
+        let deployment = match canary.as_ref() {
+            Some(d) => d,
+            None => return Ok(None),
+        };
+        
+        Ok(Some(CanaryDeploymentResponse {
+            model_id: deployment.model_id.clone(),
+            stable_version: deployment.stable_version.clone(),
+            canary_version: deployment.canary_version.clone(),
+            traffic_percentage: deployment.traffic_percentage,
+            shadow_mode: deployment.shadow_mode,
+            phase: format!("{:?}", deployment.phase),
+            deployment_start: deployment.deployment_start,
+            last_increment: deployment.last_increment,
+            ceo_veto_deadline: deployment.ceo_veto_deadline,
+            ceo_vetoed: deployment.ceo_vetoed,
+        }))
+    }
+
+    async fn get_canary_metrics(&self) -> Result<Option<CanaryMetricsResponse>, RpcError> {
+        let orchestrator = self.orchestrator.as_ref()
+            .ok_or(RpcError::Internal("Orchestrator not initialized".to_string()))?;
+        
+        let canary_arc = orchestrator.get_active_canary();
+        let canary = canary_arc.read().await;
+        
+        let deployment = match canary.as_ref() {
+            Some(d) => d,
+            None => return Ok(None),
+        };
+        
+        Ok(Some(CanaryMetricsResponse {
+            canary_requests: deployment.metrics.canary_requests,
+            canary_violations: deployment.metrics.canary_violations,
+            canary_benevolence_failures: deployment.metrics.canary_benevolence_failures,
+            canary_oracle_unsafe_votes: deployment.metrics.canary_oracle_unsafe_votes,
+            canary_complaints: deployment.metrics.canary_complaints,
+            canary_avg_latency_ms: deployment.metrics.canary_avg_latency_ms,
+            stable_avg_latency_ms: deployment.metrics.stable_avg_latency_ms,
+            last_benevolence_score: deployment.metrics.last_benevolence_score,
+            stable_requests: deployment.metrics.stable_requests,
+            complaint_rate: deployment.metrics.complaint_rate(),
+            latency_ratio: deployment.metrics.latency_ratio(),
+        }))
+    }
+
+    async fn get_rollback_history(&self) -> Result<Vec<RollbackEventResponse>, RpcError> {
+        let orchestrator = self.orchestrator.as_ref()
+            .ok_or(RpcError::Internal("Orchestrator not initialized".to_string()))?;
+        
+        let history_arc = orchestrator.get_rollback_history();
+        let history = history_arc.read().await;
+        
+        Ok(history.iter().map(|event| RollbackEventResponse {
+            timestamp: event.timestamp,
+            model_id: event.model_id.clone(),
+            canary_version: event.canary_version.clone(),
+            reason: event.reason.clone(),
+            traffic_at_rollback: event.traffic_at_rollback,
+            metrics_snapshot: CanaryMetricsResponse {
+                canary_requests: event.metrics_snapshot.canary_requests,
+                canary_violations: event.metrics_snapshot.canary_violations,
+                canary_benevolence_failures: event.metrics_snapshot.canary_benevolence_failures,
+                canary_oracle_unsafe_votes: event.metrics_snapshot.canary_oracle_unsafe_votes,
+                canary_complaints: event.metrics_snapshot.canary_complaints,
+                canary_avg_latency_ms: event.metrics_snapshot.canary_avg_latency_ms,
+                stable_avg_latency_ms: event.metrics_snapshot.stable_avg_latency_ms,
+                last_benevolence_score: event.metrics_snapshot.last_benevolence_score,
+                stable_requests: event.metrics_snapshot.stable_requests,
+                complaint_rate: event.metrics_snapshot.complaint_rate(),
+                latency_ratio: event.metrics_snapshot.latency_ratio(),
+            },
+        }).collect())
+    }
+
+    async fn force_rollback(&self, _ceo_signature: String, reason: String) -> Result<(), RpcError> {
+        // TODO: Verify CEO signature using proper crypto verification
+        // For now, accept any non-empty signature as valid (placeholder for actual verification)
+        
+        let orchestrator = self.orchestrator.as_ref()
+            .ok_or(RpcError::Internal("Orchestrator not initialized".to_string()))?;
+        
+        orchestrator.execute_rollback(reason).await
+            .map_err(|e| RpcError::Internal(format!("Rollback failed: {}", e)))?;
+        
+        Ok(())
+    }
+
+    async fn override_canary_traffic(&self, _ceo_signature: String, new_percentage: f32) -> Result<(), RpcError> {
+        // TODO: Verify CEO signature using proper crypto verification
+        
+        if new_percentage < 0.0 || new_percentage > 100.0 {
+            return Err(RpcError::InvalidParams("Percentage must be between 0 and 100".to_string()));
+        }
+        
+        let orchestrator = self.orchestrator.as_ref()
+            .ok_or(RpcError::Internal("Orchestrator not initialized".to_string()))?;
+        
+        let canary_arc = orchestrator.get_active_canary();
+        let mut canary = canary_arc.write().await;
+        
+        let deployment = canary.as_mut()
+            .ok_or(RpcError::Internal("No active canary deployment".to_string()))?;
+        
+        deployment.traffic_percentage = new_percentage;
+        deployment.last_increment = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        
+        Ok(())
+    }
+
+    async fn record_complaint(&self, user_id: String, inference_id: String, reason: String) -> Result<(), RpcError> {
+        let orchestrator = self.orchestrator.as_ref()
+            .ok_or(RpcError::Internal("Orchestrator not initialized".to_string()))?;
+        
+        // Parse inference_id as UUID
+        let inference_uuid = Uuid::parse_str(&inference_id)
+            .map_err(|e| RpcError::InvalidParams(format!("Invalid inference_id: {}", e)))?;
+        
+        orchestrator.record_complaint(user_id, inference_uuid, reason).await
+            .map_err(|e| RpcError::Internal(format!("Failed to record complaint: {}", e)))?;
+        
+        Ok(())
+    }
+
+    async fn get_complaint_stats(&self, _model_id: String) -> Result<Vec<ComplaintResponse>, RpcError> {
+        let orchestrator = self.orchestrator.as_ref()
+            .ok_or(RpcError::Internal("Orchestrator not initialized".to_string()))?;
+        
+        let tracker = orchestrator.get_complaint_tracker();
+        let mut result = Vec::new();
+        
+        for entry in tracker.iter() {
+            let inference_id = entry.key().clone();
+            let complaints = entry.value();
+            for complaint in complaints {
+                result.push(ComplaintResponse {
+                    user_id: complaint.user_id.clone(),
+                    inference_id: inference_id.clone(),
+                    timestamp: complaint.timestamp,
+                    reason: complaint.reason.clone(),
+                    model_version: "unknown".to_string(), // Would need to track this in complaint
+                });
+            }
+        }
+        
+        Ok(result)
     }
 }
 

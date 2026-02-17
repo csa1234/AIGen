@@ -29,6 +29,7 @@ consensus = { path = "../consensus" }
 network = { path = "../network" }
 distributed-compute = { path = "../distributed-compute" }
 model = { path = "../model" }
+genesis = { path = "../genesis" }
 
 [dev-dependencies]
 tokio-test = "0.4"

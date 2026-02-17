@@ -197,6 +197,188 @@ pub struct ModelApprovalRecord {
     pub training_round_id: Option<String>,
 }
 
+/// On-chain model registry state for tracking deployed models
+/// 
+/// This structure tracks all registered models on the AIGEN blockchain,
+/// including their deployment status, IPFS references, and metadata.
+/// Model registration is a CEO-only operation requiring CEO signature.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct ModelRegistryState {
+    /// Unique model identifier
+    pub model_id: String,
+    /// Model name
+    pub name: String,
+    /// Model version
+    pub version: String,
+    /// IPFS CID where model weights are stored
+    pub ipfs_cid: String,
+    /// SHA3-256 hash of model weights for verification
+    pub weights_hash: [u8; 32],
+    /// Model architecture type (e.g., "llama4", "kimi-k2.5")
+    pub architecture: String,
+    /// Minimum subscription tier required (0=Free, 1=Basic, 2=Pro, 3=Enterprise)
+    pub minimum_tier: u8,
+    /// Deployment status (0=Pending, 1=Stable, 2=Canary, 3=Deprecated)
+    pub deployment_status: u8,
+    /// Current traffic percentage (0.0-100.0)
+    pub traffic_percentage: f32,
+    /// Timestamp when registered
+    pub registered_at: i64,
+    /// Address that registered the model (CEO or approved deployer)
+    pub registered_by: String,
+    /// Block height when registered
+    pub registered_block_height: u64,
+    /// Whether this is a core model (required for network bootstrap)
+    pub is_core: bool,
+    /// Number of shards for distributed inference
+    pub shard_count: u32,
+    /// Associated training round ID (if trained via federated learning)
+    pub training_round_id: Option<String>,
+}
+
+/// Final status of a canary deployment
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub enum CanaryDeploymentFinalStatus {
+    /// Deployment completed successfully (100% traffic)
+    Success,
+    /// Deployment was rolled back due to safety/performance issues
+    Rollback,
+    /// Deployment was aborted by CEO veto
+    CeoVeto,
+    /// Deployment was aborted during shadow phase
+    ShadowAbort,
+}
+
+/// Metrics snapshot for canary deployment audit trail
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Default)]
+pub struct CanaryMetricsSnapshot {
+    /// Total canary requests processed
+    pub canary_requests: u64,
+    /// Constitutional filter violations detected
+    pub violations: u64,
+    /// Benevolence model failures (score < 0.99)
+    pub benevolence_failures: u64,
+    /// Safety oracle unsafe votes
+    pub oracle_unsafe_votes: u64,
+    /// User complaints received
+    pub complaints: u64,
+    /// Average canary latency in milliseconds
+    pub canary_avg_latency_ms: f32,
+    /// Average stable version latency in milliseconds
+    pub stable_avg_latency_ms: f32,
+    /// Final traffic percentage at completion/rollback
+    pub final_traffic_percentage: f32,
+}
+
+/// On-chain record of canary deployment for audit trail
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct CanaryDeploymentRecord {
+    /// Unique deployment ID
+    pub deployment_id: String,
+    /// Model ID being deployed
+    pub model_id: String,
+    /// Stable version being replaced
+    pub stable_version: String,
+    /// New canary version being deployed
+    pub canary_version: String,
+    /// Unix timestamp when deployment started
+    pub deployment_start: i64,
+    /// Unix timestamp when deployment ended (completed or rolled back)
+    pub deployment_end: Option<i64>,
+    /// Final status of the deployment
+    pub final_status: Option<CanaryDeploymentFinalStatus>,
+    /// Metrics snapshot at completion/rollback
+    pub metrics_snapshot: CanaryMetricsSnapshot,
+    /// IPFS hash of detailed deployment logs
+    pub logs_ipfs_hash: Option<String>,
+    /// Reason for rollback (if applicable)
+    pub rollback_reason: Option<String>,
+    /// Block height when deployment started
+    pub start_block_height: u64,
+    /// Block height when deployment ended
+    pub end_block_height: Option<u64>,
+}
+
+/// DAO Proposal state for on-chain governance
+/// 
+/// This structure tracks DAO proposals for network governance decisions,
+/// including parameter changes, feature proposals, and treasury operations.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct DAOProposal {
+    /// Unique proposal identifier
+    pub proposal_id: String,
+    /// Proposal title
+    pub title: String,
+    /// Detailed description of the proposal
+    pub description: String,
+    /// Proposal type (0=ParameterChange, 1=Feature, 2=Treasury, 3=Other)
+    pub proposal_type: u8,
+    /// Proposal status (0=Pending, 1=Active, 2=Passed, 3=Rejected, 4=Executed)
+    pub status: u8,
+    /// Address that submitted the proposal
+    pub proposer: String,
+    /// Unix timestamp when proposal was created
+    pub created_at: i64,
+    /// Unix timestamp when voting begins
+    pub voting_start: i64,
+    /// Unix timestamp when voting ends
+    pub voting_end: i64,
+    /// Total votes for the proposal
+    pub votes_for: u64,
+    /// Total votes against the proposal
+    pub votes_against: u64,
+    /// Total abstentions
+    pub votes_abstain: u64,
+    /// Total voting power that participated
+    pub total_voting_power: u64,
+    /// Minimum quorum required (percentage)
+    pub quorum_required: f32,
+    /// Majority threshold required (percentage)
+    pub majority_required: f32,
+    /// Block height when proposal was created
+    pub created_block_height: u64,
+    /// Block height when proposal was executed (if applicable)
+    pub executed_block_height: Option<u64>,
+    /// IPFS hash of proposal details
+    pub ipfs_hash: Option<String>,
+    /// Proposal-specific parameters (JSON)
+    pub parameters: Option<String>,
+}
+
+/// Event types for canary deployment logging
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub enum CanaryEventType {
+    /// Deployment started (shadow mode)
+    DeploymentStarted,
+    /// Transitioned from shadow to canary phase
+    ShadowToCanary,
+    /// Traffic percentage incremented
+    TrafficIncremented,
+    /// Deployment rolled back
+    RollbackTriggered,
+    /// Deployment completed successfully
+    DeploymentCompleted,
+    /// CEO veto received
+    CeoVetoReceived,
+}
+
+/// On-chain event log for canary deployments
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct CanaryEventLog {
+    /// Deployment ID this event belongs to
+    pub deployment_id: String,
+    /// Type of event
+    pub event_type: CanaryEventType,
+    /// Unix timestamp of the event
+    pub timestamp: i64,
+    /// Block height of the event
+    pub block_height: u64,
+    /// Traffic percentage at time of event
+    pub traffic_percentage: f32,
+    /// Additional event data (JSON)
+    pub event_data: Option<String>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GovernanceVote {
     pub proposal_id: String,
@@ -324,6 +506,10 @@ pub struct ChainStateSnapshot {
     pub g8_members: BTreeMap<String, G8MemberState>,
     pub g8_elections: BTreeMap<String, G8ElectionState>,
     pub g8_meetings: BTreeMap<String, G8MeetingState>,
+    pub canary_deployment_records: BTreeMap<String, CanaryDeploymentRecord>,
+    pub canary_event_logs: Vec<CanaryEventLog>,
+    pub model_registry: BTreeMap<String, ModelRegistryState>,
+    pub dao_proposals: BTreeMap<String, DAOProposal>,
 }
 
 #[derive(Debug, Default)]
@@ -344,6 +530,10 @@ pub struct ChainState {
     g8_members: RwLock<BTreeMap<String, G8MemberState>>,
     g8_elections: RwLock<BTreeMap<String, G8ElectionState>>,
     g8_meetings: RwLock<BTreeMap<String, G8MeetingState>>,
+    canary_deployment_records: RwLock<BTreeMap<String, CanaryDeploymentRecord>>,
+    canary_event_logs: RwLock<Vec<CanaryEventLog>>,
+    model_registry: RwLock<BTreeMap<String, ModelRegistryState>>,
+    dao_proposals: RwLock<BTreeMap<String, DAOProposal>>,
 }
 
 impl Clone for ChainState {
@@ -364,6 +554,10 @@ impl Clone for ChainState {
         let g8_members = self.g8_members.read().clone();
         let g8_elections = self.g8_elections.read().clone();
         let g8_meetings = self.g8_meetings.read().clone();
+        let canary_deployment_records = self.canary_deployment_records.read().clone();
+        let canary_event_logs = self.canary_event_logs.read().clone();
+        let model_registry = self.model_registry.read().clone();
+        let dao_proposals = self.dao_proposals.read().clone();
         ChainState {
             accounts: RwLock::new(accounts),
             subscriptions: RwLock::new(subscriptions),
@@ -381,6 +575,10 @@ impl Clone for ChainState {
             g8_members: RwLock::new(g8_members),
             g8_elections: RwLock::new(g8_elections),
             g8_meetings: RwLock::new(g8_meetings),
+            canary_deployment_records: RwLock::new(canary_deployment_records),
+            canary_event_logs: RwLock::new(canary_event_logs),
+            model_registry: RwLock::new(model_registry),
+            dao_proposals: RwLock::new(dao_proposals),
         }
     }
 }
@@ -404,6 +602,10 @@ impl ChainState {
             g8_members: RwLock::new(BTreeMap::new()),
             g8_elections: RwLock::new(BTreeMap::new()),
             g8_meetings: RwLock::new(BTreeMap::new()),
+            canary_deployment_records: RwLock::new(BTreeMap::new()),
+            canary_event_logs: RwLock::new(Vec::new()),
+            model_registry: RwLock::new(BTreeMap::new()),
+            dao_proposals: RwLock::new(BTreeMap::new()),
         }
     }
 
@@ -424,6 +626,10 @@ impl ChainState {
             g8_members: self.g8_members.read().clone(),
             g8_elections: self.g8_elections.read().clone(),
             g8_meetings: self.g8_meetings.read().clone(),
+            canary_deployment_records: self.canary_deployment_records.read().clone(),
+            canary_event_logs: self.canary_event_logs.read().clone(),
+            model_registry: self.model_registry.read().clone(),
+            dao_proposals: self.dao_proposals.read().clone(),
         }
     }
 
@@ -443,6 +649,10 @@ impl ChainState {
         *self.g8_members.write() = snapshot.g8_members;
         *self.g8_elections.write() = snapshot.g8_elections;
         *self.g8_meetings.write() = snapshot.g8_meetings;
+        *self.canary_deployment_records.write() = snapshot.canary_deployment_records;
+        *self.canary_event_logs.write() = snapshot.canary_event_logs;
+        *self.model_registry.write() = snapshot.model_registry;
+        *self.dao_proposals.write() = snapshot.dao_proposals;
     }
 
     /// Set constitution state (CEO-only operation)
@@ -1161,6 +1371,31 @@ impl ChainState {
         Ok(())
     }
 
+    /// Verify and record a training round with PoI proof
+    /// 
+    /// This method verifies the PoI proof before recording the training round,
+    /// ensuring that only valid training proofs are accepted on-chain.
+    pub fn verify_and_record_training_round(
+        &self,
+        round: TrainingRound,
+        poi_proof: &poi_types::PoIProof,
+    ) -> Result<(), BlockchainError> {
+        // Verify PoI proof
+        poi_types::verify_poi_proof(poi_proof)
+            .map_err(|_| BlockchainError::InvalidTransaction)?;
+        
+        // Verify training proof data within PoI proof
+        if let Some(training_data) = poi_proof.verification_data.get("training_proof") {
+            poi_types::verify_training_proof(training_data)
+                .map_err(|_| BlockchainError::InvalidTransaction)?;
+        } else {
+            return Err(BlockchainError::InvalidTransaction);
+        }
+        
+        // Record the training round
+        self.record_training_round(round)
+    }
+
     /// Get a training round by ID
     pub fn get_training_round(&self, round_id: &str) -> Option<TrainingRound> {
         self.training_rounds.read().get(round_id).cloned()
@@ -1311,6 +1546,345 @@ impl ChainState {
             .filter(|r| r.status == 2 || r.status == 4) // Rejected or Vetoed
             .cloned()
             .collect()
+    }
+
+    // ==================== Model Registry ====================
+
+    /// Register a new model on-chain (CEO-only or approved deployer)
+    pub fn register_model(&self, model: ModelRegistryState) -> Result<(), BlockchainError> {
+        let mut registry = self.model_registry.write();
+        
+        // Check if model already exists
+        if registry.contains_key(&model.model_id) {
+            return Err(BlockchainError::InvalidTransaction);
+        }
+        
+        registry.insert(model.model_id.clone(), model);
+        Ok(())
+    }
+
+    /// Get a registered model by ID
+    pub fn get_registered_model(&self, model_id: &str) -> Option<ModelRegistryState> {
+        self.model_registry.read().get(model_id).cloned()
+    }
+
+    /// Update model deployment status (for canary rollouts)
+    pub fn update_model_deployment_status(
+        &self,
+        model_id: &str,
+        status: u8,
+        traffic_percentage: f32,
+    ) -> Result<(), BlockchainError> {
+        let mut registry = self.model_registry.write();
+        let model = registry.get_mut(model_id)
+            .ok_or(BlockchainError::InvalidTransaction)?;
+        
+        model.deployment_status = status;
+        model.traffic_percentage = traffic_percentage;
+        Ok(())
+    }
+
+    /// List all registered models
+    pub fn list_registered_models(&self) -> Vec<ModelRegistryState> {
+        self.model_registry.read().values().cloned().collect()
+    }
+
+    /// List models by deployment status
+    pub fn list_models_by_status(&self, status: u8) -> Vec<ModelRegistryState> {
+        self.model_registry
+            .read()
+            .values()
+            .filter(|m| m.deployment_status == status)
+            .cloned()
+            .collect()
+    }
+
+    /// Get core models (required for network bootstrap)
+    pub fn get_core_models(&self) -> Vec<ModelRegistryState> {
+        self.model_registry
+            .read()
+            .values()
+            .filter(|m| m.is_core)
+            .cloned()
+            .collect()
+    }
+
+    /// Verify model weights hash matches on-chain record
+    pub fn verify_model_weights_hash(&self, model_id: &str, hash: [u8; 32]) -> bool {
+        if let Some(model) = self.model_registry.read().get(model_id) {
+            model.weights_hash == hash
+        } else {
+            false
+        }
+    }
+
+    /// Associate a training round with a model
+    pub fn link_training_round_to_model(
+        &self,
+        model_id: &str,
+        round_id: String,
+    ) -> Result<(), BlockchainError> {
+        let mut registry = self.model_registry.write();
+        let model = registry.get_mut(model_id)
+            .ok_or(BlockchainError::InvalidTransaction)?;
+        
+        model.training_round_id = Some(round_id);
+        Ok(())
+    }
+
+    /// Process RegisterModelTx
+    pub fn apply_register_model_tx(
+        &self,
+        tx: &crate::transaction::RegisterModelTx,
+        block_height: u64,
+    ) -> Result<(), BlockchainError> {
+        // Verify CEO signature using genesis::verify_ceo_transaction
+        genesis::verify_ceo_transaction(tx)
+            .map_err(|_| BlockchainError::InvalidSignature)?;
+        
+        let model = ModelRegistryState {
+            model_id: tx.model_id.clone(),
+            name: tx.name.clone(),
+            version: tx.version.clone(),
+            ipfs_cid: tx.ipfs_cid.clone(),
+            weights_hash: tx.weights_hash,
+            architecture: tx.architecture.clone(),
+            minimum_tier: tx.minimum_tier,
+            deployment_status: 0, // Pending
+            traffic_percentage: 0.0,
+            registered_at: tx.timestamp.value(),
+            registered_by: CEO_WALLET.to_string(),
+            registered_block_height: block_height,
+            is_core: tx.is_core,
+            shard_count: tx.shard_count,
+            training_round_id: None,
+        };
+        
+        self.register_model(model)
+    }
+
+    /// Process UpdateConstitutionTx
+    pub fn apply_update_constitution_tx(
+        &self,
+        tx: &crate::transaction::UpdateConstitutionTx,
+    ) -> Result<(), BlockchainError> {
+        // Verify CEO signature using genesis::verify_ceo_transaction
+        genesis::verify_ceo_transaction(tx)
+            .map_err(|_| BlockchainError::InvalidSignature)?;
+        
+        let state = ConstitutionState {
+            version: tx.version,
+            ipfs_hash: tx.ipfs_hash.clone(),
+            principles_hash: tx.principles_hash,
+            updated_at: tx.timestamp.value(),
+            updated_by: CEO_WALLET.to_string(),
+        };
+        
+        self.set_constitution(state);
+        Ok(())
+    }
+
+    /// Process RecordTrainingRoundTx with PoI proof verification
+    pub fn apply_record_training_round_tx(
+        &self,
+        tx: &crate::transaction::RecordTrainingRoundTx,
+    ) -> Result<(), BlockchainError> {
+        // Parse and verify the PoI proof
+        let poi_proof: poi_types::PoIProof = serde_json::from_str(&tx.poi_proof)
+            .map_err(|_| BlockchainError::InvalidTransaction)?;
+        
+        // Verify PoI proof
+        poi_types::verify_poi_proof(&poi_proof)
+            .map_err(|_| BlockchainError::InvalidTransaction)?;
+        
+        // Verify training proof data within PoI proof
+        if let Some(training_data) = poi_proof.verification_data.get("training_proof") {
+            poi_types::verify_training_proof(training_data)
+                .map_err(|_| BlockchainError::InvalidTransaction)?;
+        } else {
+            return Err(BlockchainError::InvalidTransaction);
+        }
+        
+        // Extract participants from training proof
+        let participants: Vec<String> = poi_proof
+            .verification_data
+            .get("training_proof")
+            .and_then(|tp| tp.get("participants"))
+            .and_then(|p| serde_json::from_value(p.clone()).ok())
+            .unwrap_or_default();
+        
+        // Extract delta hash from training proof
+        let delta_hash: [u8; 32] = poi_proof
+            .verification_data
+            .get("training_proof")
+            .and_then(|tp| tp.get("delta_hash"))
+            .and_then(|h| h.as_str())
+            .and_then(|s| hex::decode(s).ok())
+            .and_then(|bytes| bytes.as_slice().try_into().ok())
+            .unwrap_or([0u8; 32]);
+        
+        // Extract Fisher hash from training proof
+        let fisher_hash: [u8; 32] = poi_proof
+            .verification_data
+            .get("training_proof")
+            .and_then(|tp| tp.get("fisher_hash"))
+            .and_then(|h| h.as_str())
+            .and_then(|s| hex::decode(s).ok())
+            .and_then(|bytes| bytes.as_slice().try_into().ok())
+            .unwrap_or([0u8; 32]);
+        
+        // Extract replay buffer hash from training proof
+        let replay_buffer_hash: [u8; 32] = poi_proof
+            .verification_data
+            .get("training_proof")
+            .and_then(|tp| tp.get("replay_buffer_hash"))
+            .and_then(|h| h.as_str())
+            .and_then(|s| hex::decode(s).ok())
+            .and_then(|bytes| bytes.as_slice().try_into().ok())
+            .unwrap_or([0u8; 32]);
+        
+        // Extract sample count from computation metadata
+        let sample_count = poi_proof.computation_metadata.iterations as u64;
+        
+        // Extract learning rate (scaled by 1e6)
+        let learning_rate = poi_proof
+            .verification_data
+            .get("training_proof")
+            .and_then(|tp| tp.get("learning_rate"))
+            .and_then(|lr| lr.as_f64())
+            .map(|lr| (lr * 1e6) as u64)
+            .unwrap_or(1); // Default 1e-6 scaled
+        
+        // Extract EWC lambda (scaled by 100)
+        let ewc_lambda = poi_proof
+            .verification_data
+            .get("training_proof")
+            .and_then(|tp| tp.get("ewc_lambda"))
+            .and_then(|lambda| lambda.as_f64())
+            .map(|lambda| (lambda * 100.0) as u32)
+            .unwrap_or(100); // Default 1.0 scaled
+        
+        // Create the training round record
+        let round = TrainingRound {
+            round_id: tx.round_id.clone(),
+            participants,
+            delta_hash,
+            fisher_hash,
+            replay_buffer_hash,
+            timestamp: tx.timestamp.value(),
+            model_id: tx.model_id.clone(),
+            sample_count,
+            learning_rate,
+            ewc_lambda,
+            status: 1, // Completed
+        };
+        
+        // Record the training round
+        self.record_training_round(round)
+    }
+
+    // ==================== DAO Proposals ====================
+
+    /// Register a new DAO proposal
+    pub fn register_dao_proposal(&self, proposal: DAOProposal) -> Result<(), BlockchainError> {
+        let mut proposals = self.dao_proposals.write();
+        
+        if proposals.contains_key(&proposal.proposal_id) {
+            return Err(BlockchainError::InvalidTransaction);
+        }
+        
+        proposals.insert(proposal.proposal_id.clone(), proposal);
+        Ok(())
+    }
+
+    /// Get a DAO proposal by ID
+    pub fn get_dao_proposal(&self, proposal_id: &str) -> Option<DAOProposal> {
+        self.dao_proposals.read().get(proposal_id).cloned()
+    }
+
+    /// Update DAO proposal status
+    pub fn update_dao_proposal_status(
+        &self,
+        proposal_id: &str,
+        status: u8,
+    ) -> Result<(), BlockchainError> {
+        let mut proposals = self.dao_proposals.write();
+        let proposal = proposals.get_mut(proposal_id)
+            .ok_or(BlockchainError::InvalidTransaction)?;
+        
+        proposal.status = status;
+        Ok(())
+    }
+
+    /// Cast a vote on a DAO proposal
+    pub fn vote_on_dao_proposal(
+        &self,
+        proposal_id: &str,
+        vote: u8, // 0=For, 1=Against, 2=Abstain
+        voting_power: u64,
+    ) -> Result<(), BlockchainError> {
+        let mut proposals = self.dao_proposals.write();
+        let proposal = proposals.get_mut(proposal_id)
+            .ok_or(BlockchainError::InvalidTransaction)?;
+        
+        match vote {
+            0 => proposal.votes_for += voting_power,
+            1 => proposal.votes_against += voting_power,
+            2 => proposal.votes_abstain += voting_power,
+            _ => return Err(BlockchainError::InvalidTransaction),
+        }
+        
+        proposal.total_voting_power += voting_power;
+        Ok(())
+    }
+
+    /// List all DAO proposals
+    pub fn list_dao_proposals(&self) -> Vec<DAOProposal> {
+        self.dao_proposals.read().values().cloned().collect()
+    }
+
+    /// List proposals by status
+    pub fn list_dao_proposals_by_status(&self, status: u8) -> Vec<DAOProposal> {
+        self.dao_proposals
+            .read()
+            .values()
+            .filter(|p| p.status == status)
+            .cloned()
+            .collect()
+    }
+
+    /// Get active proposals (within voting period)
+    pub fn get_active_dao_proposals(&self) -> Vec<DAOProposal> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+        
+        self.dao_proposals
+            .read()
+            .values()
+            .filter(|p| p.status == 1 && p.voting_start <= now && p.voting_end > now)
+            .cloned()
+            .collect()
+    }
+
+    /// Execute a passed proposal
+    pub fn execute_dao_proposal(
+        &self,
+        proposal_id: &str,
+        block_height: u64,
+    ) -> Result<(), BlockchainError> {
+        let mut proposals = self.dao_proposals.write();
+        let proposal = proposals.get_mut(proposal_id)
+            .ok_or(BlockchainError::InvalidTransaction)?;
+        
+        if proposal.status != 2 { // Must be passed
+            return Err(BlockchainError::InvalidTransaction);
+        }
+        
+        proposal.status = 4; // Executed
+        proposal.executed_block_height = Some(block_height);
+        Ok(())
     }
 
     // ==================== G8 Safety Committee ====================
@@ -1766,5 +2340,86 @@ impl genesis::ChainStateProvider for ChainState {
                 ceo_response: r.ceo_response.clone(),
             })
             .collect()
+    }
+}
+
+/// Update struct for canary deployment records
+#[derive(Clone, Debug, Default)]
+pub struct CanaryDeploymentUpdate {
+    pub deployment_end: Option<i64>,
+    pub final_status: Option<CanaryDeploymentFinalStatus>,
+    pub metrics_snapshot: Option<CanaryMetricsSnapshot>,
+    pub logs_ipfs_hash: Option<String>,
+    pub rollback_reason: Option<String>,
+    pub end_block_height: Option<u64>,
+}
+
+// ==================== Canary Deployment Logging Methods ====================
+
+impl ChainState {
+    /// Record a new canary deployment start
+    pub fn start_canary_deployment(&self, record: CanaryDeploymentRecord) {
+        self.canary_deployment_records.write().insert(record.deployment_id.clone(), record);
+    }
+
+    /// Log a canary deployment event
+    pub fn log_canary_event(&self, event: CanaryEventLog) {
+        self.canary_event_logs.write().push(event);
+    }
+
+    /// Update an existing canary deployment record
+    pub fn update_canary_deployment(&self, deployment_id: &str, updates: CanaryDeploymentUpdate) {
+        if let Some(record) = self.canary_deployment_records.write().get_mut(deployment_id) {
+            if let Some(end) = updates.deployment_end {
+                record.deployment_end = Some(end);
+            }
+            if let Some(status) = updates.final_status {
+                record.final_status = Some(status);
+            }
+            if let Some(metrics) = updates.metrics_snapshot {
+                record.metrics_snapshot = metrics;
+            }
+            if let Some(hash) = updates.logs_ipfs_hash {
+                record.logs_ipfs_hash = Some(hash);
+            }
+            if let Some(reason) = updates.rollback_reason {
+                record.rollback_reason = Some(reason);
+            }
+            if let Some(height) = updates.end_block_height {
+                record.end_block_height = Some(height);
+            }
+        }
+    }
+
+    /// Get a canary deployment record by ID
+    pub fn get_canary_deployment(&self, deployment_id: &str) -> Option<CanaryDeploymentRecord> {
+        self.canary_deployment_records.read().get(deployment_id).cloned()
+    }
+
+    /// Get all canary deployment records for a model
+    pub fn get_canary_deployments_for_model(&self, model_id: &str) -> Vec<CanaryDeploymentRecord> {
+        self.canary_deployment_records.read()
+            .values()
+            .filter(|r| r.model_id == model_id)
+            .cloned()
+            .collect()
+    }
+
+    /// Get all canary event logs for a deployment
+    pub fn get_canary_events_for_deployment(&self, deployment_id: &str) -> Vec<CanaryEventLog> {
+        self.canary_event_logs.read()
+            .iter()
+            .filter(|e| e.deployment_id == deployment_id)
+            .cloned()
+            .collect()
+    }
+
+    /// Get the latest canary deployment for a model (if any active)
+    pub fn get_latest_canary_deployment(&self, model_id: &str) -> Option<CanaryDeploymentRecord> {
+        self.canary_deployment_records.read()
+            .values()
+            .filter(|r| r.model_id == model_id && r.final_status.is_none())
+            .max_by_key(|r| r.deployment_start)
+            .cloned()
     }
 }

@@ -221,6 +221,14 @@ pub enum NetworkMessage {
         poi_proof: consensus::PoIProof,
         participants: Vec<String>,
     },
+    /// Canary deployment rollback notification
+    CanaryRollback {
+        model_id: String,
+        canary_version: String,
+        reason: String,
+        traffic_at_rollback: f32,
+        timestamp: i64,
+    },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -248,6 +256,7 @@ impl NetworkMessage {
             NetworkMessage::ModelShardResponse { .. } => 85,
             NetworkMessage::ModelFragmentRequest { .. } => 85,
             NetworkMessage::ModelFragmentResponse { .. } => 85,
+            NetworkMessage::CanaryRollback { .. } => 200, // High priority for rollback notifications
             NetworkMessage::PoIProof(_) => 75,
             NetworkMessage::Transaction(_) => 50,
             NetworkMessage::TensorRequest { .. } => 150,

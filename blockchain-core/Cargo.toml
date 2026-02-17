@@ -7,6 +7,7 @@ license.workspace = true
 
 [dependencies]
 genesis = { path = "../genesis", features = ["test-utils"] }
+poi-types = { path = "../poi-types" }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
