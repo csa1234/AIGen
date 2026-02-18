@@ -1141,6 +1141,424 @@ pub fn hash_record_training_round_tx(tx: &RecordTrainingRoundTx) -> TxHash {
     TxHash(hasher.finalize().into())
 }
 
+/// Submit a DAO proposal (staker with >= 0.5% stake)
+/// 
+/// This transaction allows any staker with sufficient stake (>= 0.5% of total staked)
+/// to submit a DAO proposal for network governance decisions.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SubmitDaoProposalTx {
+    /// Unique proposal identifier (UUID)
+    pub proposal_id: String,
+    /// Proposal title
+    pub title: String,
+    /// Detailed description of the proposal
+    pub description: String,
+    /// Proposal type (0=NewDataSource, 1=ConstitutionalChange, 2=ModelType, 3=Other)
+    pub proposal_type: u8,
+    /// Address submitting the proposal
+    pub proposer: String,
+    /// IPFS hash of proposal details (optional)
+    pub ipfs_hash: Option<String>,
+    /// Proposal-specific parameters (JSON, optional)
+    pub parameters: Option<String>,
+    /// Transaction timestamp
+    pub timestamp: Timestamp,
+    /// Transaction hash
+    pub tx_hash: TxHash,
+}
+
+impl SubmitDaoProposalTx {
+    /// Create a new DAO proposal transaction
+    pub fn new(
+        proposal_id: String,
+        title: String,
+        description: String,
+        proposal_type: u8,
+        proposer: String,
+        ipfs_hash: Option<String>,
+        parameters: Option<String>,
+        timestamp: i64,
+    ) -> Result<Self, GenesisError> {
+        check_shutdown()?;
+        validate_address(&proposer)?;
+
+        if title.is_empty() || description.is_empty() {
+            return Err(GenesisError::InvalidAddress("Title and description required".to_string()));
+        }
+
+        let mut tx = SubmitDaoProposalTx {
+            proposal_id,
+            title,
+            description,
+            proposal_type,
+            proposer,
+            ipfs_hash,
+            parameters,
+            timestamp: Timestamp(timestamp),
+            tx_hash: TxHash([0u8; 32]),
+        };
+        tx.update_hash();
+        Ok(tx)
+    }
+
+    fn update_hash(&mut self) {
+        self.tx_hash = hash_submit_dao_proposal_tx(self);
+    }
+
+    pub fn validate(&self) -> Result<(), BlockchainError> {
+        validate_address(&self.proposer)?;
+        if self.title.is_empty() || self.description.is_empty() {
+            return Err(BlockchainError::InvalidTransaction);
+        }
+        if self.timestamp.value() < 0 {
+            return Err(BlockchainError::InvalidTimestamp);
+        }
+        Ok(())
+    }
+}
+
+/// Hash function for SubmitDaoProposalTx
+pub fn hash_submit_dao_proposal_tx(tx: &SubmitDaoProposalTx) -> TxHash {
+    use sha3::{Digest, Sha3_256};
+    let mut hasher = Sha3_256::new();
+    hasher.update(tx.proposal_id.as_bytes());
+    hasher.update(tx.title.as_bytes());
+    hasher.update(tx.description.as_bytes());
+    hasher.update(&[tx.proposal_type]);
+    hasher.update(tx.proposer.as_bytes());
+    if let Some(ref ipfs) = tx.ipfs_hash {
+        hasher.update(ipfs.as_bytes());
+    }
+    if let Some(ref params) = tx.parameters {
+        hasher.update(params.as_bytes());
+    }
+    hasher.update(&tx.timestamp.value().to_le_bytes());
+    TxHash(hasher.finalize().into())
+}
+
+/// Vote on a DAO proposal (any staker)
+/// 
+/// This transaction allows any staker to vote on an active DAO proposal.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct VoteDaoProposalTx {
+    /// Proposal ID being voted on
+    pub proposal_id: String,
+    /// Voter address
+    pub voter: String,
+    /// Vote (0=For, 1=Against, 2=Abstain)
+    pub vote: u8,
+    /// Transaction timestamp
+    pub timestamp: Timestamp,
+    /// Transaction hash
+    pub tx_hash: TxHash,
+}
+
+impl VoteDaoProposalTx {
+    /// Create a new DAO vote transaction
+    pub fn new(
+        proposal_id: String,
+        voter: String,
+        vote: u8,
+        timestamp: i64,
+    ) -> Result<Self, GenesisError> {
+        check_shutdown()?;
+        validate_address(&voter)?;
+
+        if vote > 2 {
+            return Err(GenesisError::InvalidAddress("Invalid vote value (0=For, 1=Against, 2=Abstain)".to_string()));
+        }
+
+        let mut tx = VoteDaoProposalTx {
+            proposal_id,
+            voter,
+            vote,
+            timestamp: Timestamp(timestamp),
+            tx_hash: TxHash([0u8; 32]),
+        };
+        tx.update_hash();
+        Ok(tx)
+    }
+
+    fn update_hash(&mut self) {
+        self.tx_hash = hash_vote_dao_proposal_tx(self);
+    }
+
+    pub fn validate(&self) -> Result<(), BlockchainError> {
+        validate_address(&self.voter)?;
+        if self.vote > 2 {
+            return Err(BlockchainError::InvalidTransaction);
+        }
+        if self.timestamp.value() < 0 {
+            return Err(BlockchainError::InvalidTimestamp);
+        }
+        Ok(())
+    }
+}
+
+/// Hash function for VoteDaoProposalTx
+pub fn hash_vote_dao_proposal_tx(tx: &VoteDaoProposalTx) -> TxHash {
+    use sha3::{Digest, Sha3_256};
+    let mut hasher = Sha3_256::new();
+    hasher.update(tx.proposal_id.as_bytes());
+    hasher.update(tx.voter.as_bytes());
+    hasher.update(&[tx.vote]);
+    hasher.update(&tx.timestamp.value().to_le_bytes());
+    TxHash(hasher.finalize().into())
+}
+
+/// CEO veto on a DAO proposal (CEO-signed)
+/// 
+/// This transaction allows the CEO to veto a passed DAO proposal with a reason.
+/// The reason must be at least 50 characters.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CeoVetoDaoProposalTx {
+    /// Proposal ID being vetoed
+    pub proposal_id: String,
+    /// Reason for veto (minimum 50 characters)
+    pub reason: String,
+    /// Transaction timestamp
+    pub timestamp: Timestamp,
+    /// CEO signature authorizing this veto
+    pub ceo_signature: Option<CeoSignature>,
+    /// Transaction hash
+    pub tx_hash: TxHash,
+}
+
+impl CeoVetoDaoProposalTx {
+    /// Create a new CEO veto transaction
+    pub fn new(
+        proposal_id: String,
+        reason: String,
+        timestamp: i64,
+    ) -> Result<Self, GenesisError> {
+        check_shutdown()?;
+
+        if reason.len() < 50 {
+            return Err(GenesisError::InvalidAddress("Veto reason must be >= 50 chars".to_string()));
+        }
+
+        let mut tx = CeoVetoDaoProposalTx {
+            proposal_id,
+            reason,
+            timestamp: Timestamp(timestamp),
+            ceo_signature: None,
+            tx_hash: TxHash([0u8; 32]),
+        };
+        tx.update_hash();
+        Ok(tx)
+    }
+
+    fn update_hash(&mut self) {
+        self.tx_hash = hash_ceo_veto_dao_proposal_tx(self);
+    }
+
+    pub fn sign_with_ceo(mut self, ceo_signature: CeoSignature) -> Self {
+        self.ceo_signature = Some(ceo_signature);
+        self
+    }
+
+    pub fn validate(&self) -> Result<(), BlockchainError> {
+        if self.reason.len() < 50 {
+            return Err(BlockchainError::InvalidTransaction);
+        }
+        if self.timestamp.value() < 0 {
+            return Err(BlockchainError::InvalidTimestamp);
+        }
+        Ok(())
+    }
+}
+
+impl CeoTransactable for CeoVetoDaoProposalTx {
+    fn sender_address(&self) -> &str {
+        CEO_WALLET
+    }
+
+    fn is_priority(&self) -> bool {
+        true
+    }
+
+    fn ceo_signature(&self) -> Option<&CeoSignature> {
+        self.ceo_signature.as_ref()
+    }
+
+    fn message_to_sign(&self) -> Vec<u8> {
+        self.tx_hash.0.to_vec()
+    }
+}
+
+/// Hash function for CeoVetoDaoProposalTx
+pub fn hash_ceo_veto_dao_proposal_tx(tx: &CeoVetoDaoProposalTx) -> TxHash {
+    use sha3::{Digest, Sha3_256};
+    let mut hasher = Sha3_256::new();
+    hasher.update(tx.proposal_id.as_bytes());
+    hasher.update(tx.reason.as_bytes());
+    hasher.update(&tx.timestamp.value().to_le_bytes());
+    TxHash(hasher.finalize().into())
+}
+
+/// Initiate impeachment proceedings (any staker)
+/// 
+/// This transaction allows any staker to initiate impeachment proceedings
+/// against the CEO for constitutional violations.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ImpeachmentTx {
+    /// Unique impeachment identifier (UUID)
+    pub impeachment_id: String,
+    /// IPFS hash of constitutional violation proof
+    pub proof_ipfs_hash: String,
+    /// Principle IDs violated (1-120)
+    pub violation_principle_ids: Vec<u32>,
+    /// Address initiating the impeachment
+    pub proposer: String,
+    /// Transaction timestamp
+    pub timestamp: Timestamp,
+    /// Transaction hash
+    pub tx_hash: TxHash,
+}
+
+impl ImpeachmentTx {
+    /// Create a new impeachment transaction
+    pub fn new(
+        impeachment_id: String,
+        proof_ipfs_hash: String,
+        violation_principle_ids: Vec<u32>,
+        proposer: String,
+        timestamp: i64,
+    ) -> Result<Self, GenesisError> {
+        check_shutdown()?;
+        validate_address(&proposer)?;
+
+        if proof_ipfs_hash.is_empty() {
+            return Err(GenesisError::InvalidAddress("Proof IPFS hash required".to_string()));
+        }
+
+        if violation_principle_ids.is_empty() {
+            return Err(GenesisError::InvalidAddress("At least one violation principle ID required".to_string()));
+        }
+
+        // Validate principle IDs are in range 1-120
+        for id in &violation_principle_ids {
+            if *id < 1 || *id > 120 {
+                return Err(GenesisError::InvalidAddress("Principle IDs must be between 1 and 120".to_string()));
+            }
+        }
+
+        let mut tx = ImpeachmentTx {
+            impeachment_id,
+            proof_ipfs_hash,
+            violation_principle_ids,
+            proposer,
+            timestamp: Timestamp(timestamp),
+            tx_hash: TxHash([0u8; 32]),
+        };
+        tx.update_hash();
+        Ok(tx)
+    }
+
+    fn update_hash(&mut self) {
+        self.tx_hash = hash_impeachment_tx(self);
+    }
+
+    pub fn validate(&self) -> Result<(), BlockchainError> {
+        validate_address(&self.proposer)?;
+        if self.proof_ipfs_hash.is_empty() {
+            return Err(BlockchainError::InvalidTransaction);
+        }
+        if self.violation_principle_ids.is_empty() {
+            return Err(BlockchainError::InvalidTransaction);
+        }
+        for id in &self.violation_principle_ids {
+            if *id < 1 || *id > 120 {
+                return Err(BlockchainError::InvalidTransaction);
+            }
+        }
+        if self.timestamp.value() < 0 {
+            return Err(BlockchainError::InvalidTimestamp);
+        }
+        Ok(())
+    }
+}
+
+/// Hash function for ImpeachmentTx
+pub fn hash_impeachment_tx(tx: &ImpeachmentTx) -> TxHash {
+    use sha3::{Digest, Sha3_256};
+    let mut hasher = Sha3_256::new();
+    hasher.update(tx.impeachment_id.as_bytes());
+    hasher.update(tx.proof_ipfs_hash.as_bytes());
+    for id in &tx.violation_principle_ids {
+        hasher.update(&id.to_le_bytes());
+    }
+    hasher.update(tx.proposer.as_bytes());
+    hasher.update(&tx.timestamp.value().to_le_bytes());
+    TxHash(hasher.finalize().into())
+}
+
+/// Vote on an impeachment proceeding (any staker)
+/// 
+/// This transaction allows stakers to vote on an active impeachment proceeding.
+/// Each staker's vote is weighted by their staked amount.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ImpeachmentVoteTx {
+    /// Impeachment ID being voted on
+    pub impeachment_id: String,
+    /// Address of the voter
+    pub voter: String,
+    /// Transaction timestamp
+    pub timestamp: Timestamp,
+    /// Transaction hash
+    pub tx_hash: TxHash,
+}
+
+impl ImpeachmentVoteTx {
+    /// Create a new impeachment vote transaction
+    pub fn new(
+        impeachment_id: String,
+        voter: String,
+        timestamp: i64,
+    ) -> Result<Self, GenesisError> {
+        check_shutdown()?;
+        validate_address(&voter)?;
+
+        if impeachment_id.is_empty() {
+            return Err(GenesisError::InvalidAddress("Impeachment ID required".to_string()));
+        }
+
+        let mut tx = ImpeachmentVoteTx {
+            impeachment_id,
+            voter,
+            timestamp: Timestamp(timestamp),
+            tx_hash: TxHash([0u8; 32]),
+        };
+        tx.update_hash();
+        Ok(tx)
+    }
+
+    fn update_hash(&mut self) {
+        self.tx_hash = hash_impeachment_vote_tx(self);
+    }
+
+    pub fn validate(&self) -> Result<(), BlockchainError> {
+        validate_address(&self.voter)?;
+        if self.impeachment_id.is_empty() {
+            return Err(BlockchainError::InvalidTransaction);
+        }
+        if self.timestamp.value() < 0 {
+            return Err(BlockchainError::InvalidTimestamp);
+        }
+        Ok(())
+    }
+}
+
+/// Hash function for ImpeachmentVoteTx
+pub fn hash_impeachment_vote_tx(tx: &ImpeachmentVoteTx) -> TxHash {
+    use sha3::{Digest, Sha3_256};
+    let mut hasher = Sha3_256::new();
+    hasher.update(tx.impeachment_id.as_bytes());
+    hasher.update(tx.voter.as_bytes());
+    hasher.update(&tx.timestamp.value().to_le_bytes());
+    TxHash(hasher.finalize().into())
+}
+
 /// BlockTransaction enum wraps all transaction types for inclusion in blocks
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum BlockTransaction {
@@ -1168,6 +1586,16 @@ pub enum BlockTransaction {
     UpdateConstitution(UpdateConstitutionTx),
     /// Record training round with PoI proof
     RecordTrainingRound(RecordTrainingRoundTx),
+    /// Submit a DAO proposal (staker with >= 0.5% stake)
+    SubmitDaoProposal(SubmitDaoProposalTx),
+    /// Vote on a DAO proposal (any staker)
+    VoteDaoProposal(VoteDaoProposalTx),
+    /// CEO veto on a DAO proposal (CEO-signed)
+    CeoVetoDaoProposal(CeoVetoDaoProposalTx),
+    /// Initiate impeachment proceedings (any staker)
+    Impeachment(ImpeachmentTx),
+    /// Vote on an impeachment proceeding (any staker)
+    ImpeachmentVote(ImpeachmentVoteTx),
 }
 
 impl BlockTransaction {
@@ -1186,6 +1614,11 @@ impl BlockTransaction {
             BlockTransaction::RegisterModel(tx) => tx.tx_hash,
             BlockTransaction::UpdateConstitution(tx) => tx.tx_hash,
             BlockTransaction::RecordTrainingRound(tx) => tx.tx_hash,
+            BlockTransaction::SubmitDaoProposal(tx) => tx.tx_hash,
+            BlockTransaction::VoteDaoProposal(tx) => tx.tx_hash,
+            BlockTransaction::CeoVetoDaoProposal(tx) => tx.tx_hash,
+            BlockTransaction::Impeachment(tx) => tx.tx_hash,
+            BlockTransaction::ImpeachmentVote(tx) => tx.tx_hash,
         }
     }
 
@@ -1204,6 +1637,11 @@ impl BlockTransaction {
             BlockTransaction::RegisterModel(tx) => tx.validate(),
             BlockTransaction::UpdateConstitution(tx) => tx.validate(),
             BlockTransaction::RecordTrainingRound(tx) => tx.validate(),
+            BlockTransaction::SubmitDaoProposal(tx) => tx.validate(),
+            BlockTransaction::VoteDaoProposal(tx) => tx.validate(),
+            BlockTransaction::CeoVetoDaoProposal(tx) => tx.validate(),
+            BlockTransaction::Impeachment(tx) => tx.validate(),
+            BlockTransaction::ImpeachmentVote(tx) => tx.validate(),
         }
     }
 
@@ -1216,6 +1654,7 @@ impl BlockTransaction {
             BlockTransaction::RemoveG8Member(tx) => tx.ceo_signature.is_some(),
             BlockTransaction::RegisterModel(tx) => tx.ceo_signature.is_some(),
             BlockTransaction::UpdateConstitution(tx) => tx.ceo_signature.is_some(),
+            BlockTransaction::CeoVetoDaoProposal(tx) => tx.ceo_signature.is_some(),
             _ => false,
         }
     }

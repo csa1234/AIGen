@@ -765,6 +765,7 @@ async fn run_node(
                         enable_batching: false,
                         max_batch_size: 1,
                         max_batch_wait_ms: 0,
+                        consecutive_failure_threshold: 2,
                     };
                     
                     let orchestrator = Arc::new(distributed_inference::OrchestratorNode::new(

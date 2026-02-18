@@ -1131,6 +1131,143 @@ pub struct VetoStakerProposalRequest {
     pub timestamp: i64,
 }
 
+// DAO Governance RPC Types
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SubmitDaoProposalRequest {
+    /// Proposal title
+    pub title: String,
+    /// Detailed description
+    pub description: String,
+    /// Proposal type (0=NewDataSource, 1=ConstitutionalChange, 2=ModelType, 3=Other)
+    pub proposal_type: u8,
+    /// Proposer address
+    pub proposer_public_key: String,
+    /// IPFS hash of proposal details (optional)
+    pub ipfs_hash: Option<String>,
+    /// Proposal-specific parameters (JSON, optional)
+    pub parameters: Option<String>,
+    /// Request timestamp
+    pub timestamp: i64,
+    /// Ed25519 signature
+    pub signature: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct VoteDaoProposalRequest {
+    /// Proposal ID to vote on
+    pub proposal_id: String,
+    /// Vote (0=For, 1=Against, 2=Abstain)
+    pub vote: u8,
+    /// Voter public key
+    pub voter_public_key: String,
+    /// Request timestamp
+    pub timestamp: i64,
+    /// Ed25519 signature
+    pub signature: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CeoVetoDaoProposalRequest {
+    /// Proposal ID to veto
+    pub proposal_id: String,
+    /// Reason for veto (minimum 50 characters)
+    pub reason: String,
+    /// Request timestamp
+    pub timestamp: i64,
+    /// CEO signature
+    pub signature: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ImpeachmentRequest {
+    /// IPFS hash of constitutional violation proof
+    pub proof_ipfs_hash: String,
+    /// Principle IDs violated (1-120)
+    pub violation_principle_ids: Vec<u32>,
+    /// Proposer public key
+    pub proposer_public_key: String,
+    /// Request timestamp
+    pub timestamp: i64,
+    /// Ed25519 signature
+    pub signature: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DaoProposalDetailResponse {
+    pub proposal_id: String,
+    pub title: String,
+    pub description: String,
+    pub proposal_type: u8,
+    pub status: u8,
+    pub proposer: String,
+    pub created_at: i64,
+    pub voting_start: i64,
+    pub voting_end: i64,
+    pub votes_for: u64,
+    pub votes_against: u64,
+    pub votes_abstain: u64,
+    pub total_voting_power: u64,
+    pub quorum_required: f32,
+    pub majority_required: f32,
+    pub ipfs_hash: Option<String>,
+    pub parameters: Option<String>,
+    pub rejection_reason: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DaoProposalListDetailResponse {
+    pub proposals: Vec<DaoProposalDetailResponse>,
+    pub total_count: u32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ImpeachmentResponse {
+    pub impeachment_id: String,
+    pub initiated_by: String,
+    pub created_at: i64,
+    pub voting_end: i64,
+    pub votes_for: u64,
+    pub total_voting_power: u64,
+    pub proof_ipfs_hash: String,
+    pub violation_principle_ids: Vec<u32>,
+    pub status: u8,
+    pub executed_at: Option<i64>,
+    pub approval_percentage: f64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SubmitDaoProposalResponse {
+    pub success: bool,
+    pub proposal_id: String,
+    pub tx_hash: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SubmitImpeachmentResponse {
+    pub success: bool,
+    pub impeachment_id: String,
+    pub tx_hash: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ImpeachmentVoteRequest {
+    /// Impeachment ID to vote on
+    pub impeachment_id: String,
+    /// Voter public key
+    pub voter_public_key: String,
+    /// Request timestamp
+    pub timestamp: i64,
+    /// Ed25519 signature
+    pub signature: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SubmitImpeachmentVoteResponse {
+    pub success: bool,
+    pub impeachment_id: String,
+    pub tx_hash: String,
+}
+
 pub fn stake_role_to_string(role: &blockchain_core::state::StakeRole) -> String {
     match role {
         blockchain_core::state::StakeRole::Inference => "Inference".to_string(),

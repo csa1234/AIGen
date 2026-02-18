@@ -59,6 +59,7 @@ fn create_metrics(
         stable_avg_latency_ms: stable_latency,
         last_benevolence_score: last_benevolence_score,
         stable_requests: stable_requests,
+        consecutive_failure_ticks: 0,
     }
 }
 

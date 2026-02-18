@@ -41,6 +41,8 @@ use crate::coordinator::{StaticPipelineCoordinator, BatchConfig, InferenceReques
 use distributed_compute::scheduler::DynamicScheduler;
 use consensus::validator::ValidatorRegistry;
 use network::protocol::{NetworkMessage, NodeCapabilities};
+use genesis::shutdown::auto_safety_shutdown;
+use genesis::types::ShutdownTrigger;
 
 // =============================================================================
 // Canary Deployment Types
@@ -69,6 +71,9 @@ pub const MAX_LATENCY_INCREASE_THRESHOLD: f32 = 1.05;
 
 /// Minimum benevolence score threshold
 pub const MIN_BENEVOLENCE_SCORE: f32 = 0.99;
+
+/// Number of consecutive monitoring ticks with failures before triggering auto shutdown
+pub const CONSECUTIVE_FAILURE_THRESHOLD: u32 = 2;
 
 /// Deployment status for a model version
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -125,6 +130,8 @@ pub struct CanaryMetrics {
     pub last_benevolence_score: f32,
     /// Total stable requests during canary period
     pub stable_requests: u64,
+    /// Consecutive monitoring ticks with critical failures (for auto-shutdown threshold)
+    pub consecutive_failure_ticks: u32,
 }
 
 impl CanaryMetrics {
@@ -469,6 +476,8 @@ pub struct OrchestratorConfig {
     pub max_batch_size: usize,
     /// Maximum wait time in milliseconds for batching (default 100ms)
     pub max_batch_wait_ms: u64,
+    /// Number of consecutive monitoring ticks with critical failures before triggering auto shutdown (default 2)
+    pub consecutive_failure_threshold: u32,
 }
 
 impl Default for OrchestratorConfig {
@@ -482,6 +491,7 @@ impl Default for OrchestratorConfig {
             enable_batching: true,
             max_batch_size: 8,
             max_batch_wait_ms: 100,
+            consecutive_failure_threshold: 2,
         }
     }
 }
@@ -1780,21 +1790,91 @@ impl OrchestratorNode {
     }
 
     /// Check rollback triggers (called every 5 minutes)
+    /// 
+    /// This function monitors canary health and triggers both rollback and auto-safety-shutdown
+    /// when critical failures persist for consecutive monitoring ticks. The consecutive failure
+    /// threshold prevents false positives from transient spikes.
     pub async fn check_rollback_triggers(&self) {
         let active_canary = self.active_canary.read().await;
         if let Some(ref deployment) = *active_canary {
             let result = deployment.metrics.check_rollout_criteria();
             if !result.passed {
+                // Check for critical failures that should trigger auto-shutdown
+                let has_critical_failure = result.failures.iter().any(|f| matches!(
+                    f,
+                    RolloutFailure::ConstitutionalViolation(_) |
+                    RolloutFailure::BenevolenceScoreTooLow(_) |
+                    RolloutFailure::SafetyOracleUnsafe(_)
+                ));
+                
                 drop(active_canary);
                 let mut active_canary = self.active_canary.write().await;
                 if let Some(ref mut deployment) = *active_canary {
+                    // Increment consecutive failure counter for critical failures
+                    if has_critical_failure {
+                        deployment.metrics.consecutive_failure_ticks += 1;
+                        
+                        // Trigger auto-safety-shutdown if threshold exceeded
+                        if deployment.metrics.consecutive_failure_ticks >= self.config.consecutive_failure_threshold {
+                            let trigger = Self::determine_shutdown_trigger(&result.failures);
+                            let details = format!(
+                                "Persistent canary failure in model {} version {} at {} UTC: {:?}",
+                                deployment.model_id,
+                                deployment.canary_version,
+                                chrono::Utc::now().format("%Y-%m-%d %H:%M"),
+                                result.failures
+                            );
+                            
+                            tracing::error!(
+                                "Triggering auto-safety-shutdown after {} consecutive failures: {}",
+                                deployment.metrics.consecutive_failure_ticks,
+                                details
+                            );
+                            
+                            if let Err(e) = auto_safety_shutdown(trigger.clone(), details) {
+                                tracing::error!("Failed to trigger auto-safety-shutdown: {:?}", e);
+                            }
+                        }
+                    } else {
+                        // Reset counter if no critical failure this tick
+                        deployment.metrics.consecutive_failure_ticks = 0;
+                    }
+                    
                     let reason = format!("Automatic rollback triggered: {:?}", result.failures);
                     deployment.rollback(&reason);
                     self.execute_rollback_internal(deployment, &reason).await;
                     *active_canary = None;
                 }
+            } else {
+                // Reset consecutive failure counter on passing check
+                drop(active_canary);
+                let mut active_canary = self.active_canary.write().await;
+                if let Some(ref mut deployment) = *active_canary {
+                    deployment.metrics.consecutive_failure_ticks = 0;
+                }
             }
         }
+    }
+    
+    /// Determine the appropriate shutdown trigger based on rollout failures
+    fn determine_shutdown_trigger(failures: &[RolloutFailure]) -> ShutdownTrigger {
+        // Priority: ConstitutionalViolation > BenevolenceFailure > SafetyOracleUnsafe > CanaryRollback
+        for failure in failures {
+            match failure {
+                RolloutFailure::ConstitutionalViolation(_) => {
+                    return ShutdownTrigger::ConstitutionalViolation;
+                }
+                RolloutFailure::BenevolenceScoreTooLow(_) => {
+                    return ShutdownTrigger::BenevolenceFailure;
+                }
+                RolloutFailure::SafetyOracleUnsafe(_) => {
+                    return ShutdownTrigger::SafetyOracleUnsafe;
+                }
+                _ => continue,
+            }
+        }
+        // Default to CanaryRollback for other failures (complaint rate, latency)
+        ShutdownTrigger::CanaryRollback
     }
 
     /// Execute emergency rollback (CEO initiated)

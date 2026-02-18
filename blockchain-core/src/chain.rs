@@ -107,6 +107,31 @@ fn apply_block_transaction(state: &ChainState, tx: &BlockTransaction, block_heig
             training_tx.validate()?;
             state.apply_record_training_round_tx(training_tx)
         }
+        BlockTransaction::SubmitDaoProposal(dao_proposal_tx) => {
+            // Validate and apply DAO proposal submission
+            dao_proposal_tx.validate()?;
+            state.apply_submit_dao_proposal_tx(dao_proposal_tx)
+        }
+        BlockTransaction::VoteDaoProposal(vote_tx) => {
+            // Validate and apply DAO proposal vote
+            vote_tx.validate()?;
+            state.apply_vote_dao_proposal_tx(vote_tx)
+        }
+        BlockTransaction::CeoVetoDaoProposal(veto_tx) => {
+            // Validate and apply CEO veto on DAO proposal
+            veto_tx.validate()?;
+            state.apply_ceo_veto_dao_proposal_tx(veto_tx)
+        }
+        BlockTransaction::Impeachment(impeachment_tx) => {
+            // Validate and apply impeachment transaction
+            impeachment_tx.validate()?;
+            state.apply_impeachment_tx(impeachment_tx)
+        }
+        BlockTransaction::ImpeachmentVote(impeachment_vote_tx) => {
+            // Validate and apply impeachment vote transaction
+            impeachment_vote_tx.validate()?;
+            state.apply_impeachment_vote_tx(impeachment_vote_tx)
+        }
     }
 }
 

@@ -343,6 +343,49 @@ pub struct DAOProposal {
     pub ipfs_hash: Option<String>,
     /// Proposal-specific parameters (JSON)
     pub parameters: Option<String>,
+    /// Rejection reason if vetoed by CEO
+    pub rejection_reason: Option<String>,
+}
+
+/// Impeachment record for CEO removal proceedings
+/// 
+/// This structure tracks impeachment proceedings initiated by stakers
+/// when the CEO violates constitutional principles.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ImpeachmentRecord {
+    /// Unique impeachment identifier (UUID)
+    pub impeachment_id: String,
+    /// Address that initiated the impeachment
+    pub initiated_by: String,
+    /// Unix timestamp when impeachment was created
+    pub created_at: i64,
+    /// Unix timestamp when voting ends (created_at + 48h)
+    pub voting_end: i64,
+    /// Total weighted votes for removal
+    pub votes_for: u64,
+    /// Total voting power that participated
+    pub total_voting_power: u64,
+    /// IPFS hash of constitutional violation proof
+    pub proof_ipfs_hash: String,
+    /// Principle IDs violated (1-120)
+    pub violation_principle_ids: Vec<u32>,
+    /// Status (0=Active, 1=Passed, 2=Failed)
+    pub status: u8,
+    /// When CEO was removed (if passed)
+    pub executed_at: Option<i64>,
+}
+
+/// Impeachment vote record
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ImpeachmentVote {
+    /// Impeachment ID this vote belongs to
+    pub impeachment_id: String,
+    /// Address of the voter
+    pub voter_address: String,
+    /// Unix timestamp of the vote
+    pub timestamp: i64,
+    /// Snapshotted stake weight at vote time
+    pub stake_weight: u64,
 }
 
 /// Event types for canary deployment logging
@@ -510,6 +553,8 @@ pub struct ChainStateSnapshot {
     pub canary_event_logs: Vec<CanaryEventLog>,
     pub model_registry: BTreeMap<String, ModelRegistryState>,
     pub dao_proposals: BTreeMap<String, DAOProposal>,
+    pub impeachments: BTreeMap<String, ImpeachmentRecord>,
+    pub impeachment_votes: Vec<ImpeachmentVote>,
 }
 
 #[derive(Debug, Default)]
@@ -534,6 +579,8 @@ pub struct ChainState {
     canary_event_logs: RwLock<Vec<CanaryEventLog>>,
     model_registry: RwLock<BTreeMap<String, ModelRegistryState>>,
     dao_proposals: RwLock<BTreeMap<String, DAOProposal>>,
+    impeachments: RwLock<BTreeMap<String, ImpeachmentRecord>>,
+    impeachment_votes: RwLock<Vec<ImpeachmentVote>>,
 }
 
 impl Clone for ChainState {
@@ -558,6 +605,8 @@ impl Clone for ChainState {
         let canary_event_logs = self.canary_event_logs.read().clone();
         let model_registry = self.model_registry.read().clone();
         let dao_proposals = self.dao_proposals.read().clone();
+        let impeachments = self.impeachments.read().clone();
+        let impeachment_votes = self.impeachment_votes.read().clone();
         ChainState {
             accounts: RwLock::new(accounts),
             subscriptions: RwLock::new(subscriptions),
@@ -579,6 +628,8 @@ impl Clone for ChainState {
             canary_event_logs: RwLock::new(canary_event_logs),
             model_registry: RwLock::new(model_registry),
             dao_proposals: RwLock::new(dao_proposals),
+            impeachments: RwLock::new(impeachments),
+            impeachment_votes: RwLock::new(impeachment_votes),
         }
     }
 }
@@ -606,6 +657,8 @@ impl ChainState {
             canary_event_logs: RwLock::new(Vec::new()),
             model_registry: RwLock::new(BTreeMap::new()),
             dao_proposals: RwLock::new(BTreeMap::new()),
+            impeachments: RwLock::new(BTreeMap::new()),
+            impeachment_votes: RwLock::new(Vec::new()),
         }
     }
 
@@ -630,6 +683,8 @@ impl ChainState {
             canary_event_logs: self.canary_event_logs.read().clone(),
             model_registry: self.model_registry.read().clone(),
             dao_proposals: self.dao_proposals.read().clone(),
+            impeachments: self.impeachments.read().clone(),
+            impeachment_votes: self.impeachment_votes.read().clone(),
         }
     }
 
@@ -653,6 +708,8 @@ impl ChainState {
         *self.canary_event_logs.write() = snapshot.canary_event_logs;
         *self.model_registry.write() = snapshot.model_registry;
         *self.dao_proposals.write() = snapshot.dao_proposals;
+        *self.impeachments.write() = snapshot.impeachments;
+        *self.impeachment_votes.write() = snapshot.impeachment_votes;
     }
 
     /// Set constitution state (CEO-only operation)
@@ -1887,6 +1944,379 @@ impl ChainState {
         Ok(())
     }
 
+    /// Get total staked amount across all stakers
+    pub fn get_total_staked(&self) -> u64 {
+        self.stakes.read().values()
+            .map(|s| s.staked_amount.value())
+            .sum()
+    }
+
+    /// Apply a SubmitDaoProposalTx transaction
+    pub fn apply_submit_dao_proposal_tx(
+        &self,
+        tx: &crate::transaction::SubmitDaoProposalTx,
+    ) -> Result<(), BlockchainError> {
+        let config = genesis::GovernanceConfig::load();
+        let total_staked = self.get_total_staked();
+        
+        // Calculate minimum stake required (0.5% of total staked by default)
+        let min_stake = (total_staked as f64 * config.dao_proposal_min_stake_percentage / 100.0) as u64;
+        
+        // Check proposer stake
+        let proposer_stake = self.get_stake(&tx.proposer)
+            .map(|s| s.staked_amount.value())
+            .unwrap_or(0);
+        
+        if proposer_stake < min_stake {
+            return Err(BlockchainError::InsufficientStake);
+        }
+        
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+        
+        let voting_end = now + (config.dao_voting_period_hours as i64 * 3600);
+        
+        let proposal = DAOProposal {
+            proposal_id: tx.proposal_id.clone(),
+            title: tx.title.clone(),
+            description: tx.description.clone(),
+            proposal_type: tx.proposal_type,
+            status: 1, // Active
+            proposer: tx.proposer.clone(),
+            created_at: now,
+            voting_start: now,
+            voting_end,
+            votes_for: 0,
+            votes_against: 0,
+            votes_abstain: 0,
+            total_voting_power: 0,
+            quorum_required: 0.0, // No quorum needed per spec
+            majority_required: 50.0,
+            created_block_height: 0, // Will be set when included in block
+            executed_block_height: None,
+            ipfs_hash: tx.ipfs_hash.clone(),
+            parameters: tx.parameters.clone(),
+            rejection_reason: None,
+        };
+        
+        self.register_dao_proposal(proposal)
+    }
+
+    /// Apply a VoteDaoProposalTx transaction
+    pub fn apply_vote_dao_proposal_tx(
+        &self,
+        tx: &crate::transaction::VoteDaoProposalTx,
+    ) -> Result<(), BlockchainError> {
+        // Verify proposal exists and is active
+        let proposal = self.get_dao_proposal(&tx.proposal_id)
+            .ok_or(BlockchainError::InvalidTransaction)?;
+        
+        if proposal.status != 1 {
+            return Err(BlockchainError::InvalidTransaction); // Not active
+        }
+        
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+        
+        if now >= proposal.voting_end {
+            return Err(BlockchainError::InvalidTransaction); // Voting ended
+        }
+        
+        // Check voter has stake > 0
+        let voter_stake = self.get_stake(&tx.voter)
+            .map(|s| s.staked_amount.value())
+            .unwrap_or(0);
+        
+        if voter_stake == 0 {
+            return Err(BlockchainError::InsufficientStake);
+        }
+        
+        // Prevent duplicate votes
+        let existing_votes = self.get_votes_for_proposal(&tx.proposal_id);
+        if existing_votes.iter().any(|v| v.voter_address == tx.voter) {
+            return Err(BlockchainError::InvalidTransaction); // Already voted
+        }
+        
+        // Record the vote
+        self.vote_on_dao_proposal(&tx.proposal_id, tx.vote, voter_stake)?;
+        
+        // Record governance vote for audit trail
+        let governance_vote = GovernanceVote {
+            proposal_id: tx.proposal_id.clone(),
+            voter_address: tx.voter.clone(),
+            vote: tx.vote,
+            comment: None,
+            timestamp: now,
+            stake_weight: voter_stake,
+        };
+        self.governance_votes.write().push(governance_vote);
+        
+        Ok(())
+    }
+
+    /// Finalize a DAO proposal after voting period ends
+    pub fn finalize_dao_proposal(&self, proposal_id: &str) -> Result<(), BlockchainError> {
+        let proposal = self.get_dao_proposal(proposal_id)
+            .ok_or(BlockchainError::InvalidTransaction)?;
+        
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+        
+        if now < proposal.voting_end {
+            return Err(BlockchainError::InvalidTransaction); // Voting not ended
+        }
+        
+        if proposal.status != 1 {
+            return Err(BlockchainError::InvalidTransaction); // Not active
+        }
+        
+        // Compute approval percentage (abstains excluded per simple majority)
+        let total_decisive = proposal.votes_for + proposal.votes_against;
+        let approval_pct = if total_decisive > 0 {
+            (proposal.votes_for as f64 / total_decisive as f64) * 100.0
+        } else {
+            0.0
+        };
+        
+        if approval_pct > 50.0 {
+            self.update_dao_proposal_status(proposal_id, 2)?; // Passed
+            eprintln!("DAO proposal {} passed with {:.2}% approval, forwarded to CEO", proposal_id, approval_pct);
+        } else {
+            self.update_dao_proposal_status(proposal_id, 3)?; // Rejected
+            eprintln!("DAO proposal {} rejected with {:.2}% approval", proposal_id, approval_pct);
+        }
+        
+        Ok(())
+    }
+
+    /// Apply a CeoVetoDaoProposalTx transaction
+    pub fn apply_ceo_veto_dao_proposal_tx(
+        &self,
+        tx: &crate::transaction::CeoVetoDaoProposalTx,
+    ) -> Result<(), BlockchainError> {
+        // Verify CEO signature
+        genesis::verify_ceo_transaction(tx)
+            .map_err(|_| BlockchainError::InvalidSignature)?;
+        
+        // Verify proposal exists and is passed (status == 2)
+        let mut proposals = self.dao_proposals.write();
+        let proposal = proposals.get_mut(&tx.proposal_id)
+            .ok_or(BlockchainError::InvalidTransaction)?;
+        
+        if proposal.status != 2 {
+            return Err(BlockchainError::InvalidTransaction); // Not passed
+        }
+        
+        // Set status to rejected and store reason
+        proposal.status = 3; // Rejected
+        proposal.rejection_reason = Some(tx.reason.clone());
+        
+        // Log on-chain: emit a GovernanceVote record for audit trail
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+        
+        let audit_vote = GovernanceVote {
+            proposal_id: tx.proposal_id.clone(),
+            voter_address: genesis::CEO_WALLET.to_string(),
+            vote: 1, // Against (veto)
+            comment: Some(tx.reason.clone()),
+            timestamp: now,
+            stake_weight: 0, // CEO has no stake weight
+        };
+        self.governance_votes.write().push(audit_vote);
+        
+        eprintln!("CEO vetoed DAO proposal {} with reason: {}", tx.proposal_id, tx.reason);
+        
+        Ok(())
+    }
+
+    /// Apply an ImpeachmentTx transaction
+    pub fn apply_impeachment_tx(
+        &self,
+        tx: &crate::transaction::ImpeachmentTx,
+    ) -> Result<(), BlockchainError> {
+        // Verify proposer has stake > 0
+        let proposer_stake = self.get_stake(&tx.proposer)
+            .map(|s| s.staked_amount.value())
+            .unwrap_or(0);
+        
+        if proposer_stake == 0 {
+            return Err(BlockchainError::InsufficientStake);
+        }
+        
+        // Verify violation_principle_ids are non-empty and valid (1-120)
+        if tx.violation_principle_ids.is_empty() {
+            return Err(BlockchainError::InvalidTransaction);
+        }
+        
+        for id in &tx.violation_principle_ids {
+            if *id < 1 || *id > 120 {
+                return Err(BlockchainError::InvalidTransaction);
+            }
+        }
+        
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+        
+        let voting_end = now + (48 * 3600); // 48 hours
+        
+        let record = ImpeachmentRecord {
+            impeachment_id: tx.impeachment_id.clone(),
+            initiated_by: tx.proposer.clone(),
+            created_at: now,
+            voting_end,
+            votes_for: 0,
+            total_voting_power: 0,
+            proof_ipfs_hash: tx.proof_ipfs_hash.clone(),
+            violation_principle_ids: tx.violation_principle_ids.clone(),
+            status: 0, // Active
+            executed_at: None,
+        };
+        
+        self.impeachments.write().insert(tx.impeachment_id.clone(), record);
+        
+        eprintln!("Impeachment {} initiated by {}", tx.impeachment_id, tx.proposer);
+        
+        Ok(())
+    }
+
+    /// Apply an ImpeachmentVoteTx transaction
+    pub fn apply_impeachment_vote_tx(
+        &self,
+        tx: &crate::transaction::ImpeachmentVoteTx,
+    ) -> Result<(), BlockchainError> {
+        // Delegate to the existing vote_on_impeachment function
+        self.vote_on_impeachment(&tx.impeachment_id, &tx.voter)?;
+        
+        eprintln!("Vote recorded for impeachment {} by {}", tx.impeachment_id, tx.voter);
+        
+        Ok(())
+    }
+
+    /// Vote on an impeachment
+    pub fn vote_on_impeachment(
+        &self,
+        impeachment_id: &str,
+        voter: &str,
+    ) -> Result<(), BlockchainError> {
+        let mut impeachments = self.impeachments.write();
+        let record = impeachments.get_mut(impeachment_id)
+            .ok_or(BlockchainError::InvalidTransaction)?;
+        
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+        
+        if record.status != 0 {
+            return Err(BlockchainError::InvalidTransaction); // Not active
+        }
+        
+        if now >= record.voting_end {
+            return Err(BlockchainError::InvalidTransaction); // Voting ended
+        }
+        
+        // Check voter has stake > 0
+        let voter_stake = self.get_stake(voter)
+            .map(|s| s.staked_amount.value())
+            .unwrap_or(0);
+        
+        if voter_stake == 0 {
+            return Err(BlockchainError::InsufficientStake);
+        }
+        
+        // Prevent duplicate votes
+        let existing_votes = self.impeachment_votes.read();
+        if existing_votes.iter().any(|v| v.impeachment_id == impeachment_id && v.voter_address == voter) {
+            return Err(BlockchainError::InvalidTransaction); // Already voted
+        }
+        drop(existing_votes);
+        
+        // Record vote
+        let vote = ImpeachmentVote {
+            impeachment_id: impeachment_id.to_string(),
+            voter_address: voter.to_string(),
+            timestamp: now,
+            stake_weight: voter_stake,
+        };
+        self.impeachment_votes.write().push(vote);
+        
+        // Accumulate votes
+        record.votes_for += voter_stake;
+        record.total_voting_power += voter_stake;
+        
+        Ok(())
+    }
+
+    /// Finalize an impeachment after voting period ends
+    pub fn finalize_impeachment(&self, impeachment_id: &str) -> Result<(), BlockchainError> {
+        let mut impeachments = self.impeachments.write();
+        let record = impeachments.get_mut(impeachment_id)
+            .ok_or(BlockchainError::InvalidTransaction)?;
+        
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+        
+        if now < record.voting_end {
+            return Err(BlockchainError::InvalidTransaction); // Voting not ended
+        }
+        
+        if record.status != 0 {
+            return Err(BlockchainError::InvalidTransaction); // Not active
+        }
+        
+        // Compute approval percentage
+        let total_staked = self.get_total_staked();
+        let approval_pct = if total_staked > 0 {
+            (record.votes_for as f64 / total_staked as f64) * 100.0
+        } else {
+            0.0
+        };
+        
+        if approval_pct >= 90.0 {
+            record.status = 1; // Passed
+            record.executed_at = Some(now);
+            eprintln!(
+                "Impeachment {} PASSED with {:.2}% approval - CEO removal flagged on-chain",
+                impeachment_id, approval_pct
+            );
+        } else {
+            record.status = 2; // Failed
+            eprintln!(
+                "Impeachment {} failed with {:.2}% approval (requires 90%)",
+                impeachment_id, approval_pct
+            );
+        }
+        
+        Ok(())
+    }
+
+    /// Get an impeachment record by ID
+    pub fn get_impeachment(&self, impeachment_id: &str) -> Option<ImpeachmentRecord> {
+        self.impeachments.read().get(impeachment_id).cloned()
+    }
+
+    /// List all impeachments by status
+    pub fn list_impeachments_by_status(&self, status: u8) -> Vec<ImpeachmentRecord> {
+        self.impeachments.read()
+            .values()
+            .filter(|r| r.status == status)
+            .cloned()
+            .collect()
+    }
+
     // ==================== G8 Safety Committee ====================
 
     /// Create a new G8 election
@@ -2340,6 +2770,30 @@ impl genesis::ChainStateProvider for ChainState {
                 ceo_response: r.ceo_response.clone(),
             })
             .collect()
+    }
+
+    fn get_dao_proposal(&self, proposal_id: &str) -> Option<genesis::DaoProposalInfo> {
+        self.dao_proposals.read().get(proposal_id).map(|p| genesis::DaoProposalInfo {
+            proposal_id: p.proposal_id.clone(),
+            title: p.title.clone(),
+            description: p.description.clone(),
+            proposal_type: p.proposal_type,
+            status: p.status,
+            proposer: p.proposer.clone(),
+            created_at: p.created_at,
+            voting_end: p.voting_end,
+            votes_for: p.votes_for,
+            votes_against: p.votes_against,
+            votes_abstain: p.votes_abstain,
+            ipfs_hash: p.ipfs_hash.clone(),
+            parameters: p.parameters.clone(),
+        })
+    }
+
+    fn get_total_staked(&self) -> u64 {
+        self.stakes.read().values()
+            .map(|s| s.staked_amount.value())
+            .sum()
     }
 }
 

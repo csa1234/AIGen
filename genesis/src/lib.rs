@@ -62,13 +62,18 @@ pub use crate::safety_oracle::{
     get_safety_oracle_config,
 };
 pub use crate::shutdown::{
-    check_shutdown, emergency_shutdown, is_shutdown, shutdown_registry, ShutdownRegistry,
+    auto_safety_shutdown, check_shutdown, emergency_shutdown, get_shutdown_trigger, is_shutdown,
+    shutdown_registry, ShutdownRegistry,
 };
-pub use crate::types::{CeoSignature, GenesisError, ShutdownCommand, SipProposal, WalletAddress, SipStatus};
+pub use crate::types::{
+    AutoShutdownRecord, CeoSignature, GenesisError, ShutdownCommand, ShutdownTrigger, SipProposal,
+    WalletAddress, SipStatus,
+};
 pub use crate::veto::{
     approve_sip, can_deploy_sip, check_and_auto_approve, get_sip_status, submit_sip, veto_sip,
     trigger_auto_approval_check, AutoApproveConfig, SipRegistry, ChainStateProvider,
     check_model_output_compliance, CEO_VETO_WINDOW_SECONDS, check_ceo_veto_window,
     process_expired_veto_windows, verify_poi_training_proof, get_rejection_logs,
     list_pending_ceo_window, TrainingRoundInfo, ModelApprovalRecord, G8Recommendation,
+    forward_dao_proposal_to_ceo, DaoProposalInfo,
 };

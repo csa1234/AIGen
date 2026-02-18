@@ -29,8 +29,8 @@
 use crate::authority::verify_ceo_signature;
 use crate::benevolence::get_benevolence_model;
 use crate::governance_config::GovernanceConfig;
-use crate::shutdown::is_shutdown;
-use crate::types::{CeoSignature, GenesisError, SipProposal, SipStatus};
+use crate::shutdown::{auto_safety_shutdown, is_shutdown};
+use crate::types::{CeoSignature, GenesisError, ShutdownTrigger, SipProposal, SipStatus, WalletAddress};
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -67,6 +67,30 @@ pub trait ChainStateProvider {
     
     /// Get G8 Safety Committee recommendations for a proposal
     fn get_g8_recommendations_for_proposal(&self, proposal_id: &str) -> Vec<G8Recommendation>;
+    
+    /// Get a DAO proposal by ID (for forwarding to CEO)
+    fn get_dao_proposal(&self, proposal_id: &str) -> Option<DaoProposalInfo>;
+    
+    /// Get total staked amount across all stakers
+    fn get_total_staked(&self) -> u64;
+}
+
+/// DAO proposal information for forwarding to CEO
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DaoProposalInfo {
+    pub proposal_id: String,
+    pub title: String,
+    pub description: String,
+    pub proposal_type: u8,
+    pub status: u8,
+    pub proposer: String,
+    pub created_at: i64,
+    pub voting_end: i64,
+    pub votes_for: u64,
+    pub votes_against: u64,
+    pub votes_abstain: u64,
+    pub ipfs_hash: Option<String>,
+    pub parameters: Option<String>,
 }
 
 /// G8 Safety Committee recommendation
@@ -219,6 +243,60 @@ pub fn submit_sip(proposal: SipProposal) -> Result<String, GenesisError> {
     persist_registry(&registry)?;
 
     Ok(id)
+}
+
+/// Forward a passed DAO proposal to CEO for review
+/// 
+/// This function bridges the DAO → CEO pipeline. When a DAO proposal passes
+/// (status == 2), it is converted to a SIP and enters the CEO review queue.
+/// The CEO can then approve_sip or veto_sip.
+pub fn forward_dao_proposal_to_ceo(
+    dao_proposal: &DaoProposalInfo,
+) -> Result<String, GenesisError> {
+    // Verify the proposal is passed
+    if dao_proposal.status != 2 {
+        return Err(GenesisError::InvalidAddress("DAO proposal must be passed (status=2) to forward to CEO".to_string()));
+    }
+    
+    // Create a deterministic proposal hash from DAO proposal data
+    use sha3::{Digest, Sha3_256};
+    let mut hasher = Sha3_256::new();
+    hasher.update(dao_proposal.proposal_id.as_bytes());
+    hasher.update(dao_proposal.title.as_bytes());
+    hasher.update(dao_proposal.description.as_bytes());
+    hasher.update(&dao_proposal.created_at.to_le_bytes());
+    let proposal_hash: [u8; 32] = hasher.finalize().into();
+    
+    // Construct a SipProposal from the DAO proposal
+    let sip = SipProposal {
+        proposal_hash,
+        proposal_id: dao_proposal.proposal_id.clone(),
+        description: format!("{}\n\n{}", dao_proposal.title, dao_proposal.description),
+        code_changes_hash: [0u8; 32], // No code changes for DAO proposals
+        proposer: WalletAddress::new(dao_proposal.proposer.clone())
+            .map_err(|_| GenesisError::InvalidWalletAddress)?,
+        timestamp: dao_proposal.created_at,
+        ceo_approved: false,
+        auto_approved: false,
+        approved_at: None,
+        model_output_sample: None,
+        constitutional_violations: vec![],
+        constitution_version: None,
+        benevolence_score: None,
+        benevolence_model_version: None,
+        safety_oracle_votes: None,
+        training_proof_hash: None,
+        training_round_id: None,
+        training_proof_json: None,
+        model_id: None,
+        auto_approved_at: None,
+        ceo_veto_deadline: None,
+        rejection_logs: vec![],
+        status: SipStatus::Pending,
+    };
+    
+    // Submit to CEO queue
+    submit_sip(sip)
 }
 
 pub fn veto_sip(proposal_id: &str, signature: CeoSignature, chain_state: &dyn ChainStateProvider) -> Result<(), GenesisError> {
@@ -407,6 +485,22 @@ pub fn check_and_auto_approve(
                     v.principle_id, v.category, v.principle_text
                 );
             }
+            
+            // Trigger auto-safety-shutdown for critical constitutional violation
+            let timestamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            let shutdown_details = format!(
+                "Constitutional violation in SIP {} at timestamp {}: {} violation(s) detected",
+                proposal_id,
+                timestamp,
+                violations.len()
+            );
+            if let Err(e) = auto_safety_shutdown(ShutdownTrigger::ConstitutionalViolation, shutdown_details) {
+                eprintln!("Failed to trigger auto-safety-shutdown for constitutional violation: {:?}", e);
+            }
+            
             return Ok(false); // Rejected due to constitutional violations
         }
     }
@@ -466,6 +560,23 @@ pub fn check_and_auto_approve(
                     registry.proposals.insert(proposal_id.to_string(), updated);
                     persist_registry(&registry)?;
                     eprintln!("SIP {} benevolence score {} below threshold {}, requiring CEO review", proposal_id, score_data.score, threshold);
+                    
+                    // Trigger auto-safety-shutdown for critical benevolence failure
+                    let timestamp = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs())
+                        .unwrap_or(0);
+                    let shutdown_details = format!(
+                        "Benevolence score {} below threshold {} in SIP {} at timestamp {}",
+                        score_data.score,
+                        threshold,
+                        proposal_id,
+                        timestamp
+                    );
+                    if let Err(e) = auto_safety_shutdown(ShutdownTrigger::BenevolenceFailure, shutdown_details) {
+                        eprintln!("Failed to trigger auto-safety-shutdown for benevolence failure: {:?}", e);
+                    }
+                    
                     return Ok(false);
                 }
             },
@@ -553,6 +664,24 @@ pub fn check_and_auto_approve(
                         eprintln!("  Mistral: {:?}", result.mistral_vote);
                         eprintln!("  Anthropic: {:?}", result.anthropic_vote);
                         eprintln!("  OpenAI: {:?}", result.openai_vote);
+                        
+                        // Trigger auto-safety-shutdown for critical safety oracle unsafe
+                        let timestamp = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_secs())
+                            .unwrap_or(0);
+                        let shutdown_details = format!(
+                            "Safety Oracle unsafe vote in SIP {} at timestamp {} - Mistral: {:?}, Anthropic: {:?}, OpenAI: {:?}",
+                            proposal_id,
+                            timestamp,
+                            result.mistral_vote,
+                            result.anthropic_vote,
+                            result.openai_vote
+                        );
+                        if let Err(e) = auto_safety_shutdown(ShutdownTrigger::SafetyOracleUnsafe, shutdown_details) {
+                            eprintln!("Failed to trigger auto-safety-shutdown for safety oracle unsafe: {:?}", e);
+                        }
+                        
                         return Ok(false);
                     }
                 },

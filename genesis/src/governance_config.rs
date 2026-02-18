@@ -33,6 +33,14 @@ fn default_g8_compensation_bonus() -> u64 {
     2_000 // AIGEN tokens
 }
 
+fn default_dao_proposal_min_stake_percentage() -> f64 {
+    0.5 // 0.5% of total staked supply
+}
+
+fn default_dao_voting_period_hours() -> u64 {
+    48 // 48 hours for DAO proposal voting
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GovernanceConfig {
@@ -55,6 +63,10 @@ pub struct GovernanceConfig {
     pub g8_compensation_base: u64,
     #[serde(default = "default_g8_compensation_bonus")]
     pub g8_compensation_bonus: u64,
+    #[serde(default = "default_dao_proposal_min_stake_percentage")]
+    pub dao_proposal_min_stake_percentage: f64,
+    #[serde(default = "default_dao_voting_period_hours")]
+    pub dao_voting_period_hours: u64,
 }
 
 fn default_g8_enabled() -> bool {
@@ -75,6 +87,8 @@ impl Default for GovernanceConfig {
             g8_quorum: 5,
             g8_compensation_base: 10_000,
             g8_compensation_bonus: 2_000,
+            dao_proposal_min_stake_percentage: 0.5, // 0.5% of total staked supply
+            dao_voting_period_hours: 48, // 48 hours for DAO proposal voting
         }
     }
 }

@@ -11,6 +11,7 @@
 - **[Genesis Key Security](GENESIS_KEY_SECURITY.md)** - Security model and key management
 - **[Economic Tiers](ECONOMIC_TIERS.md)** - Subscription tiers and pricing
 - **[AI Models](AI_MODELS.md)** - AI model management
+- **[Phased Roadmap](roadmap.md)** — 4-phase implementation plan with timelines, milestones, and team owners
 
 ## Applications
 - **[Admin Dashboard](../dashboard/README.md)** - Web-based admin interface

@@ -101,6 +101,9 @@ pub trait CeoRpc {
 
     #[method(name = "getRegisteredModel")]
     async fn get_registered_model(&self, model_id: String) -> Result<ModelRegistryEntry, RpcError>;
+
+    #[method(name = "vetoDaoProposal")]
+    async fn veto_dao_proposal(&self, request: crate::rpc::types::CeoVetoDaoProposalRequest) -> Result<SuccessResponse, RpcError>;
 }
 
 #[derive(Clone)]
@@ -855,6 +858,43 @@ impl CeoRpcServer for CeoRpcMethods {
             registered_at: model.registered_at,
             is_core: model.is_core,
             shard_count: model.shard_count,
+        })
+    }
+
+    async fn veto_dao_proposal(&self, request: crate::rpc::types::CeoVetoDaoProposalRequest) -> Result<SuccessResponse, RpcError> {
+        use blockchain_core::transaction::CeoVetoDaoProposalTx;
+        
+        // Verify reason length
+        if request.reason.len() < 50 {
+            return Err(RpcError::InvalidParams("Veto reason must be at least 50 characters".to_string()));
+        }
+        
+        // Create the veto transaction first (to get the tx_hash)
+        let tx = CeoVetoDaoProposalTx::new(
+            request.proposal_id.clone(),
+            request.reason.clone(),
+            request.timestamp,
+        ).map_err(|e| RpcError::Internal(e.to_string()))?;
+        
+        // Verify CEO signature on the tx_hash (matches CeoVetoDaoProposalTx::message_to_sign)
+        let ceo_sig = verify_ceo_request(&tx.message_to_sign(), &request.signature)?;
+        
+        let tx = tx.sign_with_ceo(ceo_sig);
+        
+        // Create BlockTransaction and add to pending pool
+        let block_tx = blockchain_core::transaction::BlockTransaction::CeoVetoDaoProposal(tx.clone());
+        
+        let mut bc = self.blockchain.lock().await;
+        bc.add_extended_transaction_to_pool(block_tx)
+            .map_err(|e| RpcError::Internal(format!("Failed to submit transaction: {}", e)))?;
+        
+        let tx_hash = hex::encode(tx.tx_hash.0);
+        
+        println!("DAO proposal {} veto submitted to transaction pool", request.proposal_id);
+        
+        Ok(SuccessResponse {
+            success: true,
+            message: format!("DAO proposal {} veto submitted with tx_hash {}", request.proposal_id, tx_hash),
         })
     }
 }

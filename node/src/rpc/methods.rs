@@ -898,6 +898,28 @@ pub trait StakingGovernanceRpc {
     
     #[method(name = "governance_submitVote")]
     async fn submit_vote(&self, request: SubmitVoteRequest) -> Result<SubmitVoteResponse, RpcError>;
+    
+    // DAO Governance methods
+    #[method(name = "governance_submitDaoProposal")]
+    async fn submit_dao_proposal(&self, request: crate::rpc::types::SubmitDaoProposalRequest) -> Result<crate::rpc::types::SubmitDaoProposalResponse, RpcError>;
+    
+    #[method(name = "governance_voteDaoProposal")]
+    async fn vote_dao_proposal(&self, request: crate::rpc::types::VoteDaoProposalRequest) -> Result<StakeTxResponse, RpcError>;
+    
+    #[method(name = "governance_getDaoProposal")]
+    async fn get_dao_proposal(&self, proposal_id: String) -> Result<Option<crate::rpc::types::DaoProposalDetailResponse>, RpcError>;
+    
+    #[method(name = "governance_listDaoProposals")]
+    async fn list_dao_proposals(&self, status_filter: Option<u8>) -> Result<crate::rpc::types::DaoProposalListDetailResponse, RpcError>;
+    
+    #[method(name = "governance_submitImpeachment")]
+    async fn submit_impeachment(&self, request: crate::rpc::types::ImpeachmentRequest) -> Result<crate::rpc::types::SubmitImpeachmentResponse, RpcError>;
+    
+    #[method(name = "governance_getImpeachment")]
+    async fn get_impeachment(&self, impeachment_id: String) -> Result<Option<crate::rpc::types::ImpeachmentResponse>, RpcError>;
+    
+    #[method(name = "governance_voteImpeachment")]
+    async fn vote_impeachment(&self, request: crate::rpc::types::ImpeachmentVoteRequest) -> Result<crate::rpc::types::SubmitImpeachmentVoteResponse, RpcError>;
 }
 
 pub struct RewardRpcImpl {
@@ -1597,6 +1619,309 @@ impl StakingGovernanceRpcServer for StakingGovernanceRpcImpl {
             success: true,
             proposal_id: request.proposal_id,
             vote: request.vote,
+        })
+    }
+    
+    async fn submit_dao_proposal(&self, request: crate::rpc::types::SubmitDaoProposalRequest) -> Result<crate::rpc::types::SubmitDaoProposalResponse, RpcError> {
+        use blockchain_core::transaction::SubmitDaoProposalTx;
+        use blockchain_core::crypto::{verify_signature, PublicKey};
+        use uuid::Uuid;
+        
+        // Generate proposal ID
+        let proposal_id = Uuid::new_v4().to_string();
+        
+        // Verify signature
+        // Message format: "dao_proposal:{title}:{description}:{proposal_type}:{timestamp}"
+        let msg = format!("dao_proposal:{}:{}:{}:{}", request.title, request.description, request.proposal_type, request.timestamp);
+        let sig_bytes = parse_hex_bytes(&request.signature)?;
+        if sig_bytes.len() != 64 {
+            return Err(RpcError::InvalidParams("signature must be 64 bytes".to_string()));
+        }
+        let signature = ed25519_dalek::Signature::try_from(sig_bytes.as_slice())
+            .map_err(|e| RpcError::InvalidParams(format!("invalid signature: {e}")))?;
+        
+        let pk_bytes = parse_hex_bytes(&request.proposer_public_key)?;
+        if pk_bytes.len() != 32 {
+            return Err(RpcError::InvalidParams("public key must be 32 bytes".to_string()));
+        }
+        let public_key = PublicKey::try_from(pk_bytes.as_slice())
+            .map_err(|e| RpcError::InvalidParams(format!("invalid public key: {e}")))?;
+        
+        if !verify_signature(msg.as_bytes(), &signature, &public_key) {
+            return Err(RpcError::InvalidSignature);
+        }
+        
+        // Derive proposer address from public key
+        let proposer_address = format!("0x{}", hex::encode(&pk_bytes[..20]));
+        
+        // Create transaction
+        let tx = SubmitDaoProposalTx::new(
+            proposal_id.clone(),
+            request.title,
+            request.description,
+            request.proposal_type,
+            proposer_address,
+            request.ipfs_hash,
+            request.parameters,
+            request.timestamp,
+        ).map_err(|e| RpcError::Internal(e.to_string()))?;
+        
+        let tx_hash = to_hex_tx_hash(&tx.tx_hash);
+        
+        // Create BlockTransaction and add to pending pool
+        let block_tx = blockchain_core::transaction::BlockTransaction::SubmitDaoProposal(tx);
+        
+        let mut bc = self.blockchain.lock().await;
+        bc.add_extended_transaction_to_pool(block_tx)
+            .map_err(|e| RpcError::Internal(format!("Failed to submit transaction: {}", e)))?;
+        
+        Ok(crate::rpc::types::SubmitDaoProposalResponse {
+            success: true,
+            proposal_id,
+            tx_hash,
+        })
+    }
+    
+    async fn vote_dao_proposal(&self, request: crate::rpc::types::VoteDaoProposalRequest) -> Result<StakeTxResponse, RpcError> {
+        use blockchain_core::transaction::VoteDaoProposalTx;
+        use blockchain_core::crypto::{verify_signature, PublicKey};
+        
+        // Verify signature
+        let msg = format!("dao_vote:{}:{}:{}", request.proposal_id, request.vote, request.timestamp);
+        let sig_bytes = parse_hex_bytes(&request.signature)?;
+        if sig_bytes.len() != 64 {
+            return Err(RpcError::InvalidParams("signature must be 64 bytes".to_string()));
+        }
+        let signature = ed25519_dalek::Signature::try_from(sig_bytes.as_slice())
+            .map_err(|e| RpcError::InvalidParams(format!("invalid signature: {e}")))?;
+        
+        let pk_bytes = parse_hex_bytes(&request.voter_public_key)?;
+        if pk_bytes.len() != 32 {
+            return Err(RpcError::InvalidParams("public key must be 32 bytes".to_string()));
+        }
+        let public_key = PublicKey::try_from(pk_bytes.as_slice())
+            .map_err(|e| RpcError::InvalidParams(format!("invalid public key: {e}")))?;
+        
+        if !verify_signature(msg.as_bytes(), &signature, &public_key) {
+            return Err(RpcError::InvalidSignature);
+        }
+        
+        let voter_address = format!("0x{}", hex::encode(&pk_bytes[..20]));
+        
+        // Create transaction
+        let tx = VoteDaoProposalTx::new(
+            request.proposal_id.clone(),
+            voter_address,
+            request.vote,
+            request.timestamp,
+        ).map_err(|e| RpcError::Internal(e.to_string()))?;
+        
+        let tx_hash = to_hex_tx_hash(&tx.tx_hash);
+        
+        // Create BlockTransaction and add to pending pool
+        let block_tx = blockchain_core::transaction::BlockTransaction::VoteDaoProposal(tx);
+        
+        let mut bc = self.blockchain.lock().await;
+        bc.add_extended_transaction_to_pool(block_tx)
+            .map_err(|e| RpcError::Internal(format!("Failed to submit transaction: {}", e)))?;
+        
+        Ok(StakeTxResponse {
+            success: true,
+            tx_hash,
+            message: "Vote submitted to transaction pool".to_string(),
+        })
+    }
+    
+    async fn get_dao_proposal(&self, proposal_id: String) -> Result<Option<crate::rpc::types::DaoProposalDetailResponse>, RpcError> {
+        let bc = self.blockchain.lock().await;
+        
+        Ok(bc.state.get_dao_proposal(&proposal_id).map(|p| crate::rpc::types::DaoProposalDetailResponse {
+            proposal_id: p.proposal_id,
+            title: p.title,
+            description: p.description,
+            proposal_type: p.proposal_type,
+            status: p.status,
+            proposer: p.proposer,
+            created_at: p.created_at,
+            voting_start: p.voting_start,
+            voting_end: p.voting_end,
+            votes_for: p.votes_for,
+            votes_against: p.votes_against,
+            votes_abstain: p.votes_abstain,
+            total_voting_power: p.total_voting_power,
+            quorum_required: p.quorum_required,
+            majority_required: p.majority_required,
+            ipfs_hash: p.ipfs_hash,
+            parameters: p.parameters,
+            rejection_reason: p.rejection_reason,
+        }))
+    }
+    
+    async fn list_dao_proposals(&self, status_filter: Option<u8>) -> Result<crate::rpc::types::DaoProposalListDetailResponse, RpcError> {
+        let bc = self.blockchain.lock().await;
+        
+        let proposals: Vec<crate::rpc::types::DaoProposalDetailResponse> = match status_filter {
+            Some(status) => bc.state.list_dao_proposals_by_status(status),
+            None => bc.state.list_dao_proposals(),
+        }
+        .into_iter()
+        .map(|p| crate::rpc::types::DaoProposalDetailResponse {
+            proposal_id: p.proposal_id,
+            title: p.title,
+            description: p.description,
+            proposal_type: p.proposal_type,
+            status: p.status,
+            proposer: p.proposer,
+            created_at: p.created_at,
+            voting_start: p.voting_start,
+            voting_end: p.voting_end,
+            votes_for: p.votes_for,
+            votes_against: p.votes_against,
+            votes_abstain: p.votes_abstain,
+            total_voting_power: p.total_voting_power,
+            quorum_required: p.quorum_required,
+            majority_required: p.majority_required,
+            ipfs_hash: p.ipfs_hash,
+            parameters: p.parameters,
+            rejection_reason: p.rejection_reason,
+        })
+        .collect();
+        
+        let total_count = proposals.len() as u32;
+        
+        Ok(crate::rpc::types::DaoProposalListDetailResponse {
+            proposals,
+            total_count,
+        })
+    }
+    
+    async fn submit_impeachment(&self, request: crate::rpc::types::ImpeachmentRequest) -> Result<crate::rpc::types::SubmitImpeachmentResponse, RpcError> {
+        use blockchain_core::transaction::ImpeachmentTx;
+        use blockchain_core::crypto::{verify_signature, PublicKey};
+        use uuid::Uuid;
+        
+        let impeachment_id = Uuid::new_v4().to_string();
+        
+        // Verify signature
+        let msg = format!("impeachment:{}:{:?}:{}", request.proof_ipfs_hash, request.violation_principle_ids, request.timestamp);
+        let sig_bytes = parse_hex_bytes(&request.signature)?;
+        if sig_bytes.len() != 64 {
+            return Err(RpcError::InvalidParams("signature must be 64 bytes".to_string()));
+        }
+        let signature = ed25519_dalek::Signature::try_from(sig_bytes.as_slice())
+            .map_err(|e| RpcError::InvalidParams(format!("invalid signature: {e}")))?;
+        
+        let pk_bytes = parse_hex_bytes(&request.proposer_public_key)?;
+        if pk_bytes.len() != 32 {
+            return Err(RpcError::InvalidParams("public key must be 32 bytes".to_string()));
+        }
+        let public_key = PublicKey::try_from(pk_bytes.as_slice())
+            .map_err(|e| RpcError::InvalidParams(format!("invalid public key: {e}")))?;
+        
+        if !verify_signature(msg.as_bytes(), &signature, &public_key) {
+            return Err(RpcError::InvalidSignature);
+        }
+        
+        let proposer_address = format!("0x{}", hex::encode(&pk_bytes[..20]));
+        
+        // Create transaction
+        let tx = ImpeachmentTx::new(
+            impeachment_id.clone(),
+            request.proof_ipfs_hash,
+            request.violation_principle_ids,
+            proposer_address,
+            request.timestamp,
+        ).map_err(|e| RpcError::Internal(e.to_string()))?;
+        
+        let tx_hash = to_hex_tx_hash(&tx.tx_hash);
+        
+        // Create BlockTransaction and add to pending pool
+        let block_tx = blockchain_core::transaction::BlockTransaction::Impeachment(tx);
+        
+        let mut bc = self.blockchain.lock().await;
+        bc.add_extended_transaction_to_pool(block_tx)
+            .map_err(|e| RpcError::Internal(format!("Failed to submit transaction: {}", e)))?;
+        
+        Ok(crate::rpc::types::SubmitImpeachmentResponse {
+            success: true,
+            impeachment_id,
+            tx_hash,
+        })
+    }
+    
+    async fn get_impeachment(&self, impeachment_id: String) -> Result<Option<crate::rpc::types::ImpeachmentResponse>, RpcError> {
+        let bc = self.blockchain.lock().await;
+        
+        Ok(bc.state.get_impeachment(&impeachment_id).map(|r| {
+            let total_staked = bc.state.get_total_staked();
+            let approval_percentage = if total_staked > 0 {
+                (r.votes_for as f64 / total_staked as f64) * 100.0
+            } else {
+                0.0
+            };
+            
+            crate::rpc::types::ImpeachmentResponse {
+                impeachment_id: r.impeachment_id,
+                initiated_by: r.initiated_by,
+                created_at: r.created_at,
+                voting_end: r.voting_end,
+                votes_for: r.votes_for,
+                total_voting_power: r.total_voting_power,
+                proof_ipfs_hash: r.proof_ipfs_hash,
+                violation_principle_ids: r.violation_principle_ids,
+                status: r.status,
+                executed_at: r.executed_at,
+                approval_percentage,
+            }
+        }))
+    }
+    
+    async fn vote_impeachment(&self, request: crate::rpc::types::ImpeachmentVoteRequest) -> Result<crate::rpc::types::SubmitImpeachmentVoteResponse, RpcError> {
+        use blockchain_core::transaction::ImpeachmentVoteTx;
+        use blockchain_core::crypto::{verify_signature, PublicKey};
+        
+        // Verify signature
+        let msg = format!("impeachment_vote:{}:{}", request.impeachment_id, request.timestamp);
+        let sig_bytes = parse_hex_bytes(&request.signature)?;
+        if sig_bytes.len() != 64 {
+            return Err(RpcError::InvalidParams("signature must be 64 bytes".to_string()));
+        }
+        let signature = ed25519_dalek::Signature::try_from(sig_bytes.as_slice())
+            .map_err(|e| RpcError::InvalidParams(format!("invalid signature: {e}")))?;
+        
+        let pk_bytes = parse_hex_bytes(&request.voter_public_key)?;
+        if pk_bytes.len() != 32 {
+            return Err(RpcError::InvalidParams("public key must be 32 bytes".to_string()));
+        }
+        let public_key = PublicKey::try_from(pk_bytes.as_slice())
+            .map_err(|e| RpcError::InvalidParams(format!("invalid public key: {e}")))?;
+        
+        if !verify_signature(msg.as_bytes(), &signature, &public_key) {
+            return Err(RpcError::InvalidSignature);
+        }
+        
+        let voter_address = format!("0x{}", hex::encode(&pk_bytes[..20]));
+        
+        // Create transaction
+        let tx = ImpeachmentVoteTx::new(
+            request.impeachment_id.clone(),
+            voter_address,
+            request.timestamp,
+        ).map_err(|e| RpcError::Internal(e.to_string()))?;
+        
+        let tx_hash = to_hex_tx_hash(&tx.tx_hash);
+        
+        // Create BlockTransaction and add to pending pool
+        let block_tx = blockchain_core::transaction::BlockTransaction::ImpeachmentVote(tx);
+        
+        let mut bc = self.blockchain.lock().await;
+        bc.add_extended_transaction_to_pool(block_tx)
+            .map_err(|e| RpcError::Internal(format!("Failed to submit transaction: {}", e)))?;
+        
+        Ok(crate::rpc::types::SubmitImpeachmentVoteResponse {
+            success: true,
+            impeachment_id: request.impeachment_id,
+            tx_hash,
         })
     }
 }

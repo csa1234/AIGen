@@ -136,6 +136,38 @@ impl ShutdownCommand {
     }
 }
 
+/// Trigger type for automated safety shutdowns.
+/// Each variant represents a distinct condition that can fire a shutdown without CEO signature.
+#[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq, Hash)]
+pub enum ShutdownTrigger {
+    /// CEO-signed `ShutdownCommand` (manual shutdown)
+    CeoManual,
+    /// `ConstitutionalFilter` detected violations in `veto.rs` / orchestrator
+    ConstitutionalViolation,
+    /// `BenevolenceModel` score below 0.99 threshold
+    BenevolenceFailure,
+    /// Any SOE oracle returned unsafe verdict
+    SafetyOracleUnsafe,
+    /// Canary rollback monitor triggered in `orchestrator.rs`
+    CanaryRollback,
+    /// Persistent latency spike > 5% or complaint rate > 0.1%
+    AnomalyDetected,
+    /// Nonce replay detected in shutdown registry
+    ReplayAttackDetected,
+}
+
+/// Record of an automated safety shutdown event.
+/// Captures the trigger type, human-readable details, and timestamp for audit purposes.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AutoShutdownRecord {
+    /// The trigger that caused this shutdown
+    pub trigger: ShutdownTrigger,
+    /// Human-readable description of the shutdown cause
+    pub details: String,
+    /// Unix timestamp when the shutdown was triggered
+    pub timestamp: i64,
+}
+
 #[derive(Debug, Error, Serialize, Deserialize, Clone)]
 pub enum GenesisError {
     #[error("invalid signature")]
@@ -152,6 +184,8 @@ pub enum GenesisError {
     ShutdownActive,
     #[error("replay attack detected")]
     ReplayAttack,
+    #[error("shutdown trigger active: {0:?}")]
+    ShutdownTriggerActive(ShutdownTrigger),
     #[error("proposal not found")]
     ProposalNotFound,
     #[error("duplicate proposal id")]

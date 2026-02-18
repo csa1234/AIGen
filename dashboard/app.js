@@ -14,6 +14,63 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+/*
+ * =============================================================================
+ * PRODUCTION DEPLOYMENT RECOMMENDATIONS
+ * =============================================================================
+ *
+ * 1. JAVASCRIPT MINIFICATION
+ *    - Use terser or uglify-js to minify app.js and other JS files
+ *    - Example: npx terser app.js -o app.min.js --compress --mangle
+ *    - Consider using a bundler like webpack, rollup, or esbuild for
+ *      optimal tree-shaking and code splitting
+ *
+ * 2. CACHING STRATEGIES
+ *    - Enable long-term caching for static assets using content hashing
+ *    - Configure nginx to set appropriate Cache-Control headers:
+ *      location ~* \.(js|css)$ {
+ *          expires 30d;
+ *          add_header Cache-Control "public, immutable";
+ *      }
+ *    - Use service workers for offline capability and faster subsequent loads
+ *
+ * 3. SECURITY IMPROVEMENTS
+ *    - Enable HTTPS with valid TLS certificates (Let's Encrypt)
+ *    - Implement Content Security Policy (CSP) headers:
+ *      add_header Content-Security-Policy "default-src 'self'; 
+ *        script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; 
+ *        style-src 'self' 'unsafe-inline'; 
+ *        connect-src 'self' wss://localhost:9933 ws://localhost:9933;";
+ *    - Enable HSTS (HTTP Strict Transport Security)
+ *    - Consider implementing CSRF tokens for form submissions
+ *    - Sanitize user inputs to prevent XSS attacks
+ *
+ * 4. ERROR TRACKING
+ *    - Integrate error tracking service (Sentry, Bugsnag, or similar)
+ *    - Add global error handler:
+ *      window.onerror = function(msg, url, lineNo, columnNo, error) {
+ *          // Report to error tracking service
+ *          return false;
+ *      };
+ *    - Implement console error/warning collection in production
+ *
+ * 5. PERFORMANCE OPTIMIZATION
+ *    - Enable gzip/brotli compression on nginx
+ *    - Consider lazy-loading charts and heavy components
+ *    - Use requestAnimationFrame for UI updates
+ *    - Implement debouncing for search and frequent updates
+ *
+ * 6. DEPLOYMENT CHECKLIST
+ *    - Verify all paths are relative (done)
+ *    - Test all UI interactions
+ *    - Verify WebSocket connection works
+ *    - Check console for errors
+ *    - Test with different screen sizes
+ *    - Verify CEO key operations work correctly
+ *
+ * =============================================================================
+ */
+
 class AdminDashboard {
     constructor() {
         this.rpcClient = null;
@@ -23,6 +80,11 @@ class AdminDashboard {
         this.blocksPerPage = 10;
         this.autoRefreshInterval = null;
         this.currentBlockHash = null;
+        
+        // New service layer
+        this.apiService = null;
+        this.authService = null;
+        this.stateManager = null;
         
         this.init();
     }
@@ -34,6 +96,9 @@ class AdminDashboard {
             this.settings = await this.loadSettingsAsync();
             this.rpcClient = new AdminRPCClient(this.settings.rpcUrl, this.settings.wsUrl);
             this.chartManager = new ChartManager();
+            
+            // Initialize new services
+            this._initializeServices();
             
             this.setupEventListeners();
             this.applyTheme(this.settings.theme);
@@ -48,11 +113,66 @@ class AdminDashboard {
             this.showNotification(`Initialization failed: ${error.message}`, 'error');
         }
     }
+    
+    _initializeServices() {
+        // Initialize API Service
+        this.apiService = new ApiService({
+            rpcUrl: this.settings.rpcUrl,
+            wsUrl: this.settings.wsUrl,
+            timeout: 30000,
+            maxRetries: 3,
+            logging: true
+        });
+        
+        // Initialize Auth Service
+        this.authService = new AuthService({
+            sessionTimeout: 3600000, // 1 hour
+            storageKey: 'aigenAuth'
+        });
+        
+        // Initialize State Manager
+        this.stateManager = new StateManager({
+            storageKey: 'aigenState',
+            persist: true
+        });
+        
+        // Set up event handlers for API service
+        this.apiService.setEventHandlers({
+            onLoading: (data) => {
+                this.stateManager.setLoading(data.method, true);
+            },
+            onSuccess: (data) => {
+                this.stateManager.setLoading(data.method, false);
+            },
+            onError: (data) => {
+                this.stateManager.setError(data.method, new Error(data.error));
+            }
+        });
+        
+        // Set up auth event handlers
+        this.authService.setEventHandlers({
+            onSessionExpire: () => {
+                this.stateManager.set('authenticated', false);
+                this.showNotification('Session expired. Please re-authenticate.', 'warning');
+            },
+            onSessionUpdate: (session) => {
+                this.stateManager.set('authenticated', !!session);
+                this.stateManager.set('publicKey', session?.publicKey || null);
+            }
+        });
+        
+        // Subscribe state manager to update UI
+        this.stateManager.subscribe('*', (event) => {
+            console.log('[Dashboard] State change:', event.type, event.key);
+        });
+        
+        console.log('[Dashboard] Services initialized');
+    }
 
     async loadSettingsAsync() {
         const defaultSettings = {
-            rpcUrl: 'http://127.0.0.1:9944',
-            wsUrl: 'ws://127.0.0.1:9944',
+            rpcUrl: 'http://127.0.0.1:9933',
+            wsUrl: 'ws://127.0.0.1:9933',
             theme: 'dark',
             refreshInterval: 30
         };
@@ -74,9 +194,9 @@ class AdminDashboard {
         let settings = saved ? { ...defaultSettings, ...JSON.parse(saved) } : defaultSettings;
 
         // Migration: Fix localhost -> 127.0.0.1 issue on Windows
-        if (settings.rpcUrl === 'http://localhost:9944') {
-            settings.rpcUrl = 'http://127.0.0.1:9944';
-            settings.wsUrl = 'ws://127.0.0.1:9944';
+        if (settings.rpcUrl === 'http://localhost:9933') {
+            settings.rpcUrl = 'http://127.0.0.1:9933';
+            settings.wsUrl = 'ws://127.0.0.1:9933';
             // Update storage with fixed value
             this.saveSettings(settings); 
         }
@@ -88,8 +208,8 @@ class AdminDashboard {
         // Fallback for synchronous access if needed, but init is now async
         // This is mainly kept if other methods call it, but they should use this.settings
         const defaultSettings = {
-            rpcUrl: 'http://127.0.0.1:9944',
-            wsUrl: 'ws://127.0.0.1:9944',
+            rpcUrl: 'http://127.0.0.1:9933',
+            wsUrl: 'ws://127.0.0.1:9933',
             theme: 'dark',
             refreshInterval: 30
         };
@@ -144,6 +264,44 @@ class AdminDashboard {
             }
         }
     }
+    
+    /**
+     * Sign a message using the AuthService (new service layer)
+     */
+    async signWithAuthService(message) {
+        if (this.authService && this.authService.isAuthenticated()) {
+            return await this.authService.signMessage(message);
+        }
+        // Fallback to existing rpcClient
+        return await this.rpcClient.signMessage(message);
+    }
+    
+    /**
+     * Validate CEO key using the new API service
+     */
+    async validateCeoKeyWithApi() {
+        if (!this.apiService || !this.rpcClient?.ceoPublicKeyHex) {
+            return { valid: false, reason: 'API service or node info not available' };
+        }
+        return await this.authService.validateCeoKey(this.rpcClient.ceoPublicKeyHex);
+    }
+    
+    /**
+     * Check if user is authenticated with the new services
+     */
+    isAuthenticated() {
+        return this.authService?.isAuthenticated() || !!localStorage.getItem('ceoPrivateKey');
+    }
+    
+    /**
+     * Get session info from the new auth service
+     */
+    getSessionInfo() {
+        if (this.authService) {
+            return this.authService.getSessionInfo();
+        }
+        return { authenticated: false };
+    }
 
     derivePublicKey(privateKeyHex) {
         if (typeof nacl === 'undefined') {
@@ -182,7 +340,7 @@ class AdminDashboard {
             });
         });
 
-        document.getElementById('configureKeysButton').addEventListener('click', () => this.openSettings());
+        document.getElementById('configureKeysButton')?.addEventListener('click', () => this.openSettings());
         
         document.querySelectorAll('.modal-close').forEach(btn => {
             btn.addEventListener('click', () => this.closeModals());
@@ -192,44 +350,54 @@ class AdminDashboard {
             overlay.addEventListener('click', () => this.closeModals());
         });
 
-        document.getElementById('settingsForm').addEventListener('submit', (e) => {
+        document.getElementById('settingsForm')?.addEventListener('submit', (e) => {
             e.preventDefault();
-            const ceoPrivateKey = document.getElementById('ceoPrivateKey').value.trim();
+            const ceoPrivateKeyEl = document.getElementById('ceoPrivateKey');
+            const ceoPrivateKey = ceoPrivateKeyEl ? ceoPrivateKeyEl.value.trim() : '';
             if (ceoPrivateKey) {
                 localStorage.setItem('ceoPrivateKey', ceoPrivateKey);
+                // Also import to auth service
+                if (this.authService) {
+                    try {
+                        this.authService.importCeoKey(ceoPrivateKey);
+                        console.log('[Dashboard] CEO key imported to auth service');
+                    } catch (err) {
+                        console.warn('[Dashboard] Failed to import key to auth service:', err);
+                    }
+                }
             } else {
                 localStorage.removeItem('ceoPrivateKey');
                 this.updateDerivedKey('');
             }
             this.saveSettings({
-                rpcUrl: document.getElementById('rpcUrl').value,
-                wsUrl: document.getElementById('wsUrl').value,
-                theme: document.getElementById('themeSelect').value
+                rpcUrl: document.getElementById('rpcUrl')?.value || '',
+                wsUrl: document.getElementById('wsUrl')?.value || '',
+                theme: document.getElementById('themeSelect')?.value || 'dark'
             });
             this.closeModals();
             this.showNotification('Settings saved', 'success');
             this.checkCeoKeyStatus();
         });
 
-        document.getElementById('generateKeypairBtn').addEventListener('click', () => this.generateNewKeypair());
-        document.getElementById('useDevCeoKeyBtn').addEventListener('click', () => this.useDevCeoKey());
-        document.getElementById('toggleKeyVisibility').addEventListener('click', () => this.toggleKeyVisibility());
-        document.getElementById('copyPublicKeyBtn').addEventListener('click', () => this.copyPublicKey());
-        document.getElementById('ceoPrivateKey').addEventListener('input', (e) => this.updateDerivedKey(e.target.value));
+        document.getElementById('generateKeypairBtn')?.addEventListener('click', () => this.generateNewKeypair());
+        document.getElementById('useDevCeoKeyBtn')?.addEventListener('click', () => this.useDevCeoKey());
+        document.getElementById('toggleKeyVisibility')?.addEventListener('click', () => this.toggleKeyVisibility());
+        document.getElementById('copyPublicKeyBtn')?.addEventListener('click', () => this.copyPublicKey());
+        document.getElementById('ceoPrivateKey')?.addEventListener('input', (e) => this.updateDerivedKey(e.target.value));
 
-        document.getElementById('initModelBtn').addEventListener('click', () => this.showInitModelForm());
-        document.getElementById('initModelForm').addEventListener('submit', (e) => this.submitInitModel(e));
-        document.getElementById('autofillModelFromYamlBtn').addEventListener('click', () => this.autofillModelFromYaml());
+        document.getElementById('initModelBtn')?.addEventListener('click', () => this.showInitModelForm());
+        document.getElementById('initModelForm')?.addEventListener('submit', (e) => this.submitInitModel(e));
+        document.getElementById('autofillModelFromYamlBtn')?.addEventListener('click', () => this.autofillModelFromYaml());
         
-        document.getElementById('searchButton').addEventListener('click', () => this.searchBlockOrTx());
-        document.getElementById('searchInput').addEventListener('keypress', (e) => {
+        document.getElementById('searchButton')?.addEventListener('click', () => this.searchBlockOrTx());
+        document.getElementById('searchInput')?.addEventListener('keypress', (e) => {
             if (e.key === 'Enter') this.searchBlockOrTx();
         });
 
-        document.getElementById('prevBlocksBtn').addEventListener('click', () => this.loadBlocks(this.currentBlockPage - 1));
-        document.getElementById('nextBlocksBtn').addEventListener('click', () => this.loadBlocks(this.currentBlockPage + 1));
+        document.getElementById('prevBlocksBtn')?.addEventListener('click', () => this.loadBlocks(this.currentBlockPage - 1));
+        document.getElementById('nextBlocksBtn')?.addEventListener('click', () => this.loadBlocks(this.currentBlockPage + 1));
 
-        document.getElementById('blocksTableBody').addEventListener('click', (e) => {
+        document.getElementById('blocksTableBody')?.addEventListener('click', (e) => {
             const btn = e.target.closest('button.view-block');
             if (!btn) return;
             const blockHash = btn.dataset.blockHash;
@@ -237,20 +405,20 @@ class AdminDashboard {
             this.loadTransactions(blockHash);
         });
 
-        document.getElementById('refreshInterval').addEventListener('change', (e) => {
+        document.getElementById('refreshInterval')?.addEventListener('change', (e) => {
             const interval = parseInt(e.target.value);
             this.startAutoRefresh(interval);
         });
 
-        document.getElementById('refreshBtn').addEventListener('click', () => {
+        document.getElementById('refreshBtn')?.addEventListener('click', () => {
             this.loadHealthData();
             this.loadMetricsData();
         });
 
-        document.getElementById('voteForm').addEventListener('submit', (e) => this.submitVote(e));
-        document.getElementById('approveSipBtn').addEventListener('click', () => this.approveSIP());
-        document.getElementById('vetoSipBtn').addEventListener('click', () => this.vetoSIP());
-        document.getElementById('shutdownForm').addEventListener('submit', (e) => this.submitShutdown(e));
+        document.getElementById('voteForm')?.addEventListener('submit', (e) => this.submitVote(e));
+        document.getElementById('approveSipBtn')?.addEventListener('click', () => this.approveSIP());
+        document.getElementById('vetoSipBtn')?.addEventListener('click', () => this.vetoSIP());
+        document.getElementById('shutdownForm')?.addEventListener('submit', (e) => this.submitShutdown(e));
 
         // Staking form
         document.getElementById('stakeForm')?.addEventListener('submit', (e) => this.submitStake(e));
@@ -283,12 +451,22 @@ class AdminDashboard {
             });
             this.updateConnectionStatus('connected');
             
+            // Update state manager
+            if (this.stateManager) {
+                this.stateManager.set('connected', true);
+                this.stateManager.set('connectionError', null);
+            }
+            
             this.loadBlocks(1);
             if (document.querySelector('#healthTab').classList.contains('active')) {
                 this.initializeMetricsFlow();
             }
         } catch (error) {
             this.updateConnectionStatus('error', error.message);
+            if (this.stateManager) {
+                this.stateManager.set('connected', false);
+                this.stateManager.set('connectionError', error.message);
+            }
             throw error;
         }
     }
@@ -309,7 +487,7 @@ class AdminDashboard {
             this.loadModelProposals();
         } else if (tabName === 'health') {
             this.initializeMetricsFlow();
-            this.startAutoRefresh(parseInt(document.getElementById('refreshInterval').value));
+            this.startAutoRefresh(parseInt(document.getElementById('refreshInterval')?.value));
         } else if (tabName === 'governance') {
             this.loadGovernanceProposals();
         } else if (tabName === 'vram') {
@@ -317,7 +495,7 @@ class AdminDashboard {
             this.startAutoRefresh(30); // Auto-refresh every 30 seconds
         } else if (tabName === 'distributed-inference') {
             this.loadDistributedInferenceData();
-            this.startDistributedInferenceAutoRefresh(parseInt(document.getElementById('distributedInferenceRefreshInterval').value));
+            this.startDistributedInferenceAutoRefresh(parseInt(document.getElementById('distributedInferenceRefreshInterval')?.value));
         }
     }
 
@@ -327,8 +505,10 @@ class AdminDashboard {
             const blocks = await this.rpcClient.getLatestBlocks(this.blocksPerPage);
             this.renderBlockTable(blocks);
             
-            document.getElementById('prevBlocksBtn').disabled = page <= 1;
-            document.getElementById('blocksPageInfo').textContent = `Page ${page}`;
+            const prevBtn = document.getElementById('prevBlocksBtn');
+            if (prevBtn) prevBtn.disabled = page <= 1;
+            const pageInfo = document.getElementById('blocksPageInfo');
+            if (pageInfo) pageInfo.textContent = `Page ${page}`;
         } catch (error) {
             this.showNotification(`Failed to load blocks: ${error.message}`, 'error');
         }
@@ -349,7 +529,8 @@ class AdminDashboard {
     }
 
     async searchBlockOrTx() {
-        const query = document.getElementById('searchInput').value.trim();
+        const searchInputEl = document.getElementById('searchInput');
+        const query = searchInputEl ? searchInputEl.value.trim() : '';
         if (!query) return;
         
         try {
@@ -382,6 +563,7 @@ class AdminDashboard {
     renderBlockTable(blocks) {
         const tbody = document.getElementById('blocksTableBody');
         
+        if (!tbody) return;
         if (!blocks || blocks.length === 0) {
             tbody.innerHTML = '<tr><td colspan="5" class="loading-cell">No blocks found</td></tr>';
             return;
@@ -405,6 +587,7 @@ class AdminDashboard {
     renderTransactionTable(transactions) {
         const tbody = document.getElementById('transactionsTableBody');
         
+        if (!tbody) return;
         if (!transactions || transactions.length === 0) {
             tbody.innerHTML = '<tr><td colspan="5" class="loading-cell">No transactions</td></tr>';
             return;
@@ -433,6 +616,7 @@ class AdminDashboard {
     renderModelTable(models) {
         const tbody = document.getElementById('modelsTableBody');
         
+        if (!tbody) return;
         if (!models || models.length === 0) {
             tbody.innerHTML = '<tr><td colspan="8" class="loading-cell">No models registered</td></tr>';
             return;
@@ -463,7 +647,7 @@ class AdminDashboard {
     }
 
     showInitModelForm() {
-        document.getElementById('initModelModal').classList.add('active');
+        document.getElementById('initModelModal')?.classList.add('active');
     }
 
     async submitInitModel(e) {
@@ -472,29 +656,36 @@ class AdminDashboard {
         try {
             this.showLoading(true);
 
-            const rawHashes = document
-                .getElementById('verificationHashes')
-                .value
-                .split(',')
-                .map(h => h.trim())
-                .filter(Boolean);
+            const rawHashesEl = document.getElementById('verificationHashes');
+            const rawHashes = rawHashesEl
+                ? rawHashesEl.value
+                    .split(',')
+                    .map(h => h.trim())
+                    .filter(Boolean)
+                : [];
 
-            const verificationHashes = rawHashes.length > 0 ? rawHashes : ['0x' + '00'.repeat(32)];
-
-            const tierValue = parseInt(document.getElementById('minimumTier').value);
+            const tierEl = document.getElementById('minimumTier');
+            const tierValue = tierEl ? parseInt(tierEl.value) : 1;
             const tierMap = { 1: 'free', 2: 'basic', 3: 'pro' };
             const minimumTier = tierMap[tierValue] || null;
 
+            const modelIdEl = document.getElementById('modelId');
+            const modelNameEl = document.getElementById('modelName');
+            const modelVersionEl = document.getElementById('modelVersion');
+            const totalSizeEl = document.getElementById('totalSize');
+            const isCoreModelEl = document.getElementById('isCoreModel');
+            const isExperimentalEl = document.getElementById('isExperimental');
+
             const request = {
-                model_id: document.getElementById('modelId').value.trim(),
-                name: document.getElementById('modelName').value.trim(),
-                version: document.getElementById('modelVersion').value.trim(),
-                total_size: Number.parseInt(document.getElementById('totalSize').value, 10) || 0,
+                model_id: modelIdEl ? modelIdEl.value.trim() : '',
+                name: modelNameEl ? modelNameEl.value.trim() : '',
+                version: modelVersionEl ? modelVersionEl.value.trim() : '',
+                total_size: totalSizeEl ? Number.parseInt(totalSizeEl.value, 10) || 0 : 0,
                 shard_count: verificationHashes.length,
                 verification_hashes: verificationHashes,
-                is_core_model: document.getElementById('isCoreModel').checked,
+                is_core_model: isCoreModelEl ? isCoreModelEl.checked : false,
                 minimum_tier: minimumTier,
-                is_experimental: document.getElementById('isExperimental').checked
+                is_experimental: isExperimentalEl ? isExperimentalEl.checked : false
             };
 
             if (!request.model_id || !/^[A-Za-z0-9_-]+$/.test(request.model_id)) {
@@ -567,15 +758,22 @@ class AdminDashboard {
             .trim()
             .replace(/\s+/g, '-');
 
-        document.getElementById('modelId').value = slug;
-        document.getElementById('modelName').value = name || slug;
-        document.getElementById('modelVersion').value = version || '1.0.0';
-        if (sizeBytes) document.getElementById('totalSize').value = String(sizeBytes);
+        const modelIdEl = document.getElementById('modelId');
+        const modelNameEl = document.getElementById('modelName');
+        const modelVersionEl = document.getElementById('modelVersion');
+        const totalSizeEl = document.getElementById('totalSize');
+        const verificationHashesEl = document.getElementById('verificationHashes');
+        const shardCountEl = document.getElementById('shardCount');
 
-        if (!document.getElementById('verificationHashes').value.trim()) {
-            document.getElementById('verificationHashes').value = '0x' + '00'.repeat(32);
+        if (modelIdEl) modelIdEl.value = slug;
+        if (modelNameEl) modelNameEl.value = name || slug;
+        if (modelVersionEl) modelVersionEl.value = version || '1.0.0';
+        if (sizeBytes && totalSizeEl) totalSizeEl.value = String(sizeBytes);
+
+        if (verificationHashesEl && !verificationHashesEl.value.trim()) {
+            verificationHashesEl.value = '0x' + '00'.repeat(32);
         }
-        document.getElementById('shardCount').value = '1';
+        if (shardCountEl) shardCountEl.value = '1';
 
         this.showNotification('Model fields auto-filled from YAML', 'success');
     }
@@ -608,6 +806,7 @@ class AdminDashboard {
     renderProposalsTable(proposals) {
         const tbody = document.getElementById('proposalsTableBody');
         
+        if (!tbody) return;
         if (!proposals || proposals.length === 0) {
             tbody.innerHTML = '<tr><td colspan="5" class="loading-cell">No upgrade proposals</td></tr>';
             return;
@@ -789,10 +988,10 @@ class AdminDashboard {
             
             // Update overview cards
             const totalStaked = stakes.reduce((sum, s) => sum + s.staked_amount, 0);
-            document.querySelector('#totalStakedCard .stat-value').textContent = 
-                this.formatAmount(totalStaked);
-            document.querySelector('#totalStakersCard .stat-value').textContent = 
-                stakesData?.total_count || 0;
+            const totalStakedEl = document.querySelector('#totalStakedCard .stat-value');
+            const totalStakersEl = document.querySelector('#totalStakersCard .stat-value');
+            if (totalStakedEl) totalStakedEl.textContent = this.formatAmount(totalStaked);
+            if (totalStakersEl) totalStakersEl.textContent = stakesData?.total_count || 0;
         } catch (error) {
             this.showNotification(`Failed to load stakes: ${error.message}`, 'error');
         }
@@ -804,8 +1003,10 @@ class AdminDashboard {
             this.renderVotesTable(votesData.votes || [], votesData.tally);
             
             // Show votes section
-            document.getElementById('proposalVotesSection').style.display = 'block';
-            document.getElementById('selectedProposalId').textContent = proposalId;
+            const votesSection = document.getElementById('proposalVotesSection');
+            const selectedProposalIdEl = document.getElementById('selectedProposalId');
+            if (votesSection) votesSection.style.display = 'block';
+            if (selectedProposalIdEl) selectedProposalIdEl.textContent = proposalId;
         } catch (error) {
             this.showNotification(`Failed to load votes: ${error.message}`, 'error');
         }
@@ -814,6 +1015,7 @@ class AdminDashboard {
     renderGovernanceTable(proposals) {
         const tbody = document.getElementById('governanceTableBody');
         
+        if (!tbody) return;
         if (!proposals || proposals.length === 0) {
             tbody.innerHTML = '<tr><td colspan="5" class="loading-cell">No proposals found</td></tr>';
             return;
@@ -845,6 +1047,7 @@ class AdminDashboard {
     renderStakesTable(stakes) {
         const tbody = document.getElementById('stakesTableBody');
         
+        if (!tbody) return;
         if (!stakes || stakes.length === 0) {
             tbody.innerHTML = '<tr><td colspan="6" class="loading-cell">No stakers found</td></tr>';
             return;
@@ -873,24 +1076,32 @@ class AdminDashboard {
     renderVotesTable(votes, tally) {
         const tbody = document.getElementById('votesTableBody');
         
+        if (!tbody) return;
         if (!votes || votes.length === 0) {
             tbody.innerHTML = '<tr><td colspan="5" class="loading-cell">No votes yet</td></tr>';
             return;
         }
         
         // Update tally cards
-        document.getElementById('approveWeight').textContent = this.formatAmount(tally.total_approve_weight);
-        document.getElementById('approvePercentage').textContent = `${tally.approval_percentage.toFixed(1)}%`;
-        document.getElementById('rejectWeight').textContent = this.formatAmount(tally.total_reject_weight);
+        const approveWeightEl = document.getElementById('approveWeight');
+        const approvePercentageEl = document.getElementById('approvePercentage');
+        const rejectWeightEl = document.getElementById('rejectWeight');
+        const rejectPercentageEl = document.getElementById('rejectPercentage');
+        const abstainWeightEl = document.getElementById('abstainWeight');
+        const abstainPercentageEl = document.getElementById('abstainPercentage');
+
+        if (approveWeightEl) approveWeightEl.textContent = this.formatAmount(tally.total_approve_weight);
+        if (approvePercentageEl) approvePercentageEl.textContent = `${tally.approval_percentage.toFixed(1)}%`;
+        if (rejectWeightEl) rejectWeightEl.textContent = this.formatAmount(tally.total_reject_weight);
         const rejectPct = tally.total_voting_power > 0 
             ? ((tally.total_reject_weight / tally.total_voting_power) * 100).toFixed(1) 
             : '0.0';
-        document.getElementById('rejectPercentage').textContent = `${rejectPct}%`;
-        document.getElementById('abstainWeight').textContent = this.formatAmount(tally.total_abstain_weight);
+        if (rejectPercentageEl) rejectPercentageEl.textContent = `${rejectPct}%`;
+        if (abstainWeightEl) abstainWeightEl.textContent = this.formatAmount(tally.total_abstain_weight);
         const abstainPct = tally.total_voting_power > 0 
             ? ((tally.total_abstain_weight / tally.total_voting_power) * 100).toFixed(1) 
             : '0.0';
-        document.getElementById('abstainPercentage').textContent = `${abstainPct}%`;
+        if (abstainPercentageEl) abstainPercentageEl.textContent = `${abstainPct}%`;
         
         tbody.innerHTML = votes.map(vote => `
             <tr>
@@ -909,9 +1120,13 @@ class AdminDashboard {
         try {
             this.showLoading(true);
             
-            const proposalId = document.getElementById('voteProposalId').value;
-            const voteType = document.getElementById('voteType').value;
-            const comment = document.getElementById('voteComment').value;
+            const voteProposalIdEl = document.getElementById('voteProposalId');
+            const voteTypeEl = document.getElementById('voteType');
+            const voteCommentEl = document.getElementById('voteComment');
+
+            const proposalId = voteProposalIdEl?.value || '';
+            const voteType = voteTypeEl?.value || 'approve';
+            const comment = voteCommentEl?.value || '';
             
             // Capitalize first letter to match governance API (Approve/Reject/Abstain)
             const vote = voteType.charAt(0).toUpperCase() + voteType.slice(1);
@@ -931,7 +1146,8 @@ class AdminDashboard {
             );
             
             this.showNotification('Vote submitted successfully', 'success');
-            document.getElementById('voteForm').reset();
+            const voteForm = document.getElementById('voteForm');
+            if (voteForm) voteForm.reset();
         } catch (error) {
             this.showNotification(`Vote submission failed: ${error.message}`, 'error');
         } finally {
@@ -940,7 +1156,8 @@ class AdminDashboard {
     }
 
     async approveSIP() {
-        const proposalId = document.getElementById('sipProposalId').value;
+        const sipProposalIdEl = document.getElementById('sipProposalId');
+        const proposalId = sipProposalIdEl?.value || '';
         if (!proposalId) {
             this.showNotification('Please enter a SIP proposal ID', 'error');
             return;
@@ -963,7 +1180,8 @@ class AdminDashboard {
     }
 
     async vetoSIP() {
-        const proposalId = document.getElementById('sipProposalId').value;
+        const sipProposalIdEl = document.getElementById('sipProposalId');
+        const proposalId = sipProposalIdEl?.value || '';
         if (!proposalId) {
             this.showNotification('Please enter a SIP proposal ID', 'error');
             return;
@@ -997,8 +1215,11 @@ class AdminDashboard {
         try {
             this.showLoading(true);
             
-            const reason = document.getElementById('shutdownReason').value;
-            const nonce = parseInt(document.getElementById('shutdownNonce').value);
+            const shutdownReasonEl = document.getElementById('shutdownReason');
+            const shutdownNonceEl = document.getElementById('shutdownNonce');
+
+            const reason = shutdownReasonEl?.value || '';
+            const nonce = shutdownNonceEl ? parseInt(shutdownNonceEl.value) : 0;
             const timestamp = Math.floor(Date.now() / 1000);
             
             const { message } = this.rpcClient.formatAdminMessage('shutdown', {
@@ -1011,7 +1232,8 @@ class AdminDashboard {
             await this.rpcClient.submitShutdown(timestamp, reason, nonce, signature);
             
             this.showNotification('Shutdown command submitted', 'success');
-            document.getElementById('shutdownForm').reset();
+            const shutdownForm = document.getElementById('shutdownForm');
+            if (shutdownForm) shutdownForm.reset();
         } catch (error) {
             this.showNotification(`Shutdown failed: ${error.message}`, 'error');
         } finally {
@@ -1022,8 +1244,11 @@ class AdminDashboard {
     async submitStake(e) {
         e.preventDefault();
         
-        const amount = parseInt(document.getElementById('stakeAmount').value);
-        const role = document.getElementById('stakeRole').value;
+        const stakeAmountEl = document.getElementById('stakeAmount');
+        const stakeRoleEl = document.getElementById('stakeRole');
+
+        const amount = stakeAmountEl ? parseInt(stakeAmountEl.value) : 0;
+        const role = stakeRoleEl?.value || 'validator';
         
         // Validate minimum amounts
         const minAmounts = { 'Inference': 1000, 'Training': 5000, 'Both': 5000 };
@@ -1054,7 +1279,8 @@ class AdminDashboard {
             const result = await this.rpcClient.submitStakeTx(stakerAddress, amount, role, signature, timestamp);
             
             this.showNotification(result.message, 'success');
-            document.getElementById('stakeForm').reset();
+            const stakeForm = document.getElementById('stakeForm');
+            if (stakeForm) stakeForm.reset();
             await this.loadStakes();
         } catch (error) {
             this.showNotification(`Stake failed: ${error.message}`, 'error');
@@ -1140,7 +1366,8 @@ class AdminDashboard {
     }
 
     async approveStakerProposal() {
-        const proposalId = document.getElementById('stakerProposalId').value;
+        const stakerProposalIdEl = document.getElementById('stakerProposalId');
+        const proposalId = stakerProposalIdEl?.value || '';
         if (!proposalId) {
             this.showNotification('Please enter a proposal ID', 'error');
             return;
@@ -1164,7 +1391,8 @@ class AdminDashboard {
     }
 
     async vetoStakerProposal() {
-        const proposalId = document.getElementById('stakerProposalId').value;
+        const stakerProposalIdEl = document.getElementById('stakerProposalId');
+        const proposalId = stakerProposalIdEl?.value || '';
         if (!proposalId) {
             this.showNotification('Please enter a proposal ID', 'error');
             return;
@@ -1193,12 +1421,18 @@ class AdminDashboard {
     }
 
     openSettings() {
-        document.getElementById('rpcUrl').value = this.settings.rpcUrl;
-        document.getElementById('wsUrl').value = this.settings.wsUrl;
-        document.getElementById('ceoPrivateKey').value = localStorage.getItem('ceoPrivateKey') || '';
-        this.updateDerivedKey(document.getElementById('ceoPrivateKey').value);
-        document.getElementById('themeSelect').value = this.settings.theme;
-        document.getElementById('settingsModal').classList.add('active');
+        const rpcUrlEl = document.getElementById('rpcUrl');
+        const wsUrlEl = document.getElementById('wsUrl');
+        const ceoPrivateKeyEl = document.getElementById('ceoPrivateKey');
+        const themeSelectEl = document.getElementById('themeSelect');
+        const settingsModalEl = document.getElementById('settingsModal');
+
+        if (rpcUrlEl) rpcUrlEl.value = this.settings.rpcUrl;
+        if (wsUrlEl) wsUrlEl.value = this.settings.wsUrl;
+        if (ceoPrivateKeyEl) ceoPrivateKeyEl.value = localStorage.getItem('ceoPrivateKey') || '';
+        this.updateDerivedKey(ceoPrivateKeyEl?.value || '');
+        if (themeSelectEl) themeSelectEl.value = this.settings.theme;
+        if (settingsModalEl) settingsModalEl.classList.add('active');
     }
 
     closeModals() {
@@ -1213,6 +1447,8 @@ class AdminDashboard {
 
     showNotification(message, type = 'info') {
         const container = document.getElementById('notificationContainer');
+        if (!container) return;
+
         const notification = document.createElement('div');
         notification.className = `notification notification-${type}`;
         notification.textContent = message;
@@ -1231,16 +1467,20 @@ class AdminDashboard {
 
     showLoading(show) {
         const overlay = document.getElementById('loadingOverlay');
-        overlay.style.display = show ? 'flex' : 'none';
+        if (overlay) overlay.style.display = show ? 'flex' : 'none';
     }
 
     updateConnectionStatus(status, message = null) {
         const statusEl = document.getElementById('connectionStatus');
+        if (!statusEl) return;
+
         const dot = statusEl.querySelector('.status-dot');
         const text = statusEl.querySelector('.status-text');
         
         statusEl.className = `connection-status status-${status}`;
         
+        if (!text) return;
+
         if (message) {
             text.textContent = message;
             return;
@@ -1336,7 +1576,8 @@ class AdminDashboard {
             const publicKeyHex = this.bytesToHex(keyPair.publicKey);
             
             // Update form
-            document.getElementById('ceoPrivateKey').value = privateKeyHex;
+            const ceoPrivateKeyEl = document.getElementById('ceoPrivateKey');
+            if (ceoPrivateKeyEl) ceoPrivateKeyEl.value = privateKeyHex;
             this.updateDerivedKey(privateKeyHex);
             
             this.showNotification('New keypair generated! Save settings to persist.', 'success');
@@ -1367,8 +1608,10 @@ class AdminDashboard {
             const privateKeyHex = this.bytesToHex(privateKey);
 
             const input = document.getElementById('ceoPrivateKey');
-            input.value = privateKeyHex;
-            localStorage.setItem('ceoPrivateKey', privateKeyHex);
+            if (input) {
+                input.value = privateKeyHex;
+                localStorage.setItem('ceoPrivateKey', privateKeyHex);
+            }
             this.updateDerivedKey(privateKeyHex);
             this.checkCeoKeyStatus();
             this.showNotification('Dev CEO key loaded', 'success');
@@ -1402,16 +1645,16 @@ class AdminDashboard {
         const derivedPublicKey = document.getElementById('derivedPublicKey');
         
         if (!privateKeyHex || privateKeyHex.trim() === '') {
-            derivedKeyInfo.style.display = 'none';
+            if (derivedKeyInfo) derivedKeyInfo.style.display = 'none';
             return;
         }
         
         try {
             const publicKey = this.derivePublicKey(privateKeyHex);
-            derivedPublicKey.textContent = publicKey;
-            derivedKeyInfo.style.display = 'block';
+            if (derivedPublicKey) derivedPublicKey.textContent = publicKey;
+            if (derivedKeyInfo) derivedKeyInfo.style.display = 'block';
         } catch (error) {
-            derivedKeyInfo.style.display = 'none';
+            if (derivedKeyInfo) derivedKeyInfo.style.display = 'none';
         }
     }
 
@@ -1419,19 +1662,21 @@ class AdminDashboard {
         const input = document.getElementById('ceoPrivateKey');
         const button = document.getElementById('toggleKeyVisibility');
         
+        if (!input) return;
         if (input.type === 'password') {
             input.type = 'text';
-            button.title = 'Hide key';
+            if (button) button.title = 'Hide key';
         } else {
             input.type = 'password';
-            button.title = 'Show key';
+            if (button) button.title = 'Show key';
         }
     }
 
     copyPublicKey() {
-        const publicKey = document.getElementById('derivedPublicKey').textContent;
+        const derivedPublicKeyEl = document.getElementById('derivedPublicKey');
+        const publicKey = derivedPublicKeyEl?.textContent || '';
         
-        if (publicKey === '-') {
+        if (publicKey === '-' || !publicKey) {
             this.showNotification('No public key to copy', 'error');
             return;
         }
@@ -1466,6 +1711,8 @@ class AdminDashboard {
         const vramPoolStats = document.getElementById('vramPoolStats');
         const activeNodesCount = document.getElementById('activeNodesCount');
         const fragmentDistribution = document.getElementById('fragmentDistribution');
+        
+        if (!vramPoolStats) return;
         
         if (!data) {
             vramPoolStats.innerHTML = '<p>No data available</p>';
@@ -1518,6 +1765,7 @@ class AdminDashboard {
     renderVramNodesTable(nodes) {
         const tbody = document.getElementById('vramNodesTableBody');
         
+        if (!tbody) return;
         if (!nodes || nodes.length === 0) {
             tbody.innerHTML = '<tr><td colspan="7" class="loading-cell">No nodes available</td></tr>';
             return;
@@ -1539,6 +1787,7 @@ class AdminDashboard {
     renderRewardLeaderboard(rewards) {
         const tbody = document.getElementById('rewardLeaderboardBody');
         
+        if (!tbody) return;
         if (!rewards || rewards.length === 0) {
             tbody.innerHTML = '<tr><td colspan="6" class="loading-cell">No rewards data available</td></tr>';
             return;
@@ -1661,6 +1910,7 @@ class AdminDashboard {
     renderActivePipelinesTable(pipelines) {
         const tbody = document.getElementById('activePipelinesTableBody');
         
+        if (!tbody) return;
         if (!pipelines || pipelines.length === 0) {
             tbody.innerHTML = '<tr><td colspan="7" class="loading-cell">No active pipelines</td></tr>';
             return;

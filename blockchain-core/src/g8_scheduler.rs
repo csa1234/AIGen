@@ -98,5 +98,55 @@ pub fn auto_finalize_elections(current_time: i64, state: &ChainState) -> Result<
 pub fn run_g8_scheduler(current_time: i64, state: &ChainState) -> Result<(), BlockchainError> {
     check_and_trigger_election(current_time, state)?;
     auto_finalize_elections(current_time, state)?;
+    auto_finalize_dao_proposals(current_time, state)?;
+    Ok(())
+}
+
+/// Auto-finalize DAO proposals that have passed their voting_end timestamp
+pub fn auto_finalize_dao_proposals(current_time: i64, state: &ChainState) -> Result<(), BlockchainError> {
+    // Get all active proposals (status == 1) where voting_end has passed
+    let active_proposals: Vec<String> = state.list_dao_proposals_by_status(1)
+        .into_iter()
+        .filter(|p| current_time >= p.voting_end)
+        .map(|p| p.proposal_id)
+        .collect();
+    
+    for proposal_id in active_proposals {
+        match state.finalize_dao_proposal(&proposal_id) {
+            Ok(()) => {
+                // Check if proposal passed and forward to CEO
+                if let Some(proposal) = state.get_dao_proposal(&proposal_id) {
+                    if proposal.status == 2 { // Passed
+                        // Forward to CEO for review
+                        let dao_info = genesis::DaoProposalInfo {
+                            proposal_id: proposal.proposal_id,
+                            title: proposal.title,
+                            description: proposal.description,
+                            proposal_type: proposal.proposal_type,
+                            status: proposal.status,
+                            proposer: proposal.proposer,
+                            created_at: proposal.created_at,
+                            voting_end: proposal.voting_end,
+                            votes_for: proposal.votes_for,
+                            votes_against: proposal.votes_against,
+                            votes_abstain: proposal.votes_abstain,
+                            ipfs_hash: proposal.ipfs_hash,
+                            parameters: proposal.parameters,
+                        };
+                        
+                        if let Err(e) = genesis::forward_dao_proposal_to_ceo(&dao_info) {
+                            eprintln!("Failed to forward DAO proposal {} to CEO: {:?}", proposal_id, e);
+                        } else {
+                            eprintln!("DAO proposal {} forwarded to CEO for review", proposal_id);
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("Failed to finalize DAO proposal {}: {:?}", proposal_id, e);
+            }
+        }
+    }
+    
     Ok(())
 }

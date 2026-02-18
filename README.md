@@ -78,6 +78,7 @@ The node will automatically register the model on startup. See [SETUP.md](SETUP.
 ### Specialized Topics
 - **[Economic Tiers](docs/ECONOMIC_TIERS.md)** - Subscription tiers
 - **[AI Models](docs/AI_MODELS.md)** - AI model management
+- **[Phased Roadmap](docs/roadmap.md)** - 4-phase implementation plan (Foundation → Safety → Governance → Deploy)
 
 ## Constitutional Governance
 

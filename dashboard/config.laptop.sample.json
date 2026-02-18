@@ -1,7 +1,7 @@
 {
   "rpc": {
-    "http": "http://127.0.0.1:9944",
-    "ws": "ws://127.0.0.1:9944"
+    "http": "http://127.0.0.1:9933",
+    "ws": "ws://127.0.0.1:9933"
   },
   "_web3_comment": "AIGEN is NOT EVM-compatible. It uses Ed25519 signatures (like Solana), not SECP256k1 (like Ethereum). Standard Web3 wallets (MetaMask, etc.) cannot be used. Set enableEvm to false unless you have a custom EVM bridge.",
   "web3": {
